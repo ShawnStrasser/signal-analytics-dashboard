@@ -9,7 +9,6 @@ export const useFiltersStore = defineStore('filters', () => {
   const approach = ref(null)
   const validGeometry = ref('all') // 'all', 'valid', or 'invalid'
   const anomalyType = ref('All')
-  const selectedSignalFromMap = ref(null)
 
   // Computed
   const hasSignalFilters = computed(() => selectedSignalIds.value.length > 0)
@@ -45,14 +44,6 @@ export const useFiltersStore = defineStore('filters', () => {
     anomalyType.value = value
   }
 
-  function setSelectedSignalFromMap(signalId) {
-    selectedSignalFromMap.value = signalId
-  }
-
-  function clearSelectedSignalFromMap() {
-    selectedSignalFromMap.value = null
-  }
-
   return {
     // State
     startDate,
@@ -61,7 +52,6 @@ export const useFiltersStore = defineStore('filters', () => {
     approach,
     validGeometry,
     anomalyType,
-    selectedSignalFromMap,
     
     // Computed
     hasSignalFilters,
@@ -72,8 +62,6 @@ export const useFiltersStore = defineStore('filters', () => {
     setSelectedSignalIds,
     setApproach,
     setValidGeometry,
-    setAnomalyType,
-    setSelectedSignalFromMap,
-    clearSelectedSignalFromMap
+    setAnomalyType
   }
 })

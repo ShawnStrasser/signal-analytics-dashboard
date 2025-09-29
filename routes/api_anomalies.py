@@ -73,6 +73,7 @@ def get_anomaly_summary():
                 ('LONGITUDE', pa.float64()),
                 ('APPROACH', pa.bool_()),
                 ('VALID_GEOMETRY', pa.bool_()),
+                ('XD', pa.int64()),
                 ('ANOMALY_COUNT', pa.int64()),
                 ('POINT_SOURCE_COUNT', pa.int64())
             ])
@@ -95,6 +96,7 @@ def get_anomaly_summary():
                 ('LONGITUDE', pa.float64()),
                 ('APPROACH', pa.bool_()),
                 ('VALID_GEOMETRY', pa.bool_()),
+                ('XD', pa.int64()),
                 ('ANOMALY_COUNT', pa.int64()),
                 ('POINT_SOURCE_COUNT', pa.int64())
             ])
@@ -143,6 +145,7 @@ def get_anomaly_summary():
         longitudes = []
         approaches = []
         valid_geometries = []
+        xds = []
         anomaly_counts = []
         point_source_counts = []
         
@@ -156,6 +159,7 @@ def get_anomaly_summary():
             longitudes.append(dim_dict['LONGITUDE'])
             approaches.append(dim_dict.get('APPROACH'))
             valid_geometries.append(dim_dict.get('VALID_GEOMETRY'))
+            xds.append(xd)
             anomaly_counts.append(analytics.get('ANOMALY_COUNT', 0))
             point_source_counts.append(analytics.get('POINT_SOURCE_COUNT', 0))
         
@@ -165,6 +169,7 @@ def get_anomaly_summary():
             'LONGITUDE': longitudes,
             'APPROACH': approaches,
             'VALID_GEOMETRY': valid_geometries,
+            'XD': xds,
             'ANOMALY_COUNT': anomaly_counts,
             'POINT_SOURCE_COUNT': point_source_counts
         })
@@ -191,6 +196,7 @@ def get_anomaly_aggregated():
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     signal_ids = request.args.getlist('signal_ids')
+    xd_segments = request.args.getlist('xd_segments')  # Direct XD segment selection
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
     
@@ -202,68 +208,8 @@ def get_anomaly_aggregated():
         start_date_str = str(start_date)
         end_date_str = str(end_date)
 
-    # Step 1: Query DIM_SIGNALS_XD to get XD segments based on filters
-    dim_query = """
-    SELECT XD
-    FROM TPAU_DB.TPAU_RITIS_SCHEMA.DIM_SIGNALS_XD
-    WHERE LATITUDE IS NOT NULL 
-    AND LONGITUDE IS NOT NULL
-    """
-    
-    if signal_ids:
-        ids_str = "', '".join(map(str, signal_ids))
-        dim_query += f" AND ID IN ('{ids_str}')"
-    
-    if approach is not None and approach != '':
-        # Convert string 'true'/'false' to SQL boolean
-        approach_bool = 'TRUE' if approach.lower() == 'true' else 'FALSE'
-        dim_query += f" AND APPROACH = {approach_bool}"
-        
-    if valid_geometry is not None and valid_geometry != '' and valid_geometry != 'all':
-        if valid_geometry == 'valid':
-            dim_query += " AND VALID_GEOMETRY = TRUE"
-        elif valid_geometry == 'invalid':
-            dim_query += " AND VALID_GEOMETRY = FALSE"
-    
     try:
-        # Get the XD segments
-        dim_result = session.sql(dim_query).collect()
-        
-        if not dim_result:
-            # No matching signals, return empty result
-            import pyarrow as pa
-            empty_schema = pa.schema([
-                ('TIMESTAMP', pa.timestamp('ns')),
-                ('TOTAL_ACTUAL_TRAVEL_TIME', pa.float64()),
-                ('TOTAL_PREDICTION', pa.float64())
-            ])
-            empty_table = pa.table([], schema=empty_schema)
-            sink = pa.BufferOutputStream()
-            with pa.ipc.new_stream(sink, empty_table.schema) as writer:
-                pass
-            arrow_bytes = sink.getvalue().to_pybytes()
-            return arrow_bytes, 200, {'Content-Type': 'application/octet-stream'}
-        
-        # Extract XD values
-        xd_values = [row.as_dict()['XD'] for row in dim_result if row.as_dict().get('XD')]
-        
-        if not xd_values:
-            # No XD values found
-            import pyarrow as pa
-            empty_schema = pa.schema([
-                ('TIMESTAMP', pa.timestamp('ns')),
-                ('TOTAL_ACTUAL_TRAVEL_TIME', pa.float64()),
-                ('TOTAL_PREDICTION', pa.float64())
-            ])
-            empty_table = pa.table([], schema=empty_schema)
-            sink = pa.BufferOutputStream()
-            with pa.ipc.new_stream(sink, empty_table.schema) as writer:
-                pass
-            arrow_bytes = sink.getvalue().to_pybytes()
-            return arrow_bytes, 200, {'Content-Type': 'application/octet-stream'}
-        
-        # Step 2: Query TRAVEL_TIME_ANALYTICS directly using XD values
-        xd_str = ', '.join(map(str, xd_values))
+        # Build analytics query - filter by XD segments if provided
         query = f"""
         SELECT 
             TIMESTAMP,
@@ -273,7 +219,78 @@ def get_anomaly_aggregated():
         WHERE TIMESTAMP >= '{start_date_str}'
         AND TIMESTAMP <= '{end_date_str}'
         AND PREDICTION IS NOT NULL
-        AND XD IN ({xd_str})
+        """
+        
+        # Prefer xd_segments if provided (direct XD selection from map)
+        # Otherwise fall back to signal_ids and look up XDs from DIM_SIGNALS_XD
+        if xd_segments:
+            # Direct XD filter - this is the preferred method
+            xd_str = ', '.join(map(str, xd_segments))
+            query += f" AND XD IN ({xd_str})"
+        elif signal_ids:
+            # Step 1: Query DIM_SIGNALS_XD to get XD segments based on filters
+            dim_query = """
+            SELECT XD
+            FROM TPAU_DB.TPAU_RITIS_SCHEMA.DIM_SIGNALS_XD
+            WHERE LATITUDE IS NOT NULL 
+            AND LONGITUDE IS NOT NULL
+            """
+            
+            ids_str = "', '".join(map(str, signal_ids))
+            dim_query += f" AND ID IN ('{ids_str}')"
+            
+            if approach is not None and approach != '':
+                # Convert string 'true'/'false' to SQL boolean
+                approach_bool = 'TRUE' if approach.lower() == 'true' else 'FALSE'
+                dim_query += f" AND APPROACH = {approach_bool}"
+                
+            if valid_geometry is not None and valid_geometry != '' and valid_geometry != 'all':
+                if valid_geometry == 'valid':
+                    dim_query += " AND VALID_GEOMETRY = TRUE"
+                elif valid_geometry == 'invalid':
+                    dim_query += " AND VALID_GEOMETRY = FALSE"
+            
+            # Get the XD segments
+            dim_result = session.sql(dim_query).collect()
+            
+            if not dim_result:
+                # No matching signals, return empty result
+                import pyarrow as pa
+                empty_schema = pa.schema([
+                    ('TIMESTAMP', pa.timestamp('ns')),
+                    ('TOTAL_ACTUAL_TRAVEL_TIME', pa.float64()),
+                    ('TOTAL_PREDICTION', pa.float64())
+                ])
+                empty_table = pa.table([], schema=empty_schema)
+                sink = pa.BufferOutputStream()
+                with pa.ipc.new_stream(sink, empty_table.schema) as writer:
+                    pass
+                arrow_bytes = sink.getvalue().to_pybytes()
+                return arrow_bytes, 200, {'Content-Type': 'application/octet-stream'}
+            
+            # Extract XD values
+            xd_values = [row.as_dict()['XD'] for row in dim_result if row.as_dict().get('XD')]
+            
+            if not xd_values:
+                # No XD values found
+                import pyarrow as pa
+                empty_schema = pa.schema([
+                    ('TIMESTAMP', pa.timestamp('ns')),
+                    ('TOTAL_ACTUAL_TRAVEL_TIME', pa.float64()),
+                    ('TOTAL_PREDICTION', pa.float64())
+                ])
+                empty_table = pa.table([], schema=empty_schema)
+                sink = pa.BufferOutputStream()
+                with pa.ipc.new_stream(sink, empty_table.schema) as writer:
+                    pass
+                arrow_bytes = sink.getvalue().to_pybytes()
+                return arrow_bytes, 200, {'Content-Type': 'application/octet-stream'}
+            
+            # Add XD filter to analytics query
+            xd_str = ', '.join(map(str, xd_values))
+            query += f" AND XD IN ({xd_str})"
+        
+        query += """
         GROUP BY TIMESTAMP 
         ORDER BY TIMESTAMP
         """
@@ -301,6 +318,7 @@ def get_travel_time_data():
     # Get query parameters
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
+    xd_segments = request.args.getlist('xd_segments')
     signal_ids = request.args.getlist('signal_ids')
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
@@ -327,7 +345,11 @@ def get_travel_time_data():
     AND LONGITUDE IS NOT NULL
     """
     
-    if signal_ids:
+    # Prefer xd_segments if provided, otherwise fall back to signal_ids
+    if xd_segments:
+        xd_str = ', '.join(map(str, xd_segments))
+        dim_query += f" AND XD IN ({xd_str})"
+    elif signal_ids:
         ids_str = "', '".join(map(str, signal_ids))
         dim_query += f" AND ID IN ('{ids_str}')"
     

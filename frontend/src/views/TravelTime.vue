@@ -17,17 +17,28 @@
         <v-card>
           <v-card-title>
             🗺️ Traffic Signals Map
+            <v-spacer></v-spacer>
+            <v-btn 
+              v-if="selectionStore.hasMapSelections"
+              size="small" 
+              variant="outlined" 
+              color="error"
+              @click="clearMapSelections"
+            >
+              Clear Map Selections
+            </v-btn>
           </v-card-title>
           <v-card-subtitle>
-            Bubble size represents total travel time, color represents average travel time
+            Signal points show average travel time by color. Click signals or XD segments to filter the chart below.
           </v-card-subtitle>
           <v-card-text>
             <div style="height: 500px; position: relative;">
               <SharedMap
+                ref="mapRef"
                 v-if="mapData.length > 0"
                 :signals="mapData"
                 data-type="travel-time"
-                @signal-selected="onSignalSelected"
+                @selection-changed="onSelectionChanged"
               />
               <div v-else class="d-flex justify-center align-center" style="height: 100%;">
                 <v-progress-circular indeterminate size="64"></v-progress-circular>
@@ -38,51 +49,24 @@
       </v-col>
     </v-row>
 
-    <!-- Signal Selection -->
-    <v-row v-if="filtersStore.selectedSignalFromMap" class="mt-2">
+    <!-- Selection Summary -->
+    <v-row v-if="selectionStore.hasMapSelections" class="mt-2">
       <v-col cols="12">
-        <v-card color="success" variant="tonal">
+        <v-card color="info" variant="tonal">
           <v-card-text>
-            <div class="d-flex justify-space-between align-center">
-              <div>
-                ✅ Analyzing Signal: {{ filtersStore.selectedSignalFromMap }}
-              </div>
-              <v-btn 
-                size="small" 
-                variant="outlined" 
-                @click="filtersStore.clearSelectedSignalFromMap()"
-              >
-                Clear Selection
-              </v-btn>
+            <div>
+              <strong>Map Selection:</strong>
+              <span v-if="selectionStore.selectedSignals.size > 0">
+                {{ selectionStore.selectedSignals.size }} signal(s) selected
+              </span>
+              <span v-if="selectionStore.selectedSignals.size > 0 && selectionStore.selectedXdSegments.size > 0"> • </span>
+              <span v-if="selectionStore.selectedXdSegments.size > 0">
+                {{ selectionStore.selectedXdSegments.size }} XD segment(s) directly selected
+              </span>
             </div>
-            
-            <!-- Signal Stats -->
-            <v-row class="mt-2" v-if="selectedSignalStats">
-              <v-col cols="4">
-                <v-card variant="outlined">
-                  <v-card-text>
-                    <div class="text-h6">{{ selectedSignalStats.TOTAL_TRAVEL_TIME?.toFixed(0) }}s</div>
-                    <div class="text-caption">Total Travel Time</div>
-                  </v-card-text>
-                </v-card>
-              </v-col>
-              <v-col cols="4">
-                <v-card variant="outlined">
-                  <v-card-text>
-                    <div class="text-h6">{{ selectedSignalStats.AVG_TRAVEL_TIME?.toFixed(1) }}s</div>
-                    <div class="text-caption">Average Travel Time</div>
-                  </v-card-text>
-                </v-card>
-              </v-col>
-              <v-col cols="4">
-                <v-card variant="outlined">
-                  <v-card-text>
-                    <div class="text-h6">{{ selectedSignalStats.RECORD_COUNT }}</div>
-                    <div class="text-caption">Records</div>
-                  </v-card-text>
-                </v-card>
-              </v-col>
-            </v-row>
+            <div class="text-caption mt-1">
+              Chart below is filtered to {{ selectionStore.allSelectedXdSegments.size }} total XD segment(s)
+            </div>
           </v-card-text>
         </v-card>
       </v-col>
@@ -100,7 +84,6 @@
               <TravelTimeChart
                 v-if="chartData.length > 0"
                 :data="chartData"
-                :selected-signal="filtersStore.selectedSignalFromMap"
               />
               <div v-else class="d-flex justify-center align-center" style="height: 100%;">
                 <v-progress-circular indeterminate size="64"></v-progress-circular>
@@ -114,29 +97,58 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { useFiltersStore } from '@/stores/filters'
+import { useSelectionStore } from '@/stores/selection'
 import ApiService from '@/services/api'
 import SharedMap from '@/components/SharedMap.vue'
 import TravelTimeChart from '@/components/TravelTimeChart.vue'
 
 const filtersStore = useFiltersStore()
+const selectionStore = useSelectionStore()
 const mapData = ref([])
 const chartData = ref([])
 const loadingMap = ref(false)
 const loadingChart = ref(false)
+const mapRef = ref(null)
 
-// Computed property for selected signal stats
-const selectedSignalStats = computed(() => {
-  if (!filtersStore.selectedSignalFromMap) return null
-  return mapData.value.find(signal => signal.ID === filtersStore.selectedSignalFromMap)
+// Watch for filter changes that should reset map selections
+// (anything except date range changes)
+watch(() => [
+  filtersStore.selectedSignalIds,
+  filtersStore.approach,
+  filtersStore.validGeometry
+], () => {
+  // Reset map selections when these filters change
+  if (selectionStore.hasMapSelections) {
+    selectionStore.clearAllSelections()
+  }
+  
+  // Rezoom map to fit the new filtered signals after data loads
+  // Wait a bit for the map to update with new markers
+  setTimeout(() => {
+    if (mapRef.value) {
+      mapRef.value.rezoomToSignals()
+    }
+  }, 100)
 })
 
-// Watch for filter changes
+// Watch for any filter changes - reload map data
 watch(() => filtersStore.filterParams, async () => {
   await loadMapData()
   await loadChartData()
 }, { deep: true })
+
+// Watch for selection changes - reload chart data only
+// Watch the Set sizes and allSelectedXdSegments size to detect changes
+watch(() => [
+  selectionStore.selectedSignals.size,
+  selectionStore.selectedXdSegments.size,
+  selectionStore.allSelectedXdSegments.size
+], async () => {
+  console.log('Selection changed - reloading chart data')
+  await loadChartData()
+})
 
 onMounted(async () => {
   await loadMapData()
@@ -160,10 +172,20 @@ async function loadChartData() {
   try {
     loadingChart.value = true
     
-    // Get chart data based on selection
+    // Build filter params for chart based on selections
     const filters = { ...filtersStore.filterParams }
-    if (filtersStore.selectedSignalFromMap) {
-      filters.signal_ids = [filtersStore.selectedSignalFromMap]
+    
+    // If there are map selections, send the selected XD segments directly
+    if (selectionStore.hasMapSelections) {
+      const selectedXds = Array.from(selectionStore.allSelectedXdSegments)
+      
+      if (selectedXds.length > 0) {
+        filters.xd_segments = selectedXds
+      } else {
+        // No selections, show empty chart
+        chartData.value = []
+        return
+      }
     }
     
     const arrowTable = await ApiService.getTravelTimeAggregated(filters)
@@ -176,8 +198,11 @@ async function loadChartData() {
   }
 }
 
-function onSignalSelected(signalId) {
-  filtersStore.setSelectedSignalFromMap(signalId)
-  loadChartData() // Reload chart data for selected signal
+function onSelectionChanged() {
+  // Selection changed via map interaction - chart will auto-update via watcher
+}
+
+function clearMapSelections() {
+  selectionStore.clearAllSelections()
 }
 </script>

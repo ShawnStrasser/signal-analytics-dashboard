@@ -114,12 +114,14 @@ const filtersStore = useFiltersStore()
 const loadingSignals = ref(false)
 const signals = ref([])
 
-const signalOptions = computed(() => 
-  signals.value.map(signal => ({
-    text: `Signal ${signal.ID}`,
-    value: signal.ID
+const signalOptions = computed(() => {
+  // Deduplicate signal IDs - DIM_SIGNALS_XD has multiple rows per signal
+  const uniqueSignalIds = [...new Set(signals.value.map(signal => signal.ID))]
+  return uniqueSignalIds.map(id => ({
+    text: `Signal ${id}`,
+    value: id
   }))
-)
+})
 
 const validGeometryDisplayText = computed(() => {
   if (filtersStore.validGeometry === 'valid') return 'Valid Only'
