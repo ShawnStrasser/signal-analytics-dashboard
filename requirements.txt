@@ -1,6 +1,8 @@
-streamlit>=1.28.0
-snowflake-snowpark-python>=1.8.0
-pandas>=1.5.0
-plotly>=5.15.0
-numpy>=1.24.0
-python-dotenv>=1.0.0
+# Flask Backend Dependencies
+flask
+flask-cors
+snowflake-snowpark-python
+pandas
+numpy
+python-dotenv
+pyarrow

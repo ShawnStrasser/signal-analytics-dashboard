@@ -1,0 +1,28 @@
+{
+  "name": "signal-analytics-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "*",
+    "vue-router": "*",
+    "pinia": "*",
+    "vuetify": "*",
+    "@mdi/font": "*",
+    "vue-echarts": "*",
+    "echarts": "*",
+    "@vue-leaflet/vue-leaflet": "*",
+    "leaflet": "*",
+    "apache-arrow": "*"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "*",
+    "vite": "*",
+    "vite-plugin-vuetify": "*"
+  }
+}
