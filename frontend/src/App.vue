@@ -4,6 +4,24 @@
       <v-app-bar-title>
         🚦 Signal Analytics Dashboard
       </v-app-bar-title>
+
+      <!-- Connection status indicator -->
+      <template v-slot:append>
+        <v-tooltip location="bottom">
+          <template v-slot:activator="{ props }">
+            <v-chip
+              v-bind="props"
+              :color="connectionChipColor"
+              variant="flat"
+              size="small"
+            >
+              <v-icon :icon="connectionIcon" start></v-icon>
+              {{ connectionText }}
+            </v-chip>
+          </template>
+          <span>{{ connectionTooltip }}</span>
+        </v-tooltip>
+      </template>
     </v-app-bar>
 
     <v-navigation-drawer permanent>
@@ -18,7 +36,7 @@
       </v-list>
 
       <v-divider class="my-4"></v-divider>
-      
+
       <!-- Filters Section -->
       <FilterPanel />
     </v-navigation-drawer>
@@ -33,13 +51,22 @@
         </router-view>
       </v-container>
     </v-main>
+
+    <!-- Connection status overlay -->
+    <ConnectionStatus
+      :status="connectionStatus"
+      :error-details="connectionError"
+      @retry="checkConnection"
+    />
   </v-app>
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import FilterPanel from './components/FilterPanel.vue'
+import ConnectionStatus from './components/ConnectionStatus.vue'
 import { useGeometryStore } from '@/stores/geometry'
+import ApiService from '@/services/api'
 
 const routes = [
   {
@@ -55,10 +82,83 @@ const routes = [
 ]
 
 const geometryStore = useGeometryStore()
+const connectionStatus = ref('connecting') // 'idle', 'connecting', 'connected', 'error'
+const connectionError = ref(null)
 
-onMounted(() => {
-  geometryStore.loadGeometry().catch(error => {
-    console.error('Failed to load XD geometry on startup:', error)
-  })
+const connectionChipColor = computed(() => {
+  switch (connectionStatus.value) {
+    case 'connected':
+      return 'success'
+    case 'connecting':
+      return 'warning'
+    case 'error':
+      return 'error'
+    default:
+      return 'grey'
+  }
+})
+
+const connectionIcon = computed(() => {
+  switch (connectionStatus.value) {
+    case 'connected':
+      return 'mdi-check-circle'
+    case 'connecting':
+      return 'mdi-loading mdi-spin'
+    case 'error':
+      return 'mdi-alert-circle'
+    default:
+      return 'mdi-help-circle'
+  }
+})
+
+const connectionText = computed(() => {
+  switch (connectionStatus.value) {
+    case 'connected':
+      return 'Connected'
+    case 'connecting':
+      return 'Connecting...'
+    case 'error':
+      return 'Disconnected'
+    default:
+      return 'Unknown'
+  }
+})
+
+const connectionTooltip = computed(() => {
+  switch (connectionStatus.value) {
+    case 'connected':
+      return 'Database connection active'
+    case 'connecting':
+      return 'Establishing database connection...'
+    case 'error':
+      return connectionError.value || 'Failed to connect to database'
+    default:
+      return 'Connection status unknown'
+  }
+})
+
+const checkConnection = async () => {
+  connectionStatus.value = 'connecting'
+  connectionError.value = null
+
+  try {
+    const connected = await ApiService.waitForConnection()
+    if (connected) {
+      connectionStatus.value = 'connected'
+      // Load geometry after connection is established
+      await geometryStore.loadGeometry()
+    } else {
+      connectionStatus.value = 'error'
+      connectionError.value = 'Unable to establish database connection'
+    }
+  } catch (error) {
+    console.error('Connection check failed:', error)
+    connectionStatus.value = 'error'
+    connectionError.value = error.message
+  }
+}
+
+onMounted(async () => {
+  await checkConnection()
 })
 </script>

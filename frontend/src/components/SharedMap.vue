@@ -53,10 +53,12 @@ onMounted(() => {
   geometryStore.loadGeometry().catch(error => {
     console.error('Failed to preload XD geometry:', error)
   })
-  
+
   // Update mappings when signals load
   if (props.signals.length > 0) {
     selectionStore.updateMappings(props.signals)
+    // Zoom to fit initial data
+    autoZoomToSignals()
   }
 })
 
@@ -78,11 +80,33 @@ onUnmounted(() => {
 
 // Watch for signal data changes
 watch(() => props.signals, (newSignals) => {
+  console.log('🔄 WATCH: props.signals changed', {
+    signalCount: newSignals.length,
+    currentZoom: map?.getZoom(),
+    xdLayersCount: xdLayers.size,
+    signalMarkersCount: signalMarkers.size
+  })
+
+  const t0 = performance.now()
   if (newSignals.length > 0) {
     selectionStore.updateMappings(newSignals)
   }
+
+  const t1 = performance.now()
+  console.log(`⏱️ updateMappings: ${(t1 - t0).toFixed(2)}ms`)
+
   updateMarkers()
+  const t2 = performance.now()
+  console.log(`⏱️ updateMarkers: ${(t2 - t1).toFixed(2)}ms`)
+
   updateGeometry() // Update geometry to reflect filtered state
+  const t3 = performance.now()
+  console.log(`⏱️ updateGeometry: ${(t3 - t2).toFixed(2)}ms`)
+
+  autoZoomToSignals() // Zoom after both markers and geometry are updated
+  const t4 = performance.now()
+  console.log(`⏱️ autoZoomToSignals: ${(t4 - t3).toFixed(2)}ms`)
+  console.log(`⏱️ TOTAL: ${(t4 - t0).toFixed(2)}ms`)
 }, { deep: true })
 
 // Watch for anomaly type changes
@@ -140,17 +164,27 @@ function initializeMap() {
 function updateGeometry() {
   if (!map || !geometryLayer) return
 
+  console.log('🗺️ updateGeometry: START', {
+    xdLayersBeforeClear: xdLayers.size
+  })
+
   geometryLayer.clearLayers()
   xdLayers.clear()
 
   const collection = featureCollection.value
   if (!collection || !Array.isArray(collection.features) || collection.features.length === 0) {
+    console.log('🗺️ updateGeometry: NO FEATURES')
     return
   }
 
   // Build set of XD values from currently displayed signals
   // This will be used to determine which XD segments should be colored vs greyed out
   const displayedXDs = new Set(props.signals.map(signal => signal.XD))
+  console.log('🗺️ updateGeometry:', {
+    totalFeatures: collection.features.length,
+    displayedXDsCount: displayedXDs.size,
+    displayedXDs: Array.from(displayedXDs)
+  })
 
   // Get current data values for coloring
   const xdDataMap = getXdDataMap()
@@ -464,26 +498,75 @@ function updateMarkers() {
       signalMarkers.set(signal.ID, marker)
     })
   }
-  
-  // Only auto-fit on initial load (when zoom is at default level)
-  // Fit to signal markers and their associated XD segments
-  if (bounds.length > 0 && map.getZoom() <= 7) {
+}
+
+function autoZoomToSignals() {
+  console.log('🔍 autoZoomToSignals: START', {
+    hasMap: !!map,
+    signalMarkersCount: signalMarkers.size,
+    xdLayersCount: xdLayers.size,
+    currentZoom: map?.getZoom()
+  })
+
+  if (!map || signalMarkers.size === 0) {
+    console.log('🔍 autoZoomToSignals: SKIPPED (no map or markers)')
+    return
+  }
+
+  const bounds = []
+  signalMarkers.forEach((marker) => {
+    bounds.push(marker.getLatLng())
+  })
+
+  console.log('🔍 autoZoomToSignals: marker bounds', {
+    markerBoundsCount: bounds.length
+  })
+
+  if (bounds.length > 0) {
     const mapBounds = L.latLngBounds(bounds)
-    
-    // Add bounds of filtered XD segments (those associated with current signals)
+    const initialBounds = {
+      north: mapBounds.getNorth(),
+      south: mapBounds.getSouth(),
+      east: mapBounds.getEast(),
+      west: mapBounds.getWest()
+    }
+    console.log('🔍 autoZoomToSignals: initial bounds (markers only)', initialBounds)
+
+    // Add bounds of ONLY the filtered XD segments
+    // OPTIMIZATION: Only iterate through the XDs we care about, not all 16k layers
     const displayedXDs = new Set(props.signals.map(signal => signal.XD))
-    xdLayers.forEach((layer, xd) => {
-      if (displayedXDs.has(xd)) {
+    let xdBoundsAdded = 0
+
+    // Instead of iterating through all xdLayers, only check the ones we need
+    displayedXDs.forEach(xd => {
+      const layer = xdLayers.get(xd)
+      if (layer) {
         const layerBounds = layer.getBounds()
         if (layerBounds.isValid()) {
           mapBounds.extend(layerBounds)
+          xdBoundsAdded++
         }
       }
     })
-    
+
+    console.log('🔍 autoZoomToSignals: after adding XD bounds', {
+      xdBoundsAdded,
+      displayedXDsCount: displayedXDs.size,
+      finalBounds: {
+        north: mapBounds.getNorth(),
+        south: mapBounds.getSouth(),
+        east: mapBounds.getEast(),
+        west: mapBounds.getWest()
+      }
+    })
+
     if (mapBounds.isValid()) {
+      console.log('🔍 autoZoomToSignals: CALLING fitBounds')
       // Set maxZoom to 15 to prevent zooming in too far on single signals
       map.fitBounds(mapBounds, { padding: [50, 50], maxZoom: 15 })
+      console.log('🔍 autoZoomToSignals: DONE, new zoom:', map.getZoom())
+    } else {
+      console.log('🔍 autoZoomToSignals: SKIPPED (invalid bounds)')
     }
   }
 }

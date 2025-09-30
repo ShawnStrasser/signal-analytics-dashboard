@@ -214,3 +214,5 @@ frontend/dist/
 .DS_Store
 
 test*
+
+.claude/

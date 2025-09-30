@@ -27,10 +27,8 @@ class ApiService {
         url += '?' + searchParams.toString()
       }
 
-      console.log('Fetching Arrow data from:', url)
-      
       const response = await fetch(url)
-      
+
       if (!response.ok) {
         const errorText = await response.text()
         console.error('Response error:', errorText)
@@ -38,12 +36,7 @@ class ApiService {
       }
 
       const arrayBuffer = await response.arrayBuffer()
-      console.log('Received arrayBuffer size:', arrayBuffer.byteLength)
-      
       const table = arrow.tableFromIPC(arrayBuffer)
-      
-      console.log('Arrow table columns:', table.schema.fields.map(f => f.name))
-      console.log('Arrow table rows:', table.numRows)
       
       return table
     } catch (error) {
@@ -137,6 +130,42 @@ class ApiService {
       console.error('Health check failed:', error)
       throw error
     }
+  }
+
+  async getConnectionStatus() {
+    try {
+      const response = await fetch(`${this.baseURL}/connection-status`)
+      return response.json()
+    } catch (error) {
+      console.error('Connection status check failed:', error)
+      return { connected: false, connecting: false, error: error.message }
+    }
+  }
+
+  async waitForConnection(maxAttempts = 15, delayMs = 2000) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const health = await this.healthCheck()
+        if (health.database_connected) {
+          return true
+        }
+
+        // If still connecting, wait and try again
+        if (health.connecting) {
+          await new Promise(resolve => setTimeout(resolve, delayMs))
+          continue
+        }
+
+        // If not connected and not connecting, return false
+        return false
+      } catch (error) {
+        // Network error, wait and retry
+        if (attempt < maxAttempts - 1) {
+          await new Promise(resolve => setTimeout(resolve, delayMs))
+        }
+      }
+    }
+    return false
   }
 }
 

@@ -123,14 +123,7 @@ watch(() => [
   if (selectionStore.hasMapSelections) {
     selectionStore.clearAllSelections()
   }
-  
-  // Rezoom map to fit the new filtered signals after data loads
-  // Wait a bit for the map to update with new markers
-  setTimeout(() => {
-    if (mapRef.value) {
-      mapRef.value.rezoomToSignals()
-    }
-  }, 100)
+  // Note: Map will auto-zoom via autoZoomToSignals when new data loads
 })
 
 // Watch for any filter changes - reload map data
@@ -157,9 +150,18 @@ onMounted(async () => {
 
 async function loadMapData() {
   try {
+    console.log('📡 API: Loading map data START', filtersStore.filterParams)
+    const t0 = performance.now()
     loadingMap.value = true
+
     const arrowTable = await ApiService.getTravelTimeSummary(filtersStore.filterParams)
+    const t1 = performance.now()
+    console.log(`📡 API: getTravelTimeSummary took ${(t1 - t0).toFixed(2)}ms`)
+
     mapData.value = ApiService.arrowTableToObjects(arrowTable)
+    const t2 = performance.now()
+    console.log(`📡 API: arrowTableToObjects took ${(t2 - t1).toFixed(2)}ms`)
+    console.log(`📡 API: Loading map data DONE - ${mapData.value.length} records in ${(t2 - t0).toFixed(2)}ms`)
   } catch (error) {
     console.error('Failed to load map data:', error)
     mapData.value = []
@@ -170,26 +172,36 @@ async function loadMapData() {
 
 async function loadChartData() {
   try {
+    console.log('📊 API: Loading chart data START')
+    const t0 = performance.now()
     loadingChart.value = true
-    
+
     // Build filter params for chart based on selections
     const filters = { ...filtersStore.filterParams }
-    
+
     // If there are map selections, send the selected XD segments directly
     if (selectionStore.hasMapSelections) {
       const selectedXds = Array.from(selectionStore.allSelectedXdSegments)
-      
+
       if (selectedXds.length > 0) {
         filters.xd_segments = selectedXds
+        console.log('📊 API: Filtering chart to selected XDs', selectedXds)
       } else {
         // No selections, show empty chart
+        console.log('📊 API: No XD selections, showing empty chart')
         chartData.value = []
         return
       }
     }
-    
+
     const arrowTable = await ApiService.getTravelTimeAggregated(filters)
+    const t1 = performance.now()
+    console.log(`📊 API: getTravelTimeAggregated took ${(t1 - t0).toFixed(2)}ms`)
+
     chartData.value = ApiService.arrowTableToObjects(arrowTable)
+    const t2 = performance.now()
+    console.log(`📊 API: arrowTableToObjects took ${(t2 - t1).toFixed(2)}ms`)
+    console.log(`📊 API: Loading chart data DONE - ${chartData.value.length} records in ${(t2 - t0).toFixed(2)}ms`)
   } catch (error) {
     console.error('Failed to load chart data:', error)
     chartData.value = []

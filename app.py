@@ -6,19 +6,28 @@ Serves Arrow data directly from Snowflake
 import os
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from database import get_snowflake_session
+from database import get_snowflake_session, get_connection_status
 
 app = Flask(__name__, static_folder='frontend/dist')
 CORS(app)
 
 @app.route('/api/health')
 def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with connection status"""
+    status = get_connection_status()
     session = get_snowflake_session()
     return jsonify({
         'status': 'healthy' if session else 'unhealthy',
-        'snowflake_connected': session is not None
+        'database_connected': session is not None,
+        'connecting': status['connecting'],
+        'error': status['error']
     })
+
+@app.route('/api/connection-status')
+def connection_status():
+    """Get detailed connection status"""
+    status = get_connection_status()
+    return jsonify(status)
 
 # Import route modules
 from routes.api_travel_time import travel_time_bp
@@ -39,4 +48,12 @@ def serve_vue_app(path):
         return send_from_directory(app.static_folder, 'index.html')
 
 if __name__ == '__main__':
+    # Warm up database connection on startup
+    print("🔄 Warming up database connection...")
+    session = get_snowflake_session(retry=True, max_retries=3, retry_delay=2)
+    if session:
+        print("✅ Database connection established")
+    else:
+        print("⚠️  Database connection failed - will retry on first request")
+
     app.run(debug=True, host='0.0.0.0', port=5000)

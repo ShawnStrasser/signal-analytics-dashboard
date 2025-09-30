@@ -4,49 +4,88 @@ Database connection utilities for Snowflake
 
 import os
 import json
+import time
 from snowflake.snowpark.session import Session
 
 # Global session variable
 snowflake_session = None
+connection_status = {'connected': False, 'connecting': False, 'error': None}
 
-def get_snowflake_session():
-    """Get or create Snowflake session"""
-    global snowflake_session
-    
+def get_connection_status():
+    """Get current connection status"""
+    return connection_status.copy()
+
+def get_snowflake_session(retry=False, max_retries=3, retry_delay=2):
+    """Get or create Snowflake session with retry logic"""
+    global snowflake_session, connection_status
+
     # Return existing session if valid
     if snowflake_session is not None:
         try:
             # Test if session is still valid by running a simple query
             snowflake_session.sql("SELECT 1").collect()
+            connection_status['connected'] = True
+            connection_status['error'] = None
             return snowflake_session
         except:
             # Session is invalid, will recreate
             snowflake_session = None
-    
-    try:
-        # Import here to defer the warning until actual use
-        from snowflake.snowpark.context import get_active_session
-        
-        # Try to get active session first
-        snowflake_session = get_active_session()
-        print("Connected using active Snowflake session")
-        return snowflake_session
-    except Exception as e:
-        # Only print if it's not the expected "No default Session" error
-        if "No default Session is found" not in str(e):
-            print(f"Active session not available: {e}")
-        
-        try:
-            # Fallback to connection parameters
-            connection_parameters = json.loads(os.environ.get("SNOWFLAKE_CONNECTION", "{}"))
-            
-            if not connection_parameters:
-                raise Exception("No Snowflake connection parameters found")
-            
-            snowflake_session = Session.builder.configs(connection_parameters).create()
-            print("Connected using connection parameters")
+            connection_status['connected'] = False
+
+    # If already connecting (from another thread), wait briefly
+    if connection_status['connecting'] and not retry:
+        time.sleep(1)
+        if snowflake_session is not None:
             return snowflake_session
-            
+
+    connection_status['connecting'] = True
+    attempts = max_retries if retry else 1
+
+    for attempt in range(attempts):
+        try:
+            # Import here to defer the warning until actual use
+            from snowflake.snowpark.context import get_active_session
+
+            # Try to get active session first
+            print(f"Attempting to connect to database (attempt {attempt + 1}/{attempts})...")
+            snowflake_session = get_active_session()
+            print("Connected using active session")
+            connection_status['connected'] = True
+            connection_status['connecting'] = False
+            connection_status['error'] = None
+            return snowflake_session
         except Exception as e:
-            print(f"Failed to connect to Snowflake: {e}")
-            return None
+            # Only print if it's not the expected "No default Session" error
+            if "No default Session is found" not in str(e):
+                print(f"Active session not available: {e}")
+
+            try:
+                # Fallback to connection parameters
+                connection_parameters = json.loads(os.environ.get("SNOWFLAKE_CONNECTION", "{}"))
+
+                if not connection_parameters:
+                    raise Exception("No Snowflake connection parameters found")
+
+                snowflake_session = Session.builder.configs(connection_parameters).create()
+                print("Connected using connection parameters")
+                connection_status['connected'] = True
+                connection_status['connecting'] = False
+                connection_status['error'] = None
+                return snowflake_session
+
+            except Exception as e:
+                error_msg = f"Failed to connect to database: {e}"
+                print(error_msg)
+                connection_status['error'] = str(e)
+
+                # Retry if requested and not the last attempt
+                if retry and attempt < attempts - 1:
+                    print(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    continue
+
+                connection_status['connecting'] = False
+                return None
+
+    connection_status['connecting'] = False
+    return None

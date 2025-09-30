@@ -1,20 +1,36 @@
 """
 Anomalies API Routes - Returns Arrow data directly
+Optimized for low-latency small queries
 """
 
+import pyarrow as pa
 from flask import Blueprint, request
-import pandas as pd
+
 from database import get_snowflake_session
+from utils.arrow_utils import (
+    serialize_arrow_to_ipc,
+    create_empty_arrow_response,
+    create_arrow_response,
+    snowflake_result_to_arrow
+)
+from utils.query_utils import (
+    normalize_date,
+    build_xd_dimension_query,
+    extract_xd_values,
+    build_xd_filter,
+    create_xd_lookup_dict
+)
 
 anomalies_bp = Blueprint('anomalies', __name__)
+
 
 @anomalies_bp.route('/anomaly-summary')
 def get_anomaly_summary():
     """Get anomaly summary data for map visualization as Arrow"""
-    session = get_snowflake_session()
+    session = get_snowflake_session(retry=True, max_retries=2)
     if not session:
-        return "Snowflake connection failed", 500
-    
+        return "Connecting to Database - please wait", 503
+
     # Get query parameters
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
@@ -22,102 +38,37 @@ def get_anomaly_summary():
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
     anomaly_type = request.args.get('anomaly_type', default='All')
-    
+
     # Normalize dates
+    start_date_str = normalize_date(start_date)
+    end_date_str = normalize_date(end_date)
+
     try:
-        start_date_str = pd.to_datetime(start_date).strftime('%Y-%m-%d')
-        end_date_str = pd.to_datetime(end_date).strftime('%Y-%m-%d')
-    except Exception:
-        start_date_str = str(start_date)
-        end_date_str = str(end_date)
-    
-    # Step 1: Query DIM_SIGNALS_XD to get XD segments and signal info based on filters
-    dim_query = """
-    SELECT 
-        ID,
-        LATITUDE,
-        LONGITUDE,
-        APPROACH,
-        VALID_GEOMETRY,
-        XD
-    FROM TPAU_DB.TPAU_RITIS_SCHEMA.DIM_SIGNALS_XD
-    WHERE LATITUDE IS NOT NULL 
-    AND LONGITUDE IS NOT NULL
-    """
-    
-    if signal_ids:
-        ids_str = "', '".join(map(str, signal_ids))
-        dim_query += f" AND ID IN ('{ids_str}')"
-    
-    if approach is not None and approach != '':
-        # Convert string 'true'/'false' to SQL boolean
-        approach_bool = 'TRUE' if approach.lower() == 'true' else 'FALSE'
-        dim_query += f" AND APPROACH = {approach_bool}"
-        
-    if valid_geometry is not None and valid_geometry != '' and valid_geometry != 'all':
-        if valid_geometry == 'valid':
-            dim_query += " AND VALID_GEOMETRY = TRUE"
-        elif valid_geometry == 'invalid':
-            dim_query += " AND VALID_GEOMETRY = FALSE"
-    
-    try:
-        # Get the dimension data
+        # Step 1: Query DIM_SIGNALS_XD to get XD segments and signal info
+        dim_query = build_xd_dimension_query(signal_ids, approach, valid_geometry)
         dim_result = session.sql(dim_query).collect()
-        
+
         if not dim_result:
-            # No matching signals, return empty result
-            import pyarrow as pa
-            empty_schema = pa.schema([
-                ('ID', pa.string()),
-                ('LATITUDE', pa.float64()),
-                ('LONGITUDE', pa.float64()),
-                ('APPROACH', pa.bool_()),
-                ('VALID_GEOMETRY', pa.bool_()),
-                ('XD', pa.int64()),
-                ('ANOMALY_COUNT', pa.int64()),
-                ('POINT_SOURCE_COUNT', pa.int64())
-            ])
-            empty_table = pa.table([], schema=empty_schema)
-            sink = pa.BufferOutputStream()
-            with pa.ipc.new_stream(sink, empty_table.schema) as writer:
-                pass
-            arrow_bytes = sink.getvalue().to_pybytes()
-            return arrow_bytes, 200, {'Content-Type': 'application/octet-stream'}
-        
+            arrow_bytes = create_empty_arrow_response('anomaly_summary')
+            return create_arrow_response(arrow_bytes)
+
         # Extract XD values
-        xd_values = [row.as_dict()['XD'] for row in dim_result if row.as_dict().get('XD')]
-        
+        xd_values = extract_xd_values(dim_result)
+
         if not xd_values:
-            # No XD values found
-            import pyarrow as pa
-            empty_schema = pa.schema([
-                ('ID', pa.string()),
-                ('LATITUDE', pa.float64()),
-                ('LONGITUDE', pa.float64()),
-                ('APPROACH', pa.bool_()),
-                ('VALID_GEOMETRY', pa.bool_()),
-                ('XD', pa.int64()),
-                ('ANOMALY_COUNT', pa.int64()),
-                ('POINT_SOURCE_COUNT', pa.int64())
-            ])
-            empty_table = pa.table([], schema=empty_schema)
-            sink = pa.BufferOutputStream()
-            with pa.ipc.new_stream(sink, empty_table.schema) as writer:
-                pass
-            arrow_bytes = sink.getvalue().to_pybytes()
-            return arrow_bytes, 200, {'Content-Type': 'application/octet-stream'}
-        
-        # Step 2: Query TRAVEL_TIME_ANALYTICS directly using XD values
-        # Base query for anomaly counts
+            arrow_bytes = create_empty_arrow_response('anomaly_summary')
+            return create_arrow_response(arrow_bytes)
+
+        # Step 2: Query TRAVEL_TIME_ANALYTICS using XD values
         anomaly_filter = ""
         if anomaly_type == "Point Source":
             anomaly_filter = " AND ORIGINATED_ANOMALY = TRUE"
         elif anomaly_type == "All":
             anomaly_filter = " AND ANOMALY = TRUE"
-        
-        xd_str = ', '.join(map(str, xd_values))
+
+        xd_filter = build_xd_filter(xd_values)
         analytics_query = f"""
-        SELECT 
+        SELECT
             XD,
             COUNT(CASE WHEN ANOMALY = TRUE THEN 1 END) as ANOMALY_COUNT,
             COUNT(CASE WHEN ORIGINATED_ANOMALY = TRUE THEN 1 END) as POINT_SOURCE_COUNT
@@ -125,21 +76,16 @@ def get_anomaly_summary():
         WHERE TIMESTAMP >= '{start_date_str}'
         AND TIMESTAMP <= '{end_date_str}'
         {anomaly_filter}
-        AND XD IN ({xd_str})
+        {xd_filter}
         GROUP BY XD
         """
-        
+
         analytics_result = session.sql(analytics_query).collect()
-        
-        # Step 3: Combine the results in Python
-        # Create a dict mapping XD -> analytics data
-        analytics_dict = {}
-        for row in analytics_result:
-            row_dict = row.as_dict()
-            analytics_dict[row_dict['XD']] = row_dict
-        
-        # Build the final result by combining dim and analytics data
-        import pyarrow as pa
+
+        # Step 3: Join results - create XD -> analytics lookup
+        analytics_dict = create_xd_lookup_dict(analytics_result)
+
+        # Build final Arrow table
         ids = []
         latitudes = []
         longitudes = []
@@ -148,12 +94,12 @@ def get_anomaly_summary():
         xds = []
         anomaly_counts = []
         point_source_counts = []
-        
+
         for row in dim_result:
             dim_dict = row.as_dict()
             xd = dim_dict['XD']
             analytics = analytics_dict.get(xd, {})
-            
+
             ids.append(dim_dict['ID'])
             latitudes.append(dim_dict['LATITUDE'])
             longitudes.append(dim_dict['LONGITUDE'])
@@ -162,7 +108,7 @@ def get_anomaly_summary():
             xds.append(xd)
             anomaly_counts.append(analytics.get('ANOMALY_COUNT', 0))
             point_source_counts.append(analytics.get('POINT_SOURCE_COUNT', 0))
-        
+
         result_table = pa.table({
             'ID': ids,
             'LATITUDE': latitudes,
@@ -173,45 +119,38 @@ def get_anomaly_summary():
             'ANOMALY_COUNT': anomaly_counts,
             'POINT_SOURCE_COUNT': point_source_counts
         })
-        
-        # Convert to IPC stream
-        batches = result_table.to_batches()
-        sink = pa.BufferOutputStream()
-        with pa.ipc.new_stream(sink, result_table.schema) as writer:
-            for batch in batches:
-                writer.write_batch(batch)
-        arrow_bytes = sink.getvalue().to_pybytes()
-        return arrow_bytes, 200, {'Content-Type': 'application/octet-stream'}
+
+        arrow_bytes = serialize_arrow_to_ipc(result_table)
+        return create_arrow_response(arrow_bytes)
+
     except Exception as e:
+        print(f"[ERROR] /anomaly-summary: {e}")
         return f"Error fetching anomaly data: {e}", 500
+
 
 @anomalies_bp.route('/anomaly-aggregated')
 def get_anomaly_aggregated():
     """Get aggregated anomaly data by timestamp as Arrow"""
-    session = get_snowflake_session()
+    session = get_snowflake_session(retry=True, max_retries=2)
     if not session:
-        return "Snowflake connection failed", 500
-    
+        return "Connecting to Database - please wait", 503
+
     # Get query parameters
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     signal_ids = request.args.getlist('signal_ids')
-    xd_segments = request.args.getlist('xd_segments')  # Direct XD segment selection
+    xd_segments = request.args.getlist('xd_segments')
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
-    
+
     # Normalize dates
-    try:
-        start_date_str = pd.to_datetime(start_date).strftime('%Y-%m-%d')
-        end_date_str = pd.to_datetime(end_date).strftime('%Y-%m-%d')
-    except Exception:
-        start_date_str = str(start_date)
-        end_date_str = str(end_date)
+    start_date_str = normalize_date(start_date)
+    end_date_str = normalize_date(end_date)
 
     try:
-        # Build analytics query - filter by XD segments if provided
+        # Build analytics query - use XD segments directly if provided
         query = f"""
-        SELECT 
+        SELECT
             TIMESTAMP,
             SUM(TRAVEL_TIME_SECONDS) as TOTAL_ACTUAL_TRAVEL_TIME,
             SUM(PREDICTION) as TOTAL_PREDICTION
@@ -220,101 +159,52 @@ def get_anomaly_aggregated():
         AND TIMESTAMP <= '{end_date_str}'
         AND PREDICTION IS NOT NULL
         """
-        
-        # Prefer xd_segments if provided (direct XD selection from map)
-        # Otherwise fall back to signal_ids and look up XDs from DIM_SIGNALS_XD
+
+        # Direct XD filter (preferred) or lookup from signal IDs
         if xd_segments:
-            # Direct XD filter - this is the preferred method
-            xd_str = ', '.join(map(str, xd_segments))
-            query += f" AND XD IN ({xd_str})"
+            xd_filter = build_xd_filter([int(xd) for xd in xd_segments])
+            query += xd_filter
         elif signal_ids:
-            # Step 1: Query DIM_SIGNALS_XD to get XD segments based on filters
-            dim_query = """
-            SELECT XD
-            FROM TPAU_DB.TPAU_RITIS_SCHEMA.DIM_SIGNALS_XD
-            WHERE LATITUDE IS NOT NULL 
-            AND LONGITUDE IS NOT NULL
-            """
-            
-            ids_str = "', '".join(map(str, signal_ids))
-            dim_query += f" AND ID IN ('{ids_str}')"
-            
-            if approach is not None and approach != '':
-                # Convert string 'true'/'false' to SQL boolean
-                approach_bool = 'TRUE' if approach.lower() == 'true' else 'FALSE'
-                dim_query += f" AND APPROACH = {approach_bool}"
-                
-            if valid_geometry is not None and valid_geometry != '' and valid_geometry != 'all':
-                if valid_geometry == 'valid':
-                    dim_query += " AND VALID_GEOMETRY = TRUE"
-                elif valid_geometry == 'invalid':
-                    dim_query += " AND VALID_GEOMETRY = FALSE"
-            
-            # Get the XD segments
+            # Lookup XD values from dimension table
+            dim_query = build_xd_dimension_query(
+                signal_ids, approach, valid_geometry, include_xd_only=True
+            )
             dim_result = session.sql(dim_query).collect()
-            
+
             if not dim_result:
-                # No matching signals, return empty result
-                import pyarrow as pa
-                empty_schema = pa.schema([
-                    ('TIMESTAMP', pa.timestamp('ns')),
-                    ('TOTAL_ACTUAL_TRAVEL_TIME', pa.float64()),
-                    ('TOTAL_PREDICTION', pa.float64())
-                ])
-                empty_table = pa.table([], schema=empty_schema)
-                sink = pa.BufferOutputStream()
-                with pa.ipc.new_stream(sink, empty_table.schema) as writer:
-                    pass
-                arrow_bytes = sink.getvalue().to_pybytes()
-                return arrow_bytes, 200, {'Content-Type': 'application/octet-stream'}
-            
-            # Extract XD values
-            xd_values = [row.as_dict()['XD'] for row in dim_result if row.as_dict().get('XD')]
-            
+                arrow_bytes = create_empty_arrow_response('anomaly_aggregated')
+                return create_arrow_response(arrow_bytes)
+
+            xd_values = extract_xd_values(dim_result)
+
             if not xd_values:
-                # No XD values found
-                import pyarrow as pa
-                empty_schema = pa.schema([
-                    ('TIMESTAMP', pa.timestamp('ns')),
-                    ('TOTAL_ACTUAL_TRAVEL_TIME', pa.float64()),
-                    ('TOTAL_PREDICTION', pa.float64())
-                ])
-                empty_table = pa.table([], schema=empty_schema)
-                sink = pa.BufferOutputStream()
-                with pa.ipc.new_stream(sink, empty_table.schema) as writer:
-                    pass
-                arrow_bytes = sink.getvalue().to_pybytes()
-                return arrow_bytes, 200, {'Content-Type': 'application/octet-stream'}
-            
-            # Add XD filter to analytics query
-            xd_str = ', '.join(map(str, xd_values))
-            query += f" AND XD IN ({xd_str})"
-        
+                arrow_bytes = create_empty_arrow_response('anomaly_aggregated')
+                return create_arrow_response(arrow_bytes)
+
+            xd_filter = build_xd_filter(xd_values)
+            query += xd_filter
+
         query += """
-        GROUP BY TIMESTAMP 
+        GROUP BY TIMESTAMP
         ORDER BY TIMESTAMP
         """
-        
+
         arrow_data = session.sql(query).to_arrow()
-        # Convert Arrow table to bytes using proper method
-        import pyarrow as pa
-        batches = arrow_data.to_batches()
-        sink = pa.BufferOutputStream()
-        with pa.ipc.new_stream(sink, arrow_data.schema) as writer:
-            for batch in batches:
-                writer.write_batch(batch)
-        arrow_bytes = sink.getvalue().to_pybytes()
-        return arrow_bytes, 200, {'Content-Type': 'application/octet-stream'}
+        arrow_bytes = snowflake_result_to_arrow(arrow_data)
+        return create_arrow_response(arrow_bytes)
+
     except Exception as e:
+        print(f"[ERROR] /anomaly-aggregated: {e}")
         return f"Error fetching aggregated anomaly data: {e}", 500
+
 
 @anomalies_bp.route('/travel-time-data')
 def get_travel_time_data():
     """Get detailed travel time data for anomaly analysis as Arrow"""
-    session = get_snowflake_session()
+    session = get_snowflake_session(retry=True, max_retries=2)
     if not session:
-        return "Snowflake connection failed", 500
-    
+        return "Connecting to Database - please wait", 503
+
     # Get query parameters
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
@@ -322,111 +212,38 @@ def get_travel_time_data():
     signal_ids = request.args.getlist('signal_ids')
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
-    
-    # Normalize dates
-    try:
-        start_date_str = pd.to_datetime(start_date).strftime('%Y-%m-%d')
-        end_date_str = pd.to_datetime(end_date).strftime('%Y-%m-%d')
-    except Exception:
-        start_date_str = str(start_date)
-        end_date_str = str(end_date)
 
-    # Step 1: Query DIM_SIGNALS_XD to get XD segments and signal info based on filters
-    dim_query = """
-    SELECT 
-        ID,
-        LATITUDE,
-        LONGITUDE,
-        APPROACH,
-        VALID_GEOMETRY,
-        XD
-    FROM TPAU_DB.TPAU_RITIS_SCHEMA.DIM_SIGNALS_XD
-    WHERE LATITUDE IS NOT NULL 
-    AND LONGITUDE IS NOT NULL
-    """
-    
-    # Prefer xd_segments if provided, otherwise fall back to signal_ids
-    if xd_segments:
-        xd_str = ', '.join(map(str, xd_segments))
-        dim_query += f" AND XD IN ({xd_str})"
-    elif signal_ids:
-        ids_str = "', '".join(map(str, signal_ids))
-        dim_query += f" AND ID IN ('{ids_str}')"
-    
-    if approach is not None and approach != '':
-        # Convert string 'true'/'false' to SQL boolean
-        approach_bool = 'TRUE' if approach.lower() == 'true' else 'FALSE'
-        dim_query += f" AND APPROACH = {approach_bool}"
-        
-    if valid_geometry is not None and valid_geometry != '' and valid_geometry != 'all':
-        if valid_geometry == 'valid':
-            dim_query += " AND VALID_GEOMETRY = TRUE"
-        elif valid_geometry == 'invalid':
-            dim_query += " AND VALID_GEOMETRY = FALSE"
-    
+    # Normalize dates
+    start_date_str = normalize_date(start_date)
+    end_date_str = normalize_date(end_date)
+
     try:
-        # Get the dimension data
+        # Step 1: Query DIM_SIGNALS_XD to get XD segments and signal info
+        dim_query = build_xd_dimension_query(signal_ids, approach, valid_geometry)
+
+        # Prefer xd_segments if provided
+        if xd_segments:
+            xd_str = ', '.join(map(str, xd_segments))
+            dim_query += f" AND XD IN ({xd_str})"
+
         dim_result = session.sql(dim_query).collect()
-        
+
         if not dim_result:
-            # No matching signals, return empty result
-            import pyarrow as pa
-            empty_schema = pa.schema([
-                ('XD', pa.int32()),
-                ('TIMESTAMP', pa.timestamp('ns')),
-                ('TRAVEL_TIME_SECONDS', pa.float64()),
-                ('PREDICTION', pa.float64()),
-                ('ANOMALY', pa.bool_()),
-                ('ORIGINATED_ANOMALY', pa.bool_()),
-                ('ID', pa.string()),
-                ('LATITUDE', pa.float64()),
-                ('LONGITUDE', pa.float64()),
-                ('APPROACH', pa.bool_()),
-                ('VALID_GEOMETRY', pa.bool_())
-            ])
-            empty_table = pa.table([], schema=empty_schema)
-            sink = pa.BufferOutputStream()
-            with pa.ipc.new_stream(sink, empty_table.schema) as writer:
-                pass
-            arrow_bytes = sink.getvalue().to_pybytes()
-            return arrow_bytes, 200, {'Content-Type': 'application/octet-stream'}
-        
+            arrow_bytes = create_empty_arrow_response('travel_time_detail')
+            return create_arrow_response(arrow_bytes)
+
         # Extract XD values and create mapping
-        xd_to_signal = {}
-        for row in dim_result:
-            dim_dict = row.as_dict()
-            if dim_dict.get('XD'):
-                xd_to_signal[dim_dict['XD']] = dim_dict
-        
+        xd_to_signal = create_xd_lookup_dict(dim_result)
         xd_values = list(xd_to_signal.keys())
-        
+
         if not xd_values:
-            # No XD values found
-            import pyarrow as pa
-            empty_schema = pa.schema([
-                ('XD', pa.int32()),
-                ('TIMESTAMP', pa.timestamp('ns')),
-                ('TRAVEL_TIME_SECONDS', pa.float64()),
-                ('PREDICTION', pa.float64()),
-                ('ANOMALY', pa.bool_()),
-                ('ORIGINATED_ANOMALY', pa.bool_()),
-                ('ID', pa.string()),
-                ('LATITUDE', pa.float64()),
-                ('LONGITUDE', pa.float64()),
-                ('APPROACH', pa.bool_()),
-                ('VALID_GEOMETRY', pa.bool_())
-            ])
-            empty_table = pa.table([], schema=empty_schema)
-            sink = pa.BufferOutputStream()
-            with pa.ipc.new_stream(sink, empty_table.schema) as writer:
-                pass
-            arrow_bytes = sink.getvalue().to_pybytes()
-            return arrow_bytes, 200, {'Content-Type': 'application/octet-stream'}
-        
-        # Step 2: Query TRAVEL_TIME_ANALYTICS directly using XD values
-        xd_str = ', '.join(map(str, xd_values))
+            arrow_bytes = create_empty_arrow_response('travel_time_detail')
+            return create_arrow_response(arrow_bytes)
+
+        # Step 2: Query TRAVEL_TIME_ANALYTICS using XD values
+        xd_filter = build_xd_filter(xd_values)
         query = f"""
-        SELECT 
+        SELECT
             XD,
             TIMESTAMP,
             TRAVEL_TIME_SECONDS,
@@ -436,14 +253,13 @@ def get_travel_time_data():
         FROM TRAVEL_TIME_ANALYTICS
         WHERE TIMESTAMP >= '{start_date_str}'
         AND TIMESTAMP <= '{end_date_str}'
-        AND XD IN ({xd_str})
+        {xd_filter}
         ORDER BY TIMESTAMP
         """
-        
+
         analytics_result = session.sql(query).collect()
-        
-        # Step 3: Combine the results in Python
-        import pyarrow as pa
+
+        # Step 3: Combine results - join analytics with signal info
         xds = []
         timestamps = []
         travel_times = []
@@ -455,12 +271,12 @@ def get_travel_time_data():
         longitudes = []
         approaches = []
         valid_geometries = []
-        
+
         for row in analytics_result:
             analytics_dict = row.as_dict()
             xd = analytics_dict['XD']
             signal_info = xd_to_signal.get(xd, {})
-            
+
             xds.append(xd)
             timestamps.append(analytics_dict['TIMESTAMP'])
             travel_times.append(analytics_dict['TRAVEL_TIME_SECONDS'])
@@ -472,7 +288,7 @@ def get_travel_time_data():
             longitudes.append(signal_info.get('LONGITUDE'))
             approaches.append(signal_info.get('APPROACH'))
             valid_geometries.append(signal_info.get('VALID_GEOMETRY'))
-        
+
         result_table = pa.table({
             'XD': xds,
             'TIMESTAMP': timestamps,
@@ -486,14 +302,10 @@ def get_travel_time_data():
             'APPROACH': approaches,
             'VALID_GEOMETRY': valid_geometries
         })
-        
-        # Convert to IPC stream
-        batches = result_table.to_batches()
-        sink = pa.BufferOutputStream()
-        with pa.ipc.new_stream(sink, result_table.schema) as writer:
-            for batch in batches:
-                writer.write_batch(batch)
-        arrow_bytes = sink.getvalue().to_pybytes()
-        return arrow_bytes, 200, {'Content-Type': 'application/octet-stream'}
+
+        arrow_bytes = serialize_arrow_to_ipc(result_table)
+        return create_arrow_response(arrow_bytes)
+
     except Exception as e:
+        print(f"[ERROR] /travel-time-data: {e}")
         return f"Error fetching travel time data: {e}", 500
