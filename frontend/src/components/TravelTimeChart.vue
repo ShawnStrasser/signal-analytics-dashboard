@@ -56,12 +56,12 @@ function updateChart() {
   
   const travelTimeData = props.data.map(d => [
     new Date(d.TIMESTAMP).getTime(),
-    d.TOTAL_TRAVEL_TIME_SECONDS || 0
+    d.TRAVEL_TIME_INDEX || 0
   ])
-  
-  const title = props.selectedSignal 
-    ? `Total Travel Time for Signal ${props.selectedSignal}`
-    : 'Total Travel Time - All Selected Signals'
+
+  const title = props.selectedSignal
+    ? `Travel Time Index for Signal ${props.selectedSignal}`
+    : 'Travel Time Index - All Selected Signals'
   
   const option = {
     title: {
@@ -77,8 +77,8 @@ function updateChart() {
         if (params.length > 0) {
           const data = params[0]
           const time = new Date(data.value[0]).toLocaleString()
-          const travelTime = data.value[1].toFixed(1)
-          return `${time}<br/>Total Travel Time: ${travelTime}s`
+          const tti = data.value[1].toFixed(2)
+          return `${time}<br/>Travel Time Index: ${tti}`
         }
         return ''
       }
@@ -91,13 +91,13 @@ function updateChart() {
     },
     yAxis: {
       type: 'value',
-      name: 'Total Travel Time (seconds)',
+      name: 'Travel Time Index',
       nameLocation: 'middle',
       nameGap: 50
     },
     series: [
       {
-        name: 'Total Travel Time',
+        name: 'Travel Time Index',
         type: 'line',
         data: travelTimeData,
         smooth: true,

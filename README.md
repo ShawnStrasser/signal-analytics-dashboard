@@ -12,7 +12,7 @@ Two connection methods are supported:
 
 #### DIM_SIGNALS_XD
 ```sql
-CREATE TABLE TPAU_DB.TPAU_RITIS_SCHEMA.DIM_SIGNALS_XD (
+CREATE TABLE DIM_SIGNALS_XD (
     ID VARCHAR,
     latitude DOUBLE,
     longitude DOUBLE,

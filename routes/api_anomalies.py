@@ -60,22 +60,17 @@ def get_anomaly_summary():
             return create_arrow_response(arrow_bytes)
 
         # Step 2: Query TRAVEL_TIME_ANALYTICS using XD values
-        anomaly_filter = ""
-        if anomaly_type == "Point Source":
-            anomaly_filter = " AND ORIGINATED_ANOMALY = TRUE"
-        elif anomaly_type == "All":
-            anomaly_filter = " AND ANOMALY = TRUE"
-
+        # Note: We count ALL records for percentage calculation, not just anomalies
         xd_filter = build_xd_filter(xd_values)
         analytics_query = f"""
         SELECT
             XD,
             COUNT(CASE WHEN ANOMALY = TRUE THEN 1 END) as ANOMALY_COUNT,
-            COUNT(CASE WHEN ORIGINATED_ANOMALY = TRUE THEN 1 END) as POINT_SOURCE_COUNT
+            COUNT(CASE WHEN ORIGINATED_ANOMALY = TRUE THEN 1 END) as POINT_SOURCE_COUNT,
+            COUNT(*) as RECORD_COUNT
         FROM TRAVEL_TIME_ANALYTICS
         WHERE TIMESTAMP >= '{start_date_str}'
         AND TIMESTAMP <= '{end_date_str}'
-        {anomaly_filter}
         {xd_filter}
         GROUP BY XD
         """
@@ -94,6 +89,7 @@ def get_anomaly_summary():
         xds = []
         anomaly_counts = []
         point_source_counts = []
+        record_counts = []
 
         for row in dim_result:
             dim_dict = row.as_dict()
@@ -108,6 +104,7 @@ def get_anomaly_summary():
             xds.append(xd)
             anomaly_counts.append(analytics.get('ANOMALY_COUNT', 0))
             point_source_counts.append(analytics.get('POINT_SOURCE_COUNT', 0))
+            record_counts.append(analytics.get('RECORD_COUNT', 0))
 
         result_table = pa.table({
             'ID': ids,
@@ -117,7 +114,8 @@ def get_anomaly_summary():
             'VALID_GEOMETRY': valid_geometries,
             'XD': xds,
             'ANOMALY_COUNT': anomaly_counts,
-            'POINT_SOURCE_COUNT': point_source_counts
+            'POINT_SOURCE_COUNT': point_source_counts,
+            'RECORD_COUNT': record_counts
         })
 
         arrow_bytes = serialize_arrow_to_ipc(result_table)

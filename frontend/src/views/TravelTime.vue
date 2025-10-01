@@ -5,7 +5,7 @@
         <v-card>
           <v-card-title>
             <v-icon left>mdi-chart-line</v-icon>
-            Travel Time Analysis
+            Travel Time Index Analysis
           </v-card-title>
         </v-card>
       </v-col>
@@ -29,7 +29,7 @@
             </v-btn>
           </v-card-title>
           <v-card-subtitle>
-            Signal points show average travel time by color. Click signals or XD segments to filter the chart below.
+            Signal points show travel time index by color. Click signals or XD segments to filter the chart below.
           </v-card-subtitle>
           <v-card-text>
             <div style="height: 500px; position: relative;">
@@ -77,7 +77,7 @@
       <v-col cols="12">
         <v-card>
           <v-card-title>
-            📈 Travel Time Time Series
+            📈 Travel Time Index Time Series
           </v-card-title>
           <v-card-text>
             <div style="height: 500px;">

@@ -148,19 +148,23 @@ def get_travel_time_summary():
             arrow_bytes = create_empty_arrow_response('travel_time_summary')
             return create_arrow_response(arrow_bytes)
 
-        # Step 2: Query TRAVEL_TIME_ANALYTICS using XD values
+        # Step 2: Query TRAVEL_TIME_ANALYTICS using XD values, join with FREEFLOW to calculate TTI
         xd_filter = build_xd_filter(xd_values)
         analytics_query = f"""
         SELECT
-            XD,
-            SUM(TRAVEL_TIME_SECONDS) as TOTAL_TRAVEL_TIME,
-            AVG(TRAVEL_TIME_SECONDS) as AVG_TRAVEL_TIME,
+            t.XD,
+            COALESCE(
+                NULLIF(SUM(t.TRAVEL_TIME_SECONDS) / NULLIF(SUM(f.TRAVEL_TIME_SECONDS), 0), 0),
+                0
+            ) as TRAVEL_TIME_INDEX,
+            AVG(t.TRAVEL_TIME_SECONDS) as AVG_TRAVEL_TIME,
             COUNT(*) as RECORD_COUNT
-        FROM TRAVEL_TIME_ANALYTICS
-        WHERE TIMESTAMP >= '{start_date_str}'
-        AND TIMESTAMP <= '{end_date_str}'
-        {xd_filter}
-        GROUP BY XD
+        FROM TRAVEL_TIME_ANALYTICS t
+        INNER JOIN FREEFLOW f ON t.XD = f.XD
+        WHERE t.TIMESTAMP >= '{start_date_str}'
+        AND t.TIMESTAMP <= '{end_date_str}'
+        {xd_filter.replace('XD', 't.XD')}
+        GROUP BY t.XD
         """
 
         analytics_result = session.sql(analytics_query).collect()
@@ -175,7 +179,7 @@ def get_travel_time_summary():
         approaches = []
         valid_geometries = []
         xds = []
-        total_travel_times = []
+        travel_time_indexes = []
         avg_travel_times = []
         record_counts = []
 
@@ -190,7 +194,7 @@ def get_travel_time_summary():
             approaches.append(dim_dict.get('APPROACH'))
             valid_geometries.append(dim_dict.get('VALID_GEOMETRY'))
             xds.append(xd)
-            total_travel_times.append(analytics.get('TOTAL_TRAVEL_TIME', 0))
+            travel_time_indexes.append(analytics.get('TRAVEL_TIME_INDEX', 0))
             avg_travel_times.append(analytics.get('AVG_TRAVEL_TIME', 0))
             record_counts.append(analytics.get('RECORD_COUNT', 0))
 
@@ -201,7 +205,7 @@ def get_travel_time_summary():
             'APPROACH': approaches,
             'VALID_GEOMETRY': valid_geometries,
             'XD': xds,
-            'TOTAL_TRAVEL_TIME': total_travel_times,
+            'TRAVEL_TIME_INDEX': travel_time_indexes,
             'AVG_TRAVEL_TIME': avg_travel_times,
             'RECORD_COUNT': record_counts
         })
@@ -237,17 +241,21 @@ def get_travel_time_aggregated():
         # Build analytics query - use XD segments directly if provided
         query = f"""
         SELECT
-            TIMESTAMP,
-            SUM(TRAVEL_TIME_SECONDS) as TOTAL_TRAVEL_TIME_SECONDS
-        FROM TRAVEL_TIME_ANALYTICS
-        WHERE TIMESTAMP >= '{start_date_str}'
-        AND TIMESTAMP <= '{end_date_str}'
+            t.TIMESTAMP,
+            COALESCE(
+                NULLIF(SUM(t.TRAVEL_TIME_SECONDS) / NULLIF(SUM(f.TRAVEL_TIME_SECONDS), 0), 0),
+                0
+            ) as TRAVEL_TIME_INDEX
+        FROM TRAVEL_TIME_ANALYTICS t
+        INNER JOIN FREEFLOW f ON t.XD = f.XD
+        WHERE t.TIMESTAMP >= '{start_date_str}'
+        AND t.TIMESTAMP <= '{end_date_str}'
         """
 
         # Direct XD filter (preferred) or lookup from signal IDs
         if xd_segments:
             xd_filter = build_xd_filter([int(xd) for xd in xd_segments])
-            query += xd_filter
+            query += xd_filter.replace('XD', 't.XD')
         elif signal_ids:
             # Lookup XD values from dimension table
             dim_query = build_xd_dimension_query(
@@ -266,11 +274,11 @@ def get_travel_time_aggregated():
                 return create_arrow_response(arrow_bytes)
 
             xd_filter = build_xd_filter(xd_values)
-            query += xd_filter
+            query += xd_filter.replace('XD', 't.XD')
 
         query += """
-        GROUP BY TIMESTAMP
-        ORDER BY TIMESTAMP
+        GROUP BY t.TIMESTAMP
+        ORDER BY t.TIMESTAMP
         """
 
         arrow_data = session.sql(query).to_arrow()

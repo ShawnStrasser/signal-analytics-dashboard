@@ -71,7 +71,7 @@ import ApiService from '@/services/api'
 const routes = [
   {
     path: '/travel-time',
-    title: 'Travel Time',
+    title: 'Travel Time Index',
     icon: 'mdi-chart-line',
   },
   {

@@ -44,7 +44,7 @@ const { selectedSignalsList, selectedXdSegmentsList } = storeToRefs(selectionSto
 
 // Marker radius in meters (real-world distance)
 // This will scale with the map automatically, just like XD segments
-const SIGNAL_RADIUS_METERS = 60 // About 197 feet
+const SIGNAL_RADIUS_METERS = 50 // About 197 feet
 
 onMounted(() => {
   initializeMap()
@@ -205,12 +205,13 @@ function updateGeometry() {
       if (props.dataType === 'anomaly') {
         const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
         const count = dataValue[countColumn] || 0
-        const maxCount = getMaxValue(xdDataMap, countColumn)
-        fillColor = anomalyColorScale(count, maxCount)
+        const totalRecords = dataValue.RECORD_COUNT || 0
+        const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
+        fillColor = anomalyColorScale(percentage)
       } else {
-        // Travel time mode
-        const avgTime = dataValue.AVG_TRAVEL_TIME || 0
-        fillColor = travelTimeColorScale(avgTime)
+        // Travel time mode - use TTI for coloring
+        const tti = dataValue.TRAVEL_TIME_INDEX || 0
+        fillColor = travelTimeColorScale(tti)
       }
     }
 
@@ -259,35 +260,28 @@ function getXdDataMap() {
         xdMap.set(signal.XD, {
           ANOMALY_COUNT: 0,
           POINT_SOURCE_COUNT: 0,
-          TOTAL_TRAVEL_TIME: 0,
+          TRAVEL_TIME_INDEX: 0,
           AVG_TRAVEL_TIME: 0,
           RECORD_COUNT: 0,
           count: 0
         })
       }
-      
+
       const existing = xdMap.get(signal.XD)
       existing.ANOMALY_COUNT += (signal.ANOMALY_COUNT || 0)
       existing.POINT_SOURCE_COUNT += (signal.POINT_SOURCE_COUNT || 0)
-      existing.TOTAL_TRAVEL_TIME += (signal.TOTAL_TRAVEL_TIME || signal.TOTAL_TRAVEL_TIME_SECONDS || 0)
+      existing.TRAVEL_TIME_INDEX += (signal.TRAVEL_TIME_INDEX || 0)
       existing.AVG_TRAVEL_TIME += (signal.AVG_TRAVEL_TIME || signal.AVG_TRAVEL_TIME_SECONDS || 0)
       existing.RECORD_COUNT += (signal.RECORD_COUNT || 0)
       existing.count += 1
-      
-      // Average the AVG_TRAVEL_TIME
+
+      // Average the AVG_TRAVEL_TIME and TRAVEL_TIME_INDEX
       existing.AVG_TRAVEL_TIME = existing.AVG_TRAVEL_TIME / existing.count
+      existing.TRAVEL_TIME_INDEX = existing.TRAVEL_TIME_INDEX / existing.count
     }
   })
   
   return xdMap
-}
-
-function getMaxValue(xdMap, key) {
-  let max = 0
-  for (const value of xdMap.values()) {
-    if (value[key] > max) max = value[key]
-  }
-  return max
 }
 
 function createXdTooltip(xd, dataValue) {
@@ -296,19 +290,26 @@ function createXdTooltip(xd, dataValue) {
   }
   
   if (props.dataType === 'anomaly') {
+    const anomalyCount = dataValue.ANOMALY_COUNT || 0
+    const pointSourceCount = dataValue.POINT_SOURCE_COUNT || 0
+    const totalRecords = dataValue.RECORD_COUNT || 0
+    const percentage = totalRecords > 0 ? (anomalyCount / totalRecords) * 100 : 0
+
     return `
       <div>
         <strong>XD Segment:</strong> ${xd}<br>
-        <strong>Total Anomalies:</strong> ${dataValue.ANOMALY_COUNT || 0}<br>
-        <strong>Point Source:</strong> ${dataValue.POINT_SOURCE_COUNT || 0}
+        <strong>Anomaly Percentage:</strong> ${percentage.toFixed(1)}%<br>
+        <strong>Total Anomalies:</strong> ${anomalyCount}<br>
+        <strong>Point Source:</strong> ${pointSourceCount}<br>
+        <strong>Total Records:</strong> ${totalRecords}
       </div>
     `
   } else {
-    const totalTravelTime = dataValue.TOTAL_TRAVEL_TIME || 0
+    const travelTimeIndex = dataValue.TRAVEL_TIME_INDEX || 0
     return `
       <div>
         <strong>XD Segment:</strong> ${xd}<br>
-        <strong>Total Travel Time:</strong> ${totalTravelTime.toFixed(0)}s<br>
+        <strong>Travel Time Index:</strong> ${travelTimeIndex.toFixed(2)}<br>
         <strong>Records:</strong> ${dataValue.RECORD_COUNT || 0}
       </div>
     `
@@ -345,26 +346,28 @@ function updateMarkers() {
           APPROACH: signal.APPROACH,
           VALID_GEOMETRY: signal.VALID_GEOMETRY,
           ANOMALY_COUNT: 0,
-          POINT_SOURCE_COUNT: 0
+          POINT_SOURCE_COUNT: 0,
+          RECORD_COUNT: 0
         })
       }
-      
+
       const group = signalGroups.get(signal.ID)
       group.ANOMALY_COUNT += (signal.ANOMALY_COUNT || 0)
       group.POINT_SOURCE_COUNT += (signal.POINT_SOURCE_COUNT || 0)
+      group.RECORD_COUNT += (signal.RECORD_COUNT || 0)
     })
 
     const aggregatedSignals = Array.from(signalGroups.values())
-    const counts = aggregatedSignals.map(s => s[countColumn] || 0)
-    const maxCount = Math.max(...counts, 1)
-    
+
     aggregatedSignals.forEach(signal => {
       bounds.push([signal.LATITUDE, signal.LONGITUDE])
-      
+
       const count = signal[countColumn] || 0
-      
-      // Color using anomaly color scale
-      const color = anomalyColorScale(count, maxCount)
+      const totalRecords = signal.RECORD_COUNT || 0
+      const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
+
+      // Color using anomaly percentage scale
+      const color = anomalyColorScale(percentage)
       
       const isSelected = selectionStore.isSignalSelected(signal.ID)
       
@@ -381,10 +384,11 @@ function updateMarkers() {
       const tooltipContent = `
         <div>
           <h4>Signal ${signal.ID}</h4>
+          <p><strong>Anomaly Percentage:</strong> ${percentage.toFixed(1)}%</p>
           <p><strong>Total Anomalies:</strong> ${signal.ANOMALY_COUNT || 0}</p>
           <p><strong>Point Source:</strong> ${signal.POINT_SOURCE_COUNT || 0}</p>
+          <p><strong>Total Records:</strong> ${totalRecords}</p>
           <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
-          <p><strong>Valid Geometry:</strong> ${signal.VALID_GEOMETRY === 1 || signal.VALID_GEOMETRY === true ? 'Yes' : 'No'}</p>
         </div>
       `
       
@@ -420,21 +424,23 @@ function updateMarkers() {
           LONGITUDE: longitude,
           APPROACH: signal.APPROACH,
           VALID_GEOMETRY: signal.VALID_GEOMETRY,
-          TOTAL_TRAVEL_TIME: 0,
+          TRAVEL_TIME_INDEX: 0,
           RECORD_COUNT: 0,
           totalForAvg: 0,
-          countForAvg: 0
+          countForAvg: 0,
+          ttiCount: 0
         })
       }
-      
+
       const group = signalGroups.get(signal.ID)
-      const totalTime = Number(signal.TOTAL_TRAVEL_TIME ?? signal.TOTAL_TRAVEL_TIME_SECONDS ?? 0) || 0
+      const tti = Number(signal.TRAVEL_TIME_INDEX ?? 0) || 0
       const records = Number(signal.RECORD_COUNT ?? 0) || 0
       const avgTime = Number(signal.AVG_TRAVEL_TIME ?? signal.AVG_TRAVEL_TIME_SECONDS ?? 0) || 0
-      
-      group.TOTAL_TRAVEL_TIME += totalTime
+
+      group.TRAVEL_TIME_INDEX += tti
+      group.ttiCount += 1
       group.RECORD_COUNT += records
-      
+
       // For weighted average calculation
       if (records > 0 && avgTime > 0) {
         group.totalForAvg += avgTime * records
@@ -443,23 +449,19 @@ function updateMarkers() {
     })
     
     const aggregatedSignals = Array.from(signalGroups.values())
-    
-    // Calculate max for color scaling
-    const totals = aggregatedSignals.map(signal => signal.TOTAL_TRAVEL_TIME)
-    const validTotals = totals.filter(value => Number.isFinite(value))
-    const maxTravelTime = validTotals.length ? Math.max(...validTotals) : 0
-    
+
     aggregatedSignals.forEach(signal => {
       bounds.push([signal.LATITUDE, signal.LONGITUDE])
-      
-      // Calculate weighted average for color
-      const avgTime = signal.countForAvg > 0 
-        ? signal.totalForAvg / signal.countForAvg 
+
+      // Calculate average TTI for coloring
+      const avgTTI = signal.ttiCount > 0
+        ? signal.TRAVEL_TIME_INDEX / signal.ttiCount
         : 0
-      const color = travelTimeColorScale(avgTime)
-      
+
+      const color = travelTimeColorScale(avgTTI)
+
       const isSelected = selectionStore.isSignalSelected(signal.ID)
-      
+
       const marker = L.circle([signal.LATITUDE, signal.LONGITUDE], SIGNAL_RADIUS_METERS, {
         fillColor: color,
         color: isSelected ? '#000000' : '#FFFFFF',
@@ -469,15 +471,14 @@ function updateMarkers() {
         interactive: true,
         bubblingMouseEvents: false
       })
-      
-      const totalTravelTime = signal.TOTAL_TRAVEL_TIME
-      const totalTravelTimeDisplay = Number.isFinite(totalTravelTime) ? totalTravelTime.toFixed(0) : 'N/A'
+
+      const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
       const recordCount = signal.RECORD_COUNT
 
       const tooltipContent = `
         <div>
           <h4>Signal ${signal.ID}</h4>
-          <p><strong>Total Travel Time:</strong> ${totalTravelTimeDisplay}s</p>
+          <p><strong>Travel Time Index:</strong> ${ttiDisplay}</p>
           <p><strong>Records:</strong> ${recordCount}</p>
           <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
         </div>
@@ -601,11 +602,12 @@ function updateSelectionStyles() {
       if (props.dataType === 'anomaly') {
         const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
         const count = dataValue[countColumn] || 0
-        const maxCount = getMaxValue(xdDataMap, countColumn)
-        fillColor = anomalyColorScale(count, maxCount)
+        const totalRecords = dataValue.RECORD_COUNT || 0
+        const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
+        fillColor = anomalyColorScale(percentage)
       } else {
-        const avgTime = dataValue.AVG_TRAVEL_TIME || 0
-        fillColor = travelTimeColorScale(avgTime)
+        const tti = dataValue.TRAVEL_TIME_INDEX || 0
+        fillColor = travelTimeColorScale(tti)
       }
     }
     
