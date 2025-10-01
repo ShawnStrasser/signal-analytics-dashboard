@@ -3,7 +3,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import * as echarts from 'echarts'
 
 const props = defineProps({
@@ -32,7 +32,10 @@ onUnmounted(() => {
 })
 
 watch(() => [props.data, props.selectedSignal], () => {
-  updateChart()
+  // Defer chart update to next tick to avoid updating during render
+  nextTick(() => {
+    updateChart()
+  })
 }, { deep: true })
 
 function initializeChart() {
@@ -46,17 +49,17 @@ function initializeChart() {
 
 function updateChart() {
   if (!chart || !props.data.length) return
-  
-  // Prepare data for ECharts
+
+  // Prepare data for ECharts - convert BigInt to Number
   const timeData = props.data.map(d => {
     // Convert timestamp to Date if it's a string
     const timestamp = new Date(d.TIMESTAMP)
     return timestamp.getTime()
   })
-  
+
   const travelTimeData = props.data.map(d => [
     new Date(d.TIMESTAMP).getTime(),
-    d.TRAVEL_TIME_INDEX || 0
+    Number(d.TRAVEL_TIME_INDEX) || 0
   ])
 
   const title = props.selectedSignal

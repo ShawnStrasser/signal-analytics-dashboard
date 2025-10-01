@@ -3,7 +3,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import * as echarts from 'echarts'
 
 const props = defineProps({
@@ -32,7 +32,10 @@ onUnmounted(() => {
 })
 
 watch(() => [props.data, props.selectedSignal], () => {
-  updateChart()
+  // Defer chart update to next tick to avoid updating during render
+  nextTick(() => {
+    updateChart()
+  })
 }, { deep: true })
 
 function initializeChart() {
@@ -45,16 +48,16 @@ function initializeChart() {
 
 function updateChart() {
   if (!chart || !props.data.length) return
-  
-  // Prepare data for dual series chart
+
+  // Prepare data for dual series chart - convert BigInt to Number
   const actualData = props.data.map(d => [
     new Date(d.TIMESTAMP).getTime(),
-    d.TOTAL_ACTUAL_TRAVEL_TIME || 0
+    Number(d.TOTAL_ACTUAL_TRAVEL_TIME) || 0
   ])
-  
+
   const predictedData = props.data.map(d => [
     new Date(d.TIMESTAMP).getTime(),
-    d.TOTAL_PREDICTION || 0
+    Number(d.TOTAL_PREDICTION) || 0
   ])
   
   const title = props.selectedSignal 
