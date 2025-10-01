@@ -4,6 +4,7 @@ Query utilities for building common SQL patterns and handling Snowflake results
 
 import pandas as pd
 from typing import List, Optional, Dict, Any
+from datetime import datetime
 
 
 def normalize_date(date_str: str) -> str:
@@ -132,3 +133,61 @@ def create_xd_lookup_dict(dim_result) -> Dict[int, Dict[str, Any]]:
         if xd is not None:
             xd_dict[xd] = row_dict
     return xd_dict
+
+
+def get_aggregation_table(start_date: str, end_date: str) -> str:
+    """
+    Determine which table/view to query based on date range.
+
+    Args:
+        start_date: Start date string (YYYY-MM-DD format)
+        end_date: End date string (YYYY-MM-DD format)
+
+    Returns:
+        Table name: TRAVEL_TIME_ANALYTICS, TRAVEL_TIME_HOURLY_AGG, or TRAVEL_TIME_DAILY_AGG
+    """
+    try:
+        start = datetime.strptime(start_date, '%Y-%m-%d')
+        end = datetime.strptime(end_date, '%Y-%m-%d')
+        days = (end - start).days
+
+        if days < 4:
+            return "TRAVEL_TIME_ANALYTICS"
+        elif days <= 7:
+            return "TRAVEL_TIME_HOURLY_AGG"
+        else:
+            return "TRAVEL_TIME_DAILY_AGG"
+    except Exception:
+        # Default to base table if date parsing fails
+        return "TRAVEL_TIME_ANALYTICS"
+
+
+def build_time_of_day_filter(start_hour: Optional[int] = None, end_hour: Optional[int] = None) -> str:
+    """
+    Build SQL filter clause for time-of-day filtering.
+
+    Args:
+        start_hour: Start hour (0-23), None means no filter
+        end_hour: End hour (0-23), None means no filter
+
+    Returns:
+        SQL fragment like "AND HOUR_OF_DAY BETWEEN 15 AND 18" or empty string
+    """
+    if start_hour is None or end_hour is None:
+        return ""
+
+    try:
+        start = int(start_hour)
+        end = int(end_hour)
+
+        # Validate hour range
+        if not (0 <= start <= 23 and 0 <= end <= 23):
+            return ""
+
+        # If filtering all day (0-23), no need for filter
+        if start == 0 and end == 23:
+            return ""
+
+        return f" AND HOUR_OF_DAY BETWEEN {start} AND {end}"
+    except (ValueError, TypeError):
+        return ""

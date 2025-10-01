@@ -18,7 +18,9 @@ from utils.query_utils import (
     build_xd_dimension_query,
     extract_xd_values,
     build_xd_filter,
-    create_xd_lookup_dict
+    create_xd_lookup_dict,
+    get_aggregation_table,
+    build_time_of_day_filter
 )
 
 anomalies_bp = Blueprint('anomalies', __name__)
@@ -38,10 +40,18 @@ def get_anomaly_summary():
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
     anomaly_type = request.args.get('anomaly_type', default='All')
+    start_hour = request.args.get('start_hour')
+    end_hour = request.args.get('end_hour')
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
     end_date_str = normalize_date(end_date)
+
+    # Determine aggregation table based on date range
+    agg_table = get_aggregation_table(start_date_str, end_date_str)
+
+    # Build time-of-day filter
+    time_filter = build_time_of_day_filter(start_hour, end_hour)
 
     try:
         # Step 1: Query DIM_SIGNALS_XD to get XD segments and signal info
@@ -59,21 +69,41 @@ def get_anomaly_summary():
             arrow_bytes = create_empty_arrow_response('anomaly_summary')
             return create_arrow_response(arrow_bytes)
 
-        # Step 2: Query TRAVEL_TIME_ANALYTICS using XD values
-        # Note: We count ALL records for percentage calculation, not just anomalies
+        # Step 2: Query aggregated table using XD values
         xd_filter = build_xd_filter(xd_values)
-        analytics_query = f"""
-        SELECT
-            XD,
-            COUNT(CASE WHEN ANOMALY = TRUE THEN 1 END) as ANOMALY_COUNT,
-            COUNT(CASE WHEN ORIGINATED_ANOMALY = TRUE THEN 1 END) as POINT_SOURCE_COUNT,
-            COUNT(*) as RECORD_COUNT
-        FROM TRAVEL_TIME_ANALYTICS
-        WHERE TIMESTAMP >= '{start_date_str}'
-        AND TIMESTAMP <= '{end_date_str}'
-        {xd_filter}
-        GROUP BY XD
-        """
+
+        # Build query based on aggregation table
+        if agg_table == "TRAVEL_TIME_ANALYTICS":
+            # Base table: count directly
+            analytics_query = f"""
+            SELECT
+                XD,
+                COUNT(CASE WHEN ANOMALY = TRUE THEN 1 END) as ANOMALY_COUNT,
+                COUNT(CASE WHEN ORIGINATED_ANOMALY = TRUE THEN 1 END) as POINT_SOURCE_COUNT,
+                COUNT(*) as RECORD_COUNT
+            FROM TRAVEL_TIME_ANALYTICS
+            WHERE TIMESTAMP >= '{start_date_str}'
+            AND TIMESTAMP <= '{end_date_str}'
+            {xd_filter}
+            {time_filter}
+            GROUP BY XD
+            """
+        else:
+            # Materialized view: sum pre-aggregated counts
+            date_filter = "DATE_ONLY" if agg_table == "TRAVEL_TIME_DAILY_AGG" else "TIMESTAMP"
+            analytics_query = f"""
+            SELECT
+                XD,
+                SUM(ANOMALY_COUNT) as ANOMALY_COUNT,
+                SUM(POINT_SOURCE_COUNT) as POINT_SOURCE_COUNT,
+                SUM(RECORD_COUNT) as RECORD_COUNT
+            FROM {agg_table}
+            WHERE {date_filter} >= '{start_date_str}'
+            AND {date_filter} <= '{end_date_str}'
+            {xd_filter}
+            {time_filter}
+            GROUP BY XD
+            """
 
         analytics_result = session.sql(analytics_query).collect()
 
@@ -140,28 +170,24 @@ def get_anomaly_aggregated():
     xd_segments = request.args.getlist('xd_segments')
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
+    start_hour = request.args.get('start_hour')
+    end_hour = request.args.get('end_hour')
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
     end_date_str = normalize_date(end_date)
 
-    try:
-        # Build analytics query - use XD segments directly if provided
-        query = f"""
-        SELECT
-            TIMESTAMP,
-            SUM(TRAVEL_TIME_SECONDS) as TOTAL_ACTUAL_TRAVEL_TIME,
-            SUM(PREDICTION) as TOTAL_PREDICTION
-        FROM TRAVEL_TIME_ANALYTICS
-        WHERE TIMESTAMP >= '{start_date_str}'
-        AND TIMESTAMP <= '{end_date_str}'
-        AND PREDICTION IS NOT NULL
-        """
+    # Determine aggregation table based on date range
+    agg_table = get_aggregation_table(start_date_str, end_date_str)
 
-        # Direct XD filter (preferred) or lookup from signal IDs
+    # Build time-of-day filter
+    time_filter = build_time_of_day_filter(start_hour, end_hour)
+
+    try:
+        # Resolve XD segments if signal_ids provided
+        xd_values = None
         if xd_segments:
-            xd_filter = build_xd_filter([int(xd) for xd in xd_segments])
-            query += xd_filter
+            xd_values = [int(xd) for xd in xd_segments]
         elif signal_ids:
             # Lookup XD values from dimension table
             dim_query = build_xd_dimension_query(
@@ -179,13 +205,43 @@ def get_anomaly_aggregated():
                 arrow_bytes = create_empty_arrow_response('anomaly_aggregated')
                 return create_arrow_response(arrow_bytes)
 
-            xd_filter = build_xd_filter(xd_values)
-            query += xd_filter
+        # Build XD filter
+        xd_filter = build_xd_filter(xd_values) if xd_values else ""
 
-        query += """
-        GROUP BY TIMESTAMP
-        ORDER BY TIMESTAMP
-        """
+        # Build query based on aggregation table
+        if agg_table == "TRAVEL_TIME_ANALYTICS":
+            # Base table
+            query = f"""
+            SELECT
+                TIMESTAMP,
+                SUM(TRAVEL_TIME_SECONDS) as TOTAL_ACTUAL_TRAVEL_TIME,
+                SUM(PREDICTION) as TOTAL_PREDICTION
+            FROM TRAVEL_TIME_ANALYTICS
+            WHERE TIMESTAMP >= '{start_date_str}'
+            AND TIMESTAMP <= '{end_date_str}'
+            AND PREDICTION IS NOT NULL
+            {xd_filter}
+            {time_filter}
+            GROUP BY TIMESTAMP
+            ORDER BY TIMESTAMP
+            """
+        else:
+            # Materialized view: aggregate using pre-computed sums
+            timestamp_col = "DATE_ONLY as TIMESTAMP" if agg_table == "TRAVEL_TIME_DAILY_AGG" else "TIMESTAMP"
+            date_filter = "DATE_ONLY" if agg_table == "TRAVEL_TIME_DAILY_AGG" else "TIMESTAMP"
+            query = f"""
+            SELECT
+                {timestamp_col},
+                SUM(TOTAL_TRAVEL_TIME_SECONDS) as TOTAL_ACTUAL_TRAVEL_TIME,
+                SUM(AVG_PREDICTION * RECORD_COUNT) as TOTAL_PREDICTION
+            FROM {agg_table}
+            WHERE {date_filter} >= '{start_date_str}'
+            AND {date_filter} <= '{end_date_str}'
+            {xd_filter}
+            {time_filter}
+            GROUP BY {timestamp_col.split(' as ')[0]}
+            ORDER BY {timestamp_col.split(' as ')[0]}
+            """
 
         arrow_data = session.sql(query).to_arrow()
         arrow_bytes = snowflake_result_to_arrow(arrow_data)

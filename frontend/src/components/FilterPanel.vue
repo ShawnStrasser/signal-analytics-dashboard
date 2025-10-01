@@ -88,16 +88,51 @@
         </v-col>
       </v-row>
 
+      <!-- Time of Day Filter -->
+      <v-row>
+        <v-col cols="12">
+          <v-checkbox
+            v-model="filtersStore.timeFilterEnabled"
+            label="Filter by Time of Day"
+            density="compact"
+            hide-details
+          />
+        </v-col>
+      </v-row>
+
+      <v-row v-if="filtersStore.timeFilterEnabled">
+        <v-col cols="12">
+          <div class="text-caption mb-2">
+            {{ formatTime(filtersStore.startHour) }} - {{ formatTime(filtersStore.endHour) }}
+          </div>
+          <v-range-slider
+            v-model="timeRange"
+            :min="0"
+            :max="23"
+            :step="1"
+            thumb-label="always"
+            density="compact"
+            color="primary"
+          >
+            <template v-slot:thumb-label="{ modelValue }">
+              {{ formatTime(modelValue) }}
+            </template>
+          </v-range-slider>
+        </v-col>
+      </v-row>
+
       <!-- Filter Summary -->
       <v-divider class="my-4"></v-divider>
       <v-card variant="tonal" class="mb-2">
         <v-card-text>
           <div class="text-caption">
             <div><strong>Date Range:</strong> {{ filtersStore.startDate }} to {{ filtersStore.endDate }}</div>
+            <div><strong>Aggregation:</strong> {{ filtersStore.aggregationLevel }}</div>
             <div><strong>Signals:</strong> {{ filtersStore.selectedSignalIds.length || 'All' }}</div>
             <div v-if="filtersStore.approach !== null"><strong>Approach:</strong> {{ filtersStore.approach ? 'True' : 'False' }}</div>
             <div v-if="filtersStore.validGeometry !== null"><strong>Valid Geometry:</strong> {{ validGeometryDisplayText }}</div>
             <div v-if="$route.name === 'Anomalies'"><strong>Anomaly Type:</strong> {{ filtersStore.anomalyType }}</div>
+            <div v-if="filtersStore.timeFilterEnabled"><strong>Time of Day:</strong> {{ formatTime(filtersStore.startHour) }} - {{ formatTime(filtersStore.endHour) }}</div>
           </div>
         </v-card-text>
       </v-card>
@@ -106,13 +141,26 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useFiltersStore } from '@/stores/filters'
 import ApiService from '@/services/api'
 
 const filtersStore = useFiltersStore()
 const loadingSignals = ref(false)
 const signals = ref([])
+
+// Two-way binding for range slider
+const timeRange = computed({
+  get: () => [filtersStore.startHour, filtersStore.endHour],
+  set: (value) => {
+    filtersStore.setTimeOfDayRange(value[0], value[1])
+  }
+})
+
+// Format hour to HH:00 time string
+function formatTime(hour) {
+  return `${String(hour).padStart(2, '0')}:00`
+}
 
 const signalOptions = computed(() => {
   // Deduplicate signal IDs - DIM_SIGNALS_XD has multiple rows per signal

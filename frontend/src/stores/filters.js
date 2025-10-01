@@ -9,17 +9,38 @@ export const useFiltersStore = defineStore('filters', () => {
   const approach = ref(null)
   const validGeometry = ref('all') // 'all', 'valid', or 'invalid'
   const anomalyType = ref('All')
+  const startHour = ref(0)   // 00:00
+  const endHour = ref(23)    // 23:00
+  const timeFilterEnabled = ref(false)  // Whether time-of-day filter is active
 
   // Computed
   const hasSignalFilters = computed(() => selectedSignalIds.value.length > 0)
-  
+
+  const allDaySelected = computed(() => startHour.value === 0 && endHour.value === 23)
+
+  const aggregationLevel = computed(() => {
+    try {
+      const start = new Date(startDate.value)
+      const end = new Date(endDate.value)
+      const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24))
+
+      if (days < 4) return '15min'
+      if (days <= 7) return 'hourly'
+      return 'daily'
+    } catch {
+      return '15min'
+    }
+  })
+
   const filterParams = computed(() => ({
     start_date: startDate.value,
     end_date: endDate.value,
     signal_ids: selectedSignalIds.value,
     approach: approach.value,
     valid_geometry: validGeometry.value,
-    anomaly_type: anomalyType.value
+    anomaly_type: anomalyType.value,
+    start_hour: timeFilterEnabled.value ? startHour.value : undefined,
+    end_hour: timeFilterEnabled.value ? endHour.value : undefined
   }))
 
   // Actions
@@ -44,6 +65,15 @@ export const useFiltersStore = defineStore('filters', () => {
     anomalyType.value = value
   }
 
+  function setTimeOfDayRange(start, end) {
+    startHour.value = start
+    endHour.value = end
+  }
+
+  function setTimeFilterEnabled(enabled) {
+    timeFilterEnabled.value = enabled
+  }
+
   return {
     // State
     startDate,
@@ -52,16 +82,23 @@ export const useFiltersStore = defineStore('filters', () => {
     approach,
     validGeometry,
     anomalyType,
-    
+    startHour,
+    endHour,
+    timeFilterEnabled,
+
     // Computed
     hasSignalFilters,
+    allDaySelected,
+    aggregationLevel,
     filterParams,
-    
+
     // Actions
     setDateRange,
     setSelectedSignalIds,
     setApproach,
     setValidGeometry,
-    setAnomalyType
+    setAnomalyType,
+    setTimeOfDayRange,
+    setTimeFilterEnabled
   }
 })
