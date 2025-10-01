@@ -1,7 +1,27 @@
 /**
  * Color scale utilities for maps and visualizations
- * Uses a colorblind-friendly blue-yellow-orange-red gradient palette
+ * Uses a colorblind-friendly gradient palette
  */
+
+// Shared color scheme - colorblind-friendly green to yellow to orange to red
+const COLOR_SCHEME = {
+  green: [76, 175, 80],     // #4caf50 - colorblind-safe green
+  yellow: [255, 193, 7],    // #ffc107 - amber/yellow
+  orange: [255, 87, 34],    // #ff5722 - orange-red
+  red: [211, 47, 47]        // #d32f2f - red
+}
+
+// Thresholds for different metrics
+const THRESHOLDS = {
+  travelTimeIndex: {
+    floor: 1.0,     // Below this: flat color
+    ceiling: 3.0    // Above this: flat color
+  },
+  anomaly: {
+    floor: 0.0,     // Below this: flat color
+    ceiling: 10.0   // Above this: flat color
+  }
+}
 
 /**
  * Interpolate between two colors
@@ -19,67 +39,61 @@ function interpolateColor(color1, color2, factor) {
 }
 
 /**
- * Get color for Travel Time Index using gradient
- * Range: 0-1 = green, 1-2 = green→yellow, 2-3 = yellow→orange, 3+ = orange→red
- * @param {number} tti - Travel Time Index value
+ * Generic color scale function using shared color scheme
+ * @param {number} value - Input value
+ * @param {number} floor - Minimum threshold
+ * @param {number} ceiling - Maximum threshold
  * @returns {string} Color hex code
  */
-export function travelTimeColorScale(tti) {
-  // Color stops: green -> yellow -> orange -> red (more saturated colors)
-  const green = [34, 197, 94]    // #22c55e - vibrant green
-  const yellow = [234, 179, 8]   // #eab308 - vibrant yellow
-  const orange = [249, 115, 22]  // #f97316
-  const red = [220, 38, 38]      // #dc2626 - darker red
+function getColorForValue(value, floor, ceiling) {
+  const { green, yellow, orange, red } = COLOR_SCHEME
+  const range = ceiling - floor
 
-  if (tti <= 1.0) {
-    // Gradient from green at 0 to full green at 1.0
-    const factor = Math.min(tti, 1.0)
-    const darkGreen = [20, 120, 60]  // darker green for tti near 0
-    return interpolateColor(darkGreen, green, factor)
-  } else if (tti <= 2.0) {
-    // Gradient from green to yellow (1.0 to 2.0)
-    const factor = (tti - 1.0) / 1.0
+  // Clamp value to floor and ceiling
+  if (value <= floor) {
+    return `#${green.map(x => x.toString(16).padStart(2, '0')).join('')}`
+  }
+  if (value >= ceiling) {
+    return `#${red.map(x => x.toString(16).padStart(2, '0')).join('')}`
+  }
+
+  // Normalize value to 0-1 range within floor-ceiling
+  const normalized = (value - floor) / range
+
+  // Three-segment gradient: green→yellow→orange→red
+  if (normalized <= 0.33) {
+    // First third: green to yellow
+    const factor = normalized / 0.33
     return interpolateColor(green, yellow, factor)
-  } else if (tti <= 3.0) {
-    // Gradient from yellow to orange (2.0 to 3.0)
-    const factor = (tti - 2.0) / 1.0
+  } else if (normalized <= 0.67) {
+    // Middle third: yellow to orange
+    const factor = (normalized - 0.33) / 0.34
     return interpolateColor(yellow, orange, factor)
   } else {
-    // Gradient from orange to red (3.0 to 4.0+)
-    const factor = Math.min((tti - 3.0) / 1.0, 1.0)
+    // Final third: orange to red
+    const factor = (normalized - 0.67) / 0.33
     return interpolateColor(orange, red, factor)
   }
 }
 
 /**
+ * Get color for Travel Time Index using gradient
+ * Floor: 1.0 (below = flat green), Ceiling: 3.0 (above = flat red)
+ * @param {number} tti - Travel Time Index value
+ * @returns {string} Color hex code
+ */
+export function travelTimeColorScale(tti) {
+  const { floor, ceiling } = THRESHOLDS.travelTimeIndex
+  return getColorForValue(tti, floor, ceiling)
+}
+
+/**
  * Get color for anomaly percentage using gradient
- * Range: 0-5% = green, 5-10% = green→yellow, 10-15% = yellow→orange, 15%+ = orange→red
+ * Floor: 0% (below = flat green), Ceiling: 10% (above = flat red)
  * @param {number} percentage - Anomaly percentage (0-100)
  * @returns {string} Color hex code
  */
 export function anomalyColorScale(percentage) {
-  // Color stops: green -> yellow -> orange -> red (same as TTI)
-  const green = [34, 197, 94]    // #22c55e - vibrant green
-  const yellow = [234, 179, 8]   // #eab308 - vibrant yellow
-  const orange = [249, 115, 22]  // #f97316
-  const red = [220, 38, 38]      // #dc2626 - darker red
-
-  if (percentage <= 5.0) {
-    // Gradient from green at 0% to full green at 5%
-    const factor = Math.min(percentage / 5.0, 1.0)
-    const darkGreen = [20, 120, 60]  // darker green for percentage near 0
-    return interpolateColor(darkGreen, green, factor)
-  } else if (percentage <= 10.0) {
-    // Gradient from green to yellow (5% to 10%)
-    const factor = (percentage - 5.0) / 5.0
-    return interpolateColor(green, yellow, factor)
-  } else if (percentage <= 15.0) {
-    // Gradient from yellow to orange (10% to 15%)
-    const factor = (percentage - 10.0) / 5.0
-    return interpolateColor(yellow, orange, factor)
-  } else {
-    // Gradient from orange to red (15% to 20%+)
-    const factor = Math.min((percentage - 15.0) / 5.0, 1.0)
-    return interpolateColor(orange, red, factor)
-  }
+  const { floor, ceiling } = THRESHOLDS.anomaly
+  return getColorForValue(percentage, floor, ceiling)
 }
