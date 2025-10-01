@@ -10,6 +10,7 @@ from snowflake.snowpark.session import Session
 # Global session variable
 snowflake_session = None
 connection_status = {'connected': False, 'connecting': False, 'error': None}
+_cache_disabled = False  # Track if we've already disabled cache this session
 
 def get_connection_status():
     """Get current connection status"""
@@ -17,13 +18,15 @@ def get_connection_status():
 
 def get_snowflake_session(retry=False, max_retries=3, retry_delay=2):
     """Get or create Snowflake session with retry logic"""
-    global snowflake_session, connection_status
+    global snowflake_session, connection_status, _cache_disabled
+
+    from config import DEBUG_DISABLE_SNOWFLAKE_CACHE
 
     # Return existing session if valid
     if snowflake_session is not None:
         try:
-            # Test if session is still valid by running a simple query
-            snowflake_session.sql("SELECT 1").collect()
+            # Don't run health check every time - too many queries!
+            # Just return the session, errors will surface on actual queries
             connection_status['connected'] = True
             connection_status['error'] = None
             return snowflake_session
@@ -31,6 +34,7 @@ def get_snowflake_session(retry=False, max_retries=3, retry_delay=2):
             # Session is invalid, will recreate
             snowflake_session = None
             connection_status['connected'] = False
+            _cache_disabled = False
 
     # If already connecting (from another thread), wait briefly
     if connection_status['connecting'] and not retry:
@@ -53,6 +57,14 @@ def get_snowflake_session(retry=False, max_retries=3, retry_delay=2):
             connection_status['connected'] = True
             connection_status['connecting'] = False
             connection_status['error'] = None
+
+            # Disable Snowflake query result cache if configured (ONCE per session)
+            from config import DEBUG_DISABLE_SNOWFLAKE_CACHE
+            if DEBUG_DISABLE_SNOWFLAKE_CACHE and not _cache_disabled:
+                snowflake_session.sql("ALTER SESSION SET USE_CACHED_RESULT = FALSE").collect()
+                print("Snowflake query result cache DISABLED")
+                _cache_disabled = True
+
             return snowflake_session
         except Exception as e:
             # Only print if it's not the expected "No default Session" error
@@ -71,6 +83,14 @@ def get_snowflake_session(retry=False, max_retries=3, retry_delay=2):
                 connection_status['connected'] = True
                 connection_status['connecting'] = False
                 connection_status['error'] = None
+
+                # Disable Snowflake query result cache if configured (ONCE per session)
+                from config import DEBUG_DISABLE_SNOWFLAKE_CACHE
+                if DEBUG_DISABLE_SNOWFLAKE_CACHE and not _cache_disabled:
+                    snowflake_session.sql("ALTER SESSION SET USE_CACHED_RESULT = FALSE").collect()
+                    print("Snowflake query result cache DISABLED")
+                    _cache_disabled = True
+
                 return snowflake_session
 
             except Exception as e:

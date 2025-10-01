@@ -145,8 +145,8 @@ const checkConnection = async () => {
     const connected = await ApiService.waitForConnection()
     if (connected) {
       connectionStatus.value = 'connected'
-      // Load geometry after connection is established
-      await geometryStore.loadGeometry()
+      // Geometry will be loaded by SharedMap when needed (deferred)
+      // Don't load it here to avoid duplicate queries
     } else {
       connectionStatus.value = 'error'
       connectionError.value = 'Unable to establish database connection'

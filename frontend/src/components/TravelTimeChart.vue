@@ -32,9 +32,17 @@ onUnmounted(() => {
 })
 
 watch(() => [props.data, props.selectedSignal], () => {
+  const watchStart = performance.now()
+  console.log('📊 CHART WATCH: data changed, deferring to nextTick', {
+    dataLength: props.data?.length
+  })
   // Defer chart update to next tick to avoid updating during render
   nextTick(() => {
+    const tickStart = performance.now()
+    console.log(`📊 CHART: nextTick triggered, delay from watch: ${(tickStart - watchStart).toFixed(2)}ms`)
     updateChart()
+    const tickEnd = performance.now()
+    console.log(`📊 CHART: updateChart complete, took ${(tickEnd - tickStart).toFixed(2)}ms`)
   })
 }, { deep: true })
 
@@ -48,7 +56,12 @@ function initializeChart() {
 }
 
 function updateChart() {
-  if (!chart || !props.data.length) return
+  const t0 = performance.now()
+  if (!chart || !props.data.length) {
+    console.log('📊 CHART: updateChart skipped (no chart or data)')
+    return
+  }
+  console.log('📊 CHART: updateChart START', { dataPoints: props.data.length })
 
   // Prepare data for ECharts - convert BigInt to Number
   const timeData = props.data.map(d => {
@@ -159,6 +172,10 @@ function updateChart() {
     ]
   }
   
+  const setOptionStart = performance.now()
   chart.setOption(option, true)
+  const t1 = performance.now()
+  console.log(`📊 CHART: setOption took ${(t1 - setOptionStart).toFixed(2)}ms`)
+  console.log(`📊 CHART: updateChart COMPLETE, total ${(t1 - t0).toFixed(2)}ms`)
 }
 </script>

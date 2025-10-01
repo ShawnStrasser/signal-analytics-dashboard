@@ -144,8 +144,15 @@ watch(() => [
 })
 
 onMounted(async () => {
+  const t0 = performance.now()
+  console.log('🚀 TravelTime.vue: onMounted START')
   await loadMapData()
+  const t1 = performance.now()
+  console.log(`⏱️ TravelTime.vue: loadMapData complete, took ${(t1 - t0).toFixed(2)}ms`)
   await loadChartData()
+  const t2 = performance.now()
+  console.log(`⏱️ TravelTime.vue: loadChartData complete, took ${(t2 - t1).toFixed(2)}ms`)
+  console.log(`✅ TravelTime.vue: onMounted COMPLETE, total ${(t2 - t0).toFixed(2)}ms`)
 })
 
 async function loadMapData() {
@@ -158,10 +165,20 @@ async function loadMapData() {
     const t1 = performance.now()
     console.log(`📡 API: getTravelTimeSummary took ${(t1 - t0).toFixed(2)}ms`)
 
-    mapData.value = ApiService.arrowTableToObjects(arrowTable)
+    const conversionStart = performance.now()
+    const objects = ApiService.arrowTableToObjects(arrowTable)
     const t2 = performance.now()
-    console.log(`📡 API: arrowTableToObjects took ${(t2 - t1).toFixed(2)}ms`)
-    console.log(`📡 API: Loading map data DONE - ${mapData.value.length} records in ${(t2 - t0).toFixed(2)}ms`)
+    console.log(`📡 API: arrowTableToObjects took ${(t2 - conversionStart).toFixed(2)}ms`)
+
+    const assignmentStart = performance.now()
+    mapData.value = objects
+    const t3 = performance.now()
+    console.log(`📡 API: mapData assignment took ${(t3 - assignmentStart).toFixed(2)}ms`)
+    console.log(`📡 API: Loading map data DONE - ${mapData.value.length} records in ${(t3 - t0).toFixed(2)}ms`)
+
+    // Log time from assignment to end of function
+    const t4 = performance.now()
+    console.log(`📡 API: Post-assignment overhead ${(t4 - t3).toFixed(2)}ms`)
   } catch (error) {
     console.error('Failed to load map data:', error)
     mapData.value = []

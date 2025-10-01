@@ -10,6 +10,7 @@ import { useGeometryStore } from '@/stores/geometry'
 import { useMapStateStore } from '@/stores/mapState'
 import { useSelectionStore } from '@/stores/selection'
 import { travelTimeColorScale, anomalyColorScale } from '@/utils/colorScale'
+import { DEBUG_FRONTEND_LOGGING } from '@/config'
 
 const props = defineProps({
   signals: {
@@ -47,19 +48,50 @@ const { selectedSignalsList, selectedXdSegmentsList } = storeToRefs(selectionSto
 const SIGNAL_RADIUS_METERS = 50 // About 197 feet
 
 onMounted(() => {
+  const mountStart = performance.now()
+  console.log('🗺️ SharedMap: onMounted START')
+
+  const t0 = performance.now()
   initializeMap()
+  const t1 = performance.now()
+  console.log(`🗺️ SharedMap: initializeMap took ${(t1 - t0).toFixed(2)}ms`)
+
   updateMarkers()
+  const t2 = performance.now()
+  console.log(`🗺️ SharedMap: updateMarkers took ${(t2 - t1).toFixed(2)}ms`)
+
   updateGeometry()
-  geometryStore.loadGeometry().catch(error => {
-    console.error('Failed to preload XD geometry:', error)
-  })
+  const t3 = performance.now()
+  console.log(`🗺️ SharedMap: updateGeometry took ${(t3 - t2).toFixed(2)}ms`)
+
+  // Defer geometry loading until after initial render completes
+  // This prevents blocking the UI with a 16k feature load
+  requestIdleCallback(() => {
+    const geometryLoadStart = performance.now()
+    console.log('🗺️ SharedMap: Starting deferred geometry load')
+    geometryStore.loadGeometry().then(() => {
+      const geometryLoadEnd = performance.now()
+      console.log(`🗺️ SharedMap: Geometry loaded in ${(geometryLoadEnd - geometryLoadStart).toFixed(2)}ms`)
+    }).catch(error => {
+      console.error('Failed to preload XD geometry:', error)
+    })
+  }, { timeout: 2000 })
 
   // Update mappings when signals load
   if (props.signals.length > 0) {
+    const t4 = performance.now()
     selectionStore.updateMappings(props.signals)
+    const t5 = performance.now()
+    console.log(`🗺️ SharedMap: updateMappings took ${(t5 - t4).toFixed(2)}ms`)
+
     // Zoom to fit initial data
     autoZoomToSignals()
+    const t6 = performance.now()
+    console.log(`🗺️ SharedMap: autoZoomToSignals took ${(t6 - t5).toFixed(2)}ms`)
   }
+
+  const mountEnd = performance.now()
+  console.log(`🗺️ SharedMap: onMounted COMPLETE, total ${(mountEnd - mountStart).toFixed(2)}ms`)
 })
 
 onUnmounted(() => {
@@ -80,7 +112,8 @@ onUnmounted(() => {
 
 // Watch for signal data changes
 watch(() => props.signals, (newSignals) => {
-  console.log('🔄 WATCH: props.signals changed', {
+  const watchStart = performance.now()
+  console.log('🔄 WATCH: props.signals changed (watch triggered)', {
     signalCount: newSignals.length,
     currentZoom: map?.getZoom(),
     xdLayersCount: xdLayers.size,
@@ -106,7 +139,8 @@ watch(() => props.signals, (newSignals) => {
   autoZoomToSignals() // Zoom after both markers and geometry are updated
   const t4 = performance.now()
   console.log(`⏱️ autoZoomToSignals: ${(t4 - t3).toFixed(2)}ms`)
-  console.log(`⏱️ TOTAL: ${(t4 - t0).toFixed(2)}ms`)
+  console.log(`⏱️ TOTAL map updates: ${(t4 - t0).toFixed(2)}ms`)
+  console.log(`⏱️ Watch overhead (trigger to start): ${(t0 - watchStart).toFixed(2)}ms`)
 }, { deep: true })
 
 // Watch for anomaly type changes

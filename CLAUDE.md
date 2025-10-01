@@ -105,4 +105,4 @@ Set Snowflake connection using one of these methods:
 
 ## Claude Code Workflow
 
-**At the start of every new conversation**: Commit all current changes before making any modifications. Use a simple, concise commit message (one sentence or less) that briefly describes the changes. Do not include Claude Code signatures or co-authorship attributions.
+**At the start of every new conversation**: Commit all current changes before making any modifications. Use a simple, concise commit message (one sentence or less) that briefly describes the changes. Do not include Claude Code signatures or co-authorship attributions. Do not commit .md files that are just developer notes or instructions.
