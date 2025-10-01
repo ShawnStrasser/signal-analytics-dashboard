@@ -102,3 +102,7 @@ Set Snowflake connection using one of these methods:
 - **Empty results**: API endpoints return empty Arrow tables with proper schema when no data matches filters
 - **XD caching**: `xd-geometry` endpoint caches GeoJSON data in `_xd_geometry_cache` global variable
 - **Filter persistence**: All filter state persists in Pinia stores when navigating between pages
+
+## Claude Code Workflow
+
+**At the start of every new conversation**: Commit all current changes before making any modifications. Use a simple, concise commit message (one sentence or less) that briefly describes the changes. Do not include Claude Code signatures or co-authorship attributions.
