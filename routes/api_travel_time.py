@@ -22,8 +22,8 @@ from utils.query_utils import (
     extract_xd_values,
     build_xd_filter,
     create_xd_lookup_dict,
-    get_aggregation_table,
-    build_time_of_day_filter
+    build_time_of_day_filter,
+    get_aggregation_level
 )
 
 travel_time_bp = Blueprint('travel_time', __name__)
@@ -143,15 +143,12 @@ def get_travel_time_summary():
     start_date_str = normalize_date(start_date)
     end_date_str = normalize_date(end_date)
 
-    # Determine aggregation table based on date range
-    agg_table = get_aggregation_table(start_date_str, end_date_str)
-
     # Build time-of-day filter
     time_filter = build_time_of_day_filter(start_hour, end_hour)
 
     if DEBUG_BACKEND_TIMING:
         print(f"\n[TIMING] /travel-time-summary START")
-        print(f"  Params: date={start_date_str} to {end_date_str}, signals={len(signal_ids) if signal_ids else 'all'}, table={agg_table}")
+        print(f"  Params: date={start_date_str} to {end_date_str}, signals={len(signal_ids) if signal_ids else 'all'}")
 
     try:
         # Step 1: Query DIM_SIGNALS_XD to get XD segments and signal info
@@ -183,9 +180,8 @@ def get_travel_time_summary():
             arrow_bytes = create_empty_arrow_response('travel_time_summary')
             return create_arrow_response(arrow_bytes)
 
-        # Step 2: Query aggregated table using XD values, join with FREEFLOW to calculate TTI
-        # ONLY add XD filter if we're filtering to specific signals
-        # If no signal_ids were provided, we want ALL XDs
+        # Step 2: Query TRAVEL_TIME_ANALYTICS using XD values, join with FREEFLOW to calculate TTI
+        # Build the map query - always groups by XD regardless of date range
         xd_filter = build_xd_filter(xd_values) if signal_ids else ""
 
         if DEBUG_BACKEND_TIMING:
@@ -194,65 +190,35 @@ def get_travel_time_summary():
             else:
                 print(f"  [INFO] NO XD filter (querying all signals)")
 
-        # Build query based on aggregation table
-        # FIX: Join explosion issue - FREEFLOW should have 1 row per XD
-        # We need to GROUP BY first, THEN join with FREEFLOW to avoid multiplying rows
         analytics_query_start = time.time()
 
-        if agg_table == "TRAVEL_TIME_ANALYTICS":
-            # Base table: use direct TRAVEL_TIME_SECONDS
-            # TTI = (SUM of actual travel times) / (SUM of freeflow times)
-            # Each record needs to be divided by its freeflow, then averaged
-            analytics_query = f"""
-            WITH agg AS (
-                SELECT
-                    t.XD,
-                    SUM(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TOTAL_TTI,
-                    AVG(t.TRAVEL_TIME_SECONDS) as AVG_TRAVEL_TIME,
-                    COUNT(*) as RECORD_COUNT
-                FROM TRAVEL_TIME_ANALYTICS t
-                INNER JOIN FREEFLOW f ON t.XD = f.XD
-                WHERE t.TIMESTAMP >= '{start_date_str}'
-                AND t.TIMESTAMP <= '{end_date_str}'
-                {xd_filter.replace('XD', 't.XD')}
-                {time_filter.replace('HOUR_OF_DAY', 't.HOUR_OF_DAY')}
-                GROUP BY t.XD
-            )
+        # Map query pattern: Calculate average travel time, then divide by freeflow
+        analytics_query = f"""
+        WITH t1 AS (
             SELECT
-                XD,
-                COALESCE(TOTAL_TTI / NULLIF(RECORD_COUNT, 0), 0) as TRAVEL_TIME_INDEX,
-                AVG_TRAVEL_TIME,
-                RECORD_COUNT
-            FROM agg
-            """
-        else:
-            # Materialized view: use pre-aggregated data
-            # TTI = (Total actual travel time) / (Total freeflow time)
-            # Total freeflow = record_count * freeflow_per_trip
-            date_filter = "DATE_ONLY" if agg_table == "TRAVEL_TIME_DAILY_AGG" else "TIMESTAMP"
-            analytics_query = f"""
-            SELECT
-                mv.XD,
-                COALESCE(
-                    NULLIF(SUM(mv.TOTAL_TRAVEL_TIME_SECONDS) / NULLIF(SUM(mv.RECORD_COUNT * f.TRAVEL_TIME_SECONDS), 0), 0),
-                    0
-                ) as TRAVEL_TIME_INDEX,
-                SUM(mv.AVG_TRAVEL_TIME * mv.RECORD_COUNT) / NULLIF(SUM(mv.RECORD_COUNT), 0) as AVG_TRAVEL_TIME,
-                SUM(mv.RECORD_COUNT) as RECORD_COUNT
-            FROM {agg_table} mv
-            INNER JOIN FREEFLOW f ON mv.XD = f.XD
-            WHERE {date_filter} >= '{start_date_str}'
-            AND {date_filter} <= '{end_date_str}'
-            {xd_filter.replace('XD', 'mv.XD')}
-            {time_filter.replace('HOUR_OF_DAY', 'mv.HOUR_OF_DAY')}
-            GROUP BY mv.XD
-            """
+                t.XD,
+                AVG(t.TRAVEL_TIME_SECONDS) as AVG_TRAVEL_TIME
+            FROM TRAVEL_TIME_ANALYTICS t
+            WHERE t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'
+            {xd_filter.replace('XD', 't.XD')}
+            {time_filter.replace('HOUR_OF_DAY', 't.HOUR_OF_DAY')}
+            GROUP BY t.XD
+        )
+        SELECT
+            t1.XD,
+            t1.AVG_TRAVEL_TIME / f.TRAVEL_TIME_SECONDS as TRAVEL_TIME_INDEX,
+            t1.AVG_TRAVEL_TIME,
+            0 as RECORD_COUNT
+        FROM t1
+        INNER JOIN FREEFLOW f ON t1.XD = f.XD
+        ORDER BY t1.XD
+        """
 
         analytics_result = session.sql(analytics_query).collect()
         analytics_query_time = (time.time() - analytics_query_start) * 1000
 
         if DEBUG_BACKEND_TIMING:
-            print(f"  [3] Analytics query ({agg_table}): {analytics_query_time:.2f}ms ({len(analytics_result)} rows)")
+            print(f"  [3] Analytics query: {analytics_query_time:.2f}ms ({len(analytics_result)} rows)")
 
         # Step 3: Join results - create XD -> analytics lookup
         join_start = time.time()
@@ -340,15 +306,15 @@ def get_travel_time_aggregated():
     start_date_str = normalize_date(start_date)
     end_date_str = normalize_date(end_date)
 
-    # Determine aggregation table based on date range
-    agg_table = get_aggregation_table(start_date_str, end_date_str)
+    # Determine aggregation level based on date range
+    agg_level = get_aggregation_level(start_date_str, end_date_str)
 
     # Build time-of-day filter
     time_filter = build_time_of_day_filter(start_hour, end_hour)
 
     if DEBUG_BACKEND_TIMING:
         print(f"\n[TIMING] /travel-time-aggregated START")
-        print(f"  Params: date={start_date_str} to {end_date_str}, xd_segments={len(xd_segments) if xd_segments else 0}, signals={len(signal_ids) if signal_ids else 0}, table={agg_table}")
+        print(f"  Params: date={start_date_str} to {end_date_str}, xd_segments={len(xd_segments) if xd_segments else 0}, signals={len(signal_ids) if signal_ids else 0}, agg_level={agg_level}")
 
     try:
         # Resolve XD segments if signal_ids provided
@@ -386,40 +352,50 @@ def get_travel_time_aggregated():
         # Build XD filter - only if we have specific XDs to filter
         xd_filter = build_xd_filter(xd_values) if xd_values else ""
 
-        # Build query based on aggregation table
-        # FIX: Same join explosion fix - aggregate first, then join FREEFLOW
+        # Build query based on aggregation level
         query_start = time.time()
 
-        if agg_table == "TRAVEL_TIME_ANALYTICS":
-            # Base table: calculate TTI for each record, then aggregate by timestamp
+        if agg_level == "none":
+            # No aggregation: query by TIMESTAMP (15-minute intervals)
             query = f"""
             SELECT
-                t.TIMESTAMP,
+                TIMESTAMP,
                 AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX
             FROM TRAVEL_TIME_ANALYTICS t
             INNER JOIN FREEFLOW f ON t.XD = f.XD
-            WHERE t.TIMESTAMP >= '{start_date_str}'
-            AND t.TIMESTAMP <= '{end_date_str}'
+            WHERE t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'
             {xd_filter.replace('XD', 't.XD')}
             {time_filter.replace('HOUR_OF_DAY', 't.HOUR_OF_DAY')}
-            GROUP BY t.TIMESTAMP
-            ORDER BY t.TIMESTAMP
+            GROUP BY 1
+            ORDER BY 1
             """
-        else:
-            # Materialized view: use pre-aggregated data
-            timestamp_col = "DATE_ONLY" if agg_table == "TRAVEL_TIME_DAILY_AGG" else "TIMESTAMP"
+        elif agg_level == "hourly":
+            # Hourly aggregation: truncate timestamp to hour
             query = f"""
             SELECT
-                mv.{timestamp_col} as TIMESTAMP,
-                SUM(mv.TOTAL_TRAVEL_TIME_SECONDS) / NULLIF(SUM(mv.RECORD_COUNT * f.TRAVEL_TIME_SECONDS), 0) as TRAVEL_TIME_INDEX
-            FROM {agg_table} mv
-            INNER JOIN FREEFLOW f ON mv.XD = f.XD
-            WHERE mv.{timestamp_col} >= '{start_date_str}'
-            AND mv.{timestamp_col} <= '{end_date_str}'
-            {xd_filter.replace('XD', 'mv.XD')}
-            {time_filter.replace('HOUR_OF_DAY', 'mv.HOUR_OF_DAY')}
-            GROUP BY mv.{timestamp_col}
-            ORDER BY mv.{timestamp_col}
+                DATE_TRUNC('HOUR', TIMESTAMP) as TIMESTAMP,
+                AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX
+            FROM TRAVEL_TIME_ANALYTICS t
+            INNER JOIN FREEFLOW f ON t.XD = f.XD
+            WHERE t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'
+            {xd_filter.replace('XD', 't.XD')}
+            {time_filter.replace('HOUR_OF_DAY', 't.HOUR_OF_DAY')}
+            GROUP BY 1
+            ORDER BY 1
+            """
+        else:  # daily
+            # Daily aggregation: use DATE_ONLY
+            query = f"""
+            SELECT
+                DATE_ONLY as TIMESTAMP,
+                AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX
+            FROM TRAVEL_TIME_ANALYTICS t
+            INNER JOIN FREEFLOW f ON t.XD = f.XD
+            WHERE t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'
+            {xd_filter.replace('XD', 't.XD')}
+            {time_filter.replace('HOUR_OF_DAY', 't.HOUR_OF_DAY')}
+            GROUP BY 1
+            ORDER BY 1
             """
 
         arrow_data = session.sql(query).to_arrow()
@@ -429,7 +405,7 @@ def get_travel_time_aggregated():
         total_time = (time.time() - request_start) * 1000
 
         if DEBUG_BACKEND_TIMING:
-            print(f"  [2] Aggregated query ({agg_table}): {query_time:.2f}ms")
+            print(f"  [2] Aggregated query ({agg_level}): {query_time:.2f}ms")
             print(f"  [TOTAL] /travel-time-aggregated: {total_time:.2f}ms\n")
 
         return create_arrow_response(arrow_bytes)
