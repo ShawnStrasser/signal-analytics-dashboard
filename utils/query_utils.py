@@ -162,6 +162,36 @@ def get_aggregation_level(start_date: str, end_date: str) -> str:
         return "none"
 
 
+def get_aggregation_table(start_date: str, end_date: str) -> str:
+    """
+    DEPRECATED: Kept for backward compatibility with anomalies routes.
+    Use get_aggregation_level() for new code.
+
+    Determine which table/view to query based on date range.
+
+    Args:
+        start_date: Start date string (YYYY-MM-DD format)
+        end_date: End date string (YYYY-MM-DD format)
+
+    Returns:
+        Table name: TRAVEL_TIME_ANALYTICS, TRAVEL_TIME_HOURLY_AGG, or TRAVEL_TIME_DAILY_AGG
+    """
+    try:
+        start = datetime.strptime(start_date, '%Y-%m-%d')
+        end = datetime.strptime(end_date, '%Y-%m-%d')
+        days = (end - start).days
+
+        if days < 4:
+            return "TRAVEL_TIME_ANALYTICS"
+        elif days <= 7:
+            return "TRAVEL_TIME_HOURLY_AGG"
+        else:
+            return "TRAVEL_TIME_DAILY_AGG"
+    except Exception:
+        # Default to base table if date parsing fails
+        return "TRAVEL_TIME_ANALYTICS"
+
+
 def build_time_of_day_filter(start_hour: Optional[int] = None, end_hour: Optional[int] = None) -> str:
     """
     Build SQL filter clause for time-of-day filtering.
