@@ -4,9 +4,19 @@ Serves Arrow data directly from Snowflake
 """
 
 import os
+import sys
+import pyarrow as pa
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from database import get_snowflake_session, get_connection_status
+
+# Download timezone database on Windows if needed
+if sys.platform == 'win32':
+    try:
+        pa.util.download_tzdata_on_windows()
+        print("✅ Timezone database downloaded")
+    except Exception as e:
+        print(f"⚠️  Failed to download timezone database: {e}")
 
 app = Flask(__name__, static_folder='frontend/dist')
 CORS(app)

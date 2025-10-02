@@ -4,7 +4,9 @@ Optimized for small query response times
 """
 
 import pyarrow as pa
+import pyarrow.compute as pc
 from typing import Optional, Dict, Any
+import config
 
 # Pre-defined schemas to avoid recreation overhead
 SCHEMAS = {
@@ -122,7 +124,7 @@ def create_arrow_response(data: bytes, status: int = 200) -> tuple:
 def snowflake_result_to_arrow(arrow_table: pa.Table) -> bytes:
     """
     Convert Snowflake query result (already Arrow) to IPC bytes.
-    Single-function call for the most common pattern.
+    Converts timezone-naive timestamps to timezone-aware using configured timezone.
 
     Args:
         arrow_table: Arrow table from session.sql(query).to_arrow()
@@ -130,4 +132,17 @@ def snowflake_result_to_arrow(arrow_table: pa.Table) -> bytes:
     Returns:
         Serialized Arrow IPC bytes
     """
+    # Convert any timezone-naive timestamp columns to timezone-aware
+    arrays = []
+    for i, field in enumerate(arrow_table.schema):
+        if pa.types.is_timestamp(field.type) and field.type.tz is None:
+            # Use assume_timezone to convert naive timestamp to timezone-aware
+            # This assumes the naive timestamps are in the configured timezone
+            arrays.append(pc.assume_timezone(arrow_table.column(i), config.TIMEZONE))
+        else:
+            arrays.append(arrow_table.column(i))
+
+    # Rebuild table with timezone-aware columns
+    arrow_table = pa.table(arrays, names=arrow_table.schema.names)
+
     return serialize_arrow_to_ipc(arrow_table)

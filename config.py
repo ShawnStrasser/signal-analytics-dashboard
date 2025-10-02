@@ -26,6 +26,16 @@ DEBUG_DISABLE_SERVER_CACHE = True
 DEBUG_FRONTEND_LOGGING = True
 
 # =============================================================================
+# TIMEZONE SETTINGS
+# =============================================================================
+
+# Timezone for timestamp data stored in Snowflake
+# Data in Snowflake is stored without timezone (local time)
+# This setting tells Arrow how to interpret those timestamps
+# Examples: 'America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York'
+TIMEZONE = 'America/Los_Angeles'
+
+# =============================================================================
 # PRODUCTION SETTINGS
 # =============================================================================
 
