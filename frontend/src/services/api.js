@@ -1,5 +1,10 @@
 import * as arrow from 'apache-arrow'
 
+// Note: Arrow IPC compression (LZ4/ZSTD) is not available in apache-arrow 21.0.0
+// because compressionRegistry is not exposed in the public API.
+// The server sends uncompressed Arrow IPC streams instead.
+// HTTP-level compression (Flask-Compress) will handle compression in production.
+
 class ApiService {
   constructor(baseURL = '/api') {
     this.baseURL = baseURL
@@ -110,12 +115,45 @@ class ApiService {
 
   async getXdGeometry() {
     try {
-      const response = await fetch(`${this.baseURL}/xd-geometry`)
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`)
+      const t0 = performance.now()
+
+      // Fetch Arrow data instead of JSON
+      const arrowTable = await this.fetchArrowData('/xd-geometry')
+      const t1 = performance.now()
+      console.log(`📍 API: fetchArrowData took ${(t1 - t0).toFixed(2)}ms`)
+
+      // Convert Arrow table to objects
+      const rows = this.arrowTableToObjects(arrowTable)
+      const t2 = performance.now()
+      console.log(`📍 API: arrowTableToObjects took ${(t2 - t1).toFixed(2)}ms`)
+
+      // Parse GeoJSON strings and build FeatureCollection
+      const parseStart = performance.now()
+      const features = []
+
+      for (const row of rows) {
+        if (!row.GEOJSON) continue
+
+        try {
+          const geometry = JSON.parse(row.GEOJSON)
+          features.push({
+            type: 'Feature',
+            properties: { XD: row.XD },
+            geometry: geometry
+          })
+        } catch (e) {
+          console.warn(`Failed to parse GeoJSON for XD ${row.XD}:`, e)
+        }
       }
-  return await response.json()
+
+      const t3 = performance.now()
+      console.log(`📍 API: GeoJSON parsing took ${(t3 - parseStart).toFixed(2)}ms (${features.length} features)`)
+      console.log(`📍 API: getXdGeometry TOTAL ${(t3 - t0).toFixed(2)}ms`)
+
+      return {
+        type: 'FeatureCollection',
+        features: features
+      }
     } catch (error) {
       console.error('Error fetching XD geometry:', error)
       throw error

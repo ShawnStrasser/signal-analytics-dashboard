@@ -66,18 +66,22 @@ def get_signals():
 
 @travel_time_bp.route('/xd-geometry')
 def get_xd_geometry():
-    """Return XD road segment geometries as GeoJSON FeatureCollection"""
+    """Return XD road segment geometries as Arrow (efficient binary format)"""
     global _xd_geometry_cache
+    request_start = time.time()
 
     # Check cache unless disabled
     if not DEBUG_DISABLE_SERVER_CACHE and _xd_geometry_cache is not None:
         if DEBUG_BACKEND_TIMING:
             print("[TIMING] /xd-geometry: Returned from cache")
-        return jsonify(_xd_geometry_cache)
+        return create_arrow_response(_xd_geometry_cache)
 
     session = get_snowflake_session(retry=True, max_retries=2)
     if not session:
         return "Connecting to Database - please wait", 503
+
+    if DEBUG_BACKEND_TIMING:
+        print(f"\n[TIMING] /xd-geometry START")
 
     query = """
     SELECT
@@ -88,34 +92,28 @@ def get_xd_geometry():
     """
 
     try:
-        result = session.sql(query).collect()
+        query_start = time.time()
+        arrow_data = session.sql(query).to_arrow()
+        query_time = (time.time() - query_start) * 1000
 
-        features = []
-        for row in result:
-            row_dict = row.as_dict() if hasattr(row, 'as_dict') else dict(row)
-            geojson_str = row_dict.get('GEOJSON')
-            xd_value = row_dict.get('XD')
+        if DEBUG_BACKEND_TIMING:
+            print(f"  [1] Snowflake query: {query_time:.2f}ms ({arrow_data.num_rows} rows)")
 
-            if not geojson_str:
-                continue
+        # Serialize Arrow table directly (no JSON conversion needed!)
+        serialize_start = time.time()
+        arrow_bytes = snowflake_result_to_arrow(arrow_data)
+        serialize_time = (time.time() - serialize_start) * 1000
 
-            try:
-                geometry = json.loads(geojson_str)
-            except json.JSONDecodeError:
-                continue
+        total_time = (time.time() - request_start) * 1000
 
-            features.append({
-                "type": "Feature",
-                "properties": {"XD": xd_value},
-                "geometry": geometry
-            })
+        if DEBUG_BACKEND_TIMING:
+            print(f"  [2] Arrow serialization: {serialize_time:.2f}ms")
+            print(f"  [TOTAL] /xd-geometry: {total_time:.2f}ms\n")
 
-        _xd_geometry_cache = {
-            "type": "FeatureCollection",
-            "features": features
-        }
+        # Cache the serialized Arrow bytes
+        _xd_geometry_cache = arrow_bytes
 
-        return jsonify(_xd_geometry_cache)
+        return create_arrow_response(arrow_bytes)
     except Exception as e:
         print(f"[ERROR] /xd-geometry: {e}")
         return f"Error fetching XD geometry: {e}", 500

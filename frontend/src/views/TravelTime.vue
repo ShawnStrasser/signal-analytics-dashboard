@@ -100,12 +100,14 @@
 import { ref, watch, onMounted } from 'vue'
 import { useFiltersStore } from '@/stores/filters'
 import { useSelectionStore } from '@/stores/selection'
+import { useMapDataCacheStore } from '@/stores/mapDataCache'
 import ApiService from '@/services/api'
 import SharedMap from '@/components/SharedMap.vue'
 import TravelTimeChart from '@/components/TravelTimeChart.vue'
 
 const filtersStore = useFiltersStore()
 const selectionStore = useSelectionStore()
+const mapDataCacheStore = useMapDataCacheStore()
 const mapData = ref([])
 const chartData = ref([])
 const loadingMap = ref(false)
@@ -161,6 +163,25 @@ async function loadMapData() {
     const t0 = performance.now()
     loadingMap.value = true
 
+    // Check if this is an "all signals" query (no signal filter)
+    const isAllSignals = !filtersStore.selectedSignalIds || filtersStore.selectedSignalIds.length === 0
+
+    // Try cache first for "all signals" queries
+    if (isAllSignals) {
+      const cached = mapDataCacheStore.getTravelTimeCache(
+        filtersStore.startDate,
+        filtersStore.endDate
+      )
+
+      if (cached) {
+        mapData.value = cached
+        const t1 = performance.now()
+        console.log(`📡 API: Loading map data DONE (CACHED) - ${mapData.value.length} records in ${(t1 - t0).toFixed(2)}ms`)
+        return
+      }
+    }
+
+    // Cache miss or filtered query - fetch from backend
     const arrowTable = await ApiService.getTravelTimeSummary(filtersStore.filterParams)
     const t1 = performance.now()
     console.log(`📡 API: getTravelTimeSummary took ${(t1 - t0).toFixed(2)}ms`)
@@ -169,6 +190,15 @@ async function loadMapData() {
     const objects = ApiService.arrowTableToObjects(arrowTable)
     const t2 = performance.now()
     console.log(`📡 API: arrowTableToObjects took ${(t2 - conversionStart).toFixed(2)}ms`)
+
+    // Cache "all signals" result
+    if (isAllSignals) {
+      mapDataCacheStore.setTravelTimeCache(
+        filtersStore.startDate,
+        filtersStore.endDate,
+        objects
+      )
+    }
 
     const assignmentStart = performance.now()
     mapData.value = objects

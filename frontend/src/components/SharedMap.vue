@@ -36,6 +36,7 @@ let signalMarkers = new Map() // Map signal ID to marker
 let xdLayers = new Map() // Map XD to layer
 let markersLayer = null
 let geometryLayer = null
+let previousDisplayedXDs = new Set() // Track previous filter state for selective updates
 
 const geometryStore = useGeometryStore()
 const mapStateStore = useMapStateStore()
@@ -69,9 +70,19 @@ onMounted(() => {
   requestIdleCallback(() => {
     const geometryLoadStart = performance.now()
     console.log('🗺️ SharedMap: Starting deferred geometry load')
+
+    let fetchComplete = 0
+    let parseComplete = 0
+    let storeComplete = 0
+
     geometryStore.loadGeometry().then(() => {
       const geometryLoadEnd = performance.now()
-      console.log(`🗺️ SharedMap: Geometry loaded in ${(geometryLoadEnd - geometryLoadStart).toFixed(2)}ms`)
+      const totalTime = geometryLoadEnd - geometryLoadStart
+
+      console.log(`🗺️ SharedMap: Geometry load COMPLETE in ${totalTime.toFixed(2)}ms`)
+      console.log(`  Breakdown:`)
+      console.log(`  - Network fetch + Arrow deser: see ApiService logs`)
+      console.log(`  - Store assignment: ${(geometryLoadEnd - geometryLoadStart).toFixed(2)}ms total`)
     }).catch(error => {
       console.error('Failed to preload XD geometry:', error)
     })
@@ -198,12 +209,10 @@ function initializeMap() {
 function updateGeometry() {
   if (!map || !geometryLayer) return
 
+  const updateStart = performance.now()
   console.log('🗺️ updateGeometry: START', {
     xdLayersBeforeClear: xdLayers.size
   })
-
-  geometryLayer.clearLayers()
-  xdLayers.clear()
 
   const collection = featureCollection.value
   if (!collection || !Array.isArray(collection.features) || collection.features.length === 0) {
@@ -212,7 +221,6 @@ function updateGeometry() {
   }
 
   // Build set of XD values from currently displayed signals
-  // This will be used to determine which XD segments should be colored vs greyed out
   const displayedXDs = new Set(props.signals.map(signal => signal.XD))
   console.log('🗺️ updateGeometry:', {
     totalFeatures: collection.features.length,
@@ -223,18 +231,33 @@ function updateGeometry() {
   // Get current data values for coloring
   const xdDataMap = getXdDataMap()
 
-  collection.features.forEach(feature => {
-    if (!feature.properties?.XD) return
+  // OPTIMIZATION: Identify which XDs changed filter state
+  const newlyVisible = new Set([...displayedXDs].filter(xd => !previousDisplayedXDs.has(xd)))
+  const newlyHidden = new Set([...previousDisplayedXDs].filter(xd => !displayedXDs.has(xd)))
+  const stillVisible = new Set([...displayedXDs].filter(xd => previousDisplayedXDs.has(xd)))
 
-    const xd = feature.properties.XD
-    
-    // Always render all XD segments, but grey out those not in current filter
+  console.log('🗺️ updateGeometry: state changes', {
+    newlyVisible: newlyVisible.size,
+    newlyHidden: newlyHidden.size,
+    stillVisible: stillVisible.size,
+    totalToUpdate: newlyVisible.size + newlyHidden.size + stillVisible.size
+  })
+
+  // Track which layers we've seen (for cleanup of removed features)
+  const seenXDs = new Set()
+
+  let createdCount = 0
+  let updatedCount = 0
+  let skippedCount = 0
+
+  // Helper function to update a layer's style
+  const updateLayerStyle = (xd, feature = null) => {
+    const existingLayer = xdLayers.get(xd)
     const isInFilteredSet = displayedXDs.has(xd)
     const dataValue = xdDataMap.get(xd)
-    
-    // Determine color based on data type and value
-    let fillColor = '#cccccc' // default gray for no data or filtered out
-    
+    const isSelected = selectionStore.isXdSegmentSelected(xd)
+
+    let fillColor = '#cccccc'
     if (isInFilteredSet && dataValue !== undefined && dataValue !== null) {
       if (props.dataType === 'anomaly') {
         const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
@@ -243,43 +266,129 @@ function updateGeometry() {
         const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
         fillColor = anomalyColorScale(percentage)
       } else {
-        // Travel time mode - use TTI for coloring
         const tti = dataValue.TRAVEL_TIME_INDEX || 0
         fillColor = travelTimeColorScale(tti)
       }
     }
 
-    const isSelected = selectionStore.isXdSegmentSelected(xd)
-    
-    const layer = L.geoJSON(feature, {
-      style: {
-        color: isSelected ? '#000000' : (isInFilteredSet ? fillColor : '#808080'),
-        weight: isSelected ? 3 : 1,
-        opacity: isSelected ? 1 : (isInFilteredSet ? 0.8 : 0.3),
-        fillColor: fillColor,
-        fillOpacity: isInFilteredSet ? 0.6 : 0.2
-      },
-      onEachFeature: (feature, layer) => {
-        // Tooltip on hover
+    const newStyle = {
+      color: isSelected ? '#000000' : (isInFilteredSet ? fillColor : '#808080'),
+      weight: isSelected ? 3 : 1,
+      opacity: isSelected ? 1 : (isInFilteredSet ? 0.8 : 0.3),
+      fillColor: isInFilteredSet ? fillColor : '#cccccc',
+      fillOpacity: isInFilteredSet ? 0.6 : 0.2
+    }
+
+    if (!existingLayer) {
+      // Create new layer
+      if (!feature) return false
+
+      const layer = L.geoJSON(feature, {
+        style: newStyle,
+        onEachFeature: (feature, layer) => {
+          const tooltipContent = createXdTooltip(xd, dataValue)
+          layer.bindTooltip(tooltipContent, {
+            sticky: true,
+            direction: 'top'
+          })
+
+          layer.on('click', (e) => {
+            L.DomEvent.stopPropagation(e)
+            if (isInFilteredSet) {
+              selectionStore.toggleXdSegment(xd)
+              emit('selection-changed')
+            }
+          })
+        }
+      })
+
+      layer.addTo(geometryLayer)
+      xdLayers.set(xd, layer)
+      createdCount++
+      return true
+    }
+
+    // Update existing layer
+    existingLayer.eachLayer((childLayer) => {
+      if (childLayer.setStyle) {
+        childLayer.setStyle(newStyle)
+      }
+
+      // OPTIMIZATION: Only update tooltip if XD is in filtered set (visible)
+      // Hidden layers don't need tooltip updates since they won't be hovered
+      if (isInFilteredSet) {
         const tooltipContent = createXdTooltip(xd, dataValue)
-        layer.bindTooltip(tooltipContent, {
+        childLayer.unbindTooltip()
+        childLayer.bindTooltip(tooltipContent, {
           sticky: true,
           direction: 'top'
-        })
-
-        // Click handler - only allow selection if in filtered set
-        layer.on('click', (e) => {
-          L.DomEvent.stopPropagation(e)
-          if (isInFilteredSet) {
-            selectionStore.toggleXdSegment(xd)
-            emit('selection-changed')
-          }
         })
       }
     })
 
-    layer.addTo(geometryLayer)
-    xdLayers.set(xd, layer)
+    updatedCount++
+    return true
+  }
+
+  // Build a map of XD -> feature for quick lookup
+  const featureMap = new Map()
+  collection.features.forEach(feature => {
+    if (feature.properties?.XD) {
+      featureMap.set(feature.properties.XD, feature)
+      seenXDs.add(feature.properties.XD)
+    }
+  })
+
+  // OPTIMIZATION: Only process XDs that need updates
+  const xdsToUpdate = new Set([...newlyVisible, ...newlyHidden, ...stillVisible])
+
+  console.log('🗺️ updateGeometry: processing', {
+    totalXDsToProcess: xdsToUpdate.size,
+    totalFeaturesAvailable: featureMap.size
+  })
+
+  xdsToUpdate.forEach(xd => {
+    const feature = featureMap.get(xd)
+    updateLayerStyle(xd, feature)
+  })
+
+  // Handle layers that don't exist yet (shouldn't happen but safety check)
+  collection.features.forEach(feature => {
+    if (!feature.properties?.XD) return
+    const xd = feature.properties.XD
+
+    if (!xdLayers.has(xd) && !xdsToUpdate.has(xd)) {
+      // This XD wasn't in our update set but needs a layer created
+      updateLayerStyle(xd, feature)
+    }
+  })
+
+  // Remove layers that are no longer in the feature collection
+  const layersToRemove = []
+  xdLayers.forEach((layer, xd) => {
+    if (!seenXDs.has(xd)) {
+      layersToRemove.push(xd)
+    }
+  })
+
+  layersToRemove.forEach(xd => {
+    const layer = xdLayers.get(xd)
+    if (layer) {
+      geometryLayer.removeLayer(layer)
+      xdLayers.delete(xd)
+    }
+  })
+
+  // Update previousDisplayedXDs for next comparison
+  previousDisplayedXDs = new Set(displayedXDs)
+
+  const updateEnd = performance.now()
+  console.log(`🗺️ updateGeometry: DONE in ${(updateEnd - updateStart).toFixed(2)}ms`, {
+    created: createdCount,
+    updated: updatedCount,
+    skipped: skippedCount,
+    removed: layersToRemove.length,
+    totalLayers: xdLayers.size
   })
 }
 
@@ -322,7 +431,7 @@ function createXdTooltip(xd, dataValue) {
   if (!dataValue) {
     return `<div><strong>XD Segment:</strong> ${xd}<br><em>No data</em></div>`
   }
-  
+
   if (props.dataType === 'anomaly') {
     const anomalyCount = dataValue.ANOMALY_COUNT || 0
     const pointSourceCount = dataValue.POINT_SOURCE_COUNT || 0
@@ -334,8 +443,7 @@ function createXdTooltip(xd, dataValue) {
         <strong>XD Segment:</strong> ${xd}<br>
         <strong>Anomaly Percentage:</strong> ${percentage.toFixed(1)}%<br>
         <strong>Total Anomalies:</strong> ${anomalyCount}<br>
-        <strong>Point Source:</strong> ${pointSourceCount}<br>
-        <strong>Total Records:</strong> ${totalRecords}
+        <strong>Point Source:</strong> ${pointSourceCount}
       </div>
     `
   } else {
@@ -343,8 +451,7 @@ function createXdTooltip(xd, dataValue) {
     return `
       <div>
         <strong>XD Segment:</strong> ${xd}<br>
-        <strong>Travel Time Index:</strong> ${travelTimeIndex.toFixed(2)}<br>
-        <strong>Records:</strong> ${dataValue.RECORD_COUNT || 0}
+        <strong>Travel Time Index:</strong> ${travelTimeIndex.toFixed(2)}
       </div>
     `
   }
@@ -352,14 +459,15 @@ function createXdTooltip(xd, dataValue) {
 
 function updateMarkers() {
   if (!map || !markersLayer) return
-  
-  markersLayer.clearLayers()
-  signalMarkers.clear()
-  
-  if (props.signals.length === 0) return
+
+  if (props.signals.length === 0) {
+    markersLayer.clearLayers()
+    signalMarkers.clear()
+    return
+  }
 
   const bounds = []
-  
+
   if (props.dataType === 'anomaly') {
     // Anomaly mode: show all signals, color by anomaly count
     const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
@@ -392,7 +500,26 @@ function updateMarkers() {
     })
 
     const aggregatedSignals = Array.from(signalGroups.values())
+    const newSignalIds = new Set(aggregatedSignals.map(s => s.ID))
 
+    // OPTIMIZATION: Update existing markers, only create/remove as needed
+    const markersToRemove = []
+    signalMarkers.forEach((marker, signalId) => {
+      if (!newSignalIds.has(signalId)) {
+        markersToRemove.push(signalId)
+      }
+    })
+
+    // Remove markers that are no longer in the dataset
+    markersToRemove.forEach(signalId => {
+      const marker = signalMarkers.get(signalId)
+      if (marker) {
+        markersLayer.removeLayer(marker)
+        signalMarkers.delete(signalId)
+      }
+    })
+
+    // Update existing markers or create new ones
     aggregatedSignals.forEach(signal => {
       bounds.push([signal.LATITUDE, signal.LONGITUDE])
 
@@ -400,45 +527,68 @@ function updateMarkers() {
       const totalRecords = signal.RECORD_COUNT || 0
       const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
 
-      // Color using anomaly percentage scale
       const color = anomalyColorScale(percentage)
-      
       const isSelected = selectionStore.isSignalSelected(signal.ID)
-      
-      const marker = L.circle([signal.LATITUDE, signal.LONGITUDE], SIGNAL_RADIUS_METERS, {
-        fillColor: color,
-        color: isSelected ? '#000000' : '#FFFFFF',
-        weight: isSelected ? 3 : 1,
-        opacity: isSelected ? 1 : 0.5,
-        fillOpacity: 0.8,
-        interactive: true,
-        bubblingMouseEvents: false
-      })
-      
-      const tooltipContent = `
-        <div>
-          <h4>Signal ${signal.ID}</h4>
-          <p><strong>Anomaly Percentage:</strong> ${percentage.toFixed(1)}%</p>
-          <p><strong>Total Anomalies:</strong> ${signal.ANOMALY_COUNT || 0}</p>
-          <p><strong>Point Source:</strong> ${signal.POINT_SOURCE_COUNT || 0}</p>
-          <p><strong>Total Records:</strong> ${totalRecords}</p>
-          <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
-        </div>
-      `
-      
-      marker.bindTooltip(tooltipContent, {
-        direction: 'top',
-        offset: [0, -10]
-      })
-      
-      marker.on('click', (e) => {
-        L.DomEvent.stopPropagation(e)
-        selectionStore.toggleSignal(signal.ID)
-        emit('selection-changed')
-      })
-      
-      markersLayer.addLayer(marker)
-      signalMarkers.set(signal.ID, marker)
+
+      const existingMarker = signalMarkers.get(signal.ID)
+
+      if (existingMarker) {
+        // Update existing marker style
+        existingMarker.setStyle({
+          fillColor: color,
+          color: isSelected ? '#000000' : '#FFFFFF',
+          weight: isSelected ? 3 : 1,
+          opacity: isSelected ? 1 : 0.5,
+          fillOpacity: 0.8
+        })
+
+        // Update tooltip
+        const tooltipContent = `
+          <div>
+            <h4>Signal ${signal.ID}</h4>
+            <p><strong>Anomaly Percentage:</strong> ${percentage.toFixed(1)}%</p>
+            <p><strong>Total Anomalies:</strong> ${signal.ANOMALY_COUNT || 0}</p>
+            <p><strong>Point Source:</strong> ${signal.POINT_SOURCE_COUNT || 0}</p>
+            <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
+          </div>
+        `
+        existingMarker.setTooltipContent(tooltipContent)
+      } else {
+        // Create new marker
+        const marker = L.circle([signal.LATITUDE, signal.LONGITUDE], SIGNAL_RADIUS_METERS, {
+          fillColor: color,
+          color: isSelected ? '#000000' : '#FFFFFF',
+          weight: isSelected ? 3 : 1,
+          opacity: isSelected ? 1 : 0.5,
+          fillOpacity: 0.8,
+          interactive: true,
+          bubblingMouseEvents: false
+        })
+
+        const tooltipContent = `
+          <div>
+            <h4>Signal ${signal.ID}</h4>
+            <p><strong>Anomaly Percentage:</strong> ${percentage.toFixed(1)}%</p>
+            <p><strong>Total Anomalies:</strong> ${signal.ANOMALY_COUNT || 0}</p>
+            <p><strong>Point Source:</strong> ${signal.POINT_SOURCE_COUNT || 0}</p>
+            <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
+          </div>
+        `
+
+        marker.bindTooltip(tooltipContent, {
+          direction: 'top',
+          offset: [0, -10]
+        })
+
+        marker.on('click', (e) => {
+          L.DomEvent.stopPropagation(e)
+          selectionStore.toggleSignal(signal.ID)
+          emit('selection-changed')
+        })
+
+        markersLayer.addLayer(marker)
+        signalMarkers.set(signal.ID, marker)
+      }
     })
     
   } else {
@@ -483,7 +633,26 @@ function updateMarkers() {
     })
     
     const aggregatedSignals = Array.from(signalGroups.values())
+    const newSignalIds = new Set(aggregatedSignals.map(s => s.ID))
 
+    // OPTIMIZATION: Update existing markers, only create/remove as needed
+    const markersToRemove = []
+    signalMarkers.forEach((marker, signalId) => {
+      if (!newSignalIds.has(signalId)) {
+        markersToRemove.push(signalId)
+      }
+    })
+
+    // Remove markers that are no longer in the dataset
+    markersToRemove.forEach(signalId => {
+      const marker = signalMarkers.get(signalId)
+      if (marker) {
+        markersLayer.removeLayer(marker)
+        signalMarkers.delete(signalId)
+      }
+    })
+
+    // Update existing markers or create new ones
     aggregatedSignals.forEach(signal => {
       bounds.push([signal.LATITUDE, signal.LONGITUDE])
 
@@ -493,44 +662,67 @@ function updateMarkers() {
         : 0
 
       const color = travelTimeColorScale(avgTTI)
-
       const isSelected = selectionStore.isSignalSelected(signal.ID)
 
-      const marker = L.circle([signal.LATITUDE, signal.LONGITUDE], SIGNAL_RADIUS_METERS, {
-        fillColor: color,
-        color: isSelected ? '#000000' : '#FFFFFF',
-        weight: isSelected ? 3 : 1,
-        opacity: isSelected ? 1 : 0.5,
-        fillOpacity: 0.8,
-        interactive: true,
-        bubblingMouseEvents: false
-      })
+      const existingMarker = signalMarkers.get(signal.ID)
 
-      const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
-      const recordCount = signal.RECORD_COUNT
+      if (existingMarker) {
+        // Update existing marker style
+        existingMarker.setStyle({
+          fillColor: color,
+          color: isSelected ? '#000000' : '#FFFFFF',
+          weight: isSelected ? 3 : 1,
+          opacity: isSelected ? 1 : 0.5,
+          fillOpacity: 0.8
+        })
 
-      const tooltipContent = `
-        <div>
-          <h4>Signal ${signal.ID}</h4>
-          <p><strong>Travel Time Index:</strong> ${ttiDisplay}</p>
-          <p><strong>Records:</strong> ${recordCount}</p>
-          <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
-        </div>
-      `
-      
-      marker.bindTooltip(tooltipContent, {
-        direction: 'top',
-        offset: [0, -10]
-      })
-      
-      marker.on('click', (e) => {
-        L.DomEvent.stopPropagation(e)
-        selectionStore.toggleSignal(signal.ID)
-        emit('selection-changed')
-      })
-      
-      markersLayer.addLayer(marker)
-      signalMarkers.set(signal.ID, marker)
+        // Update tooltip
+        const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
+
+        const tooltipContent = `
+          <div>
+            <h4>Signal ${signal.ID}</h4>
+            <p><strong>Travel Time Index:</strong> ${ttiDisplay}</p>
+            <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
+          </div>
+        `
+        existingMarker.setTooltipContent(tooltipContent)
+      } else {
+        // Create new marker
+        const marker = L.circle([signal.LATITUDE, signal.LONGITUDE], SIGNAL_RADIUS_METERS, {
+          fillColor: color,
+          color: isSelected ? '#000000' : '#FFFFFF',
+          weight: isSelected ? 3 : 1,
+          opacity: isSelected ? 1 : 0.5,
+          fillOpacity: 0.8,
+          interactive: true,
+          bubblingMouseEvents: false
+        })
+
+        const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
+
+        const tooltipContent = `
+          <div>
+            <h4>Signal ${signal.ID}</h4>
+            <p><strong>Travel Time Index:</strong> ${ttiDisplay}</p>
+            <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
+          </div>
+        `
+
+        marker.bindTooltip(tooltipContent, {
+          direction: 'top',
+          offset: [0, -10]
+        })
+
+        marker.on('click', (e) => {
+          L.DomEvent.stopPropagation(e)
+          selectionStore.toggleSignal(signal.ID)
+          emit('selection-changed')
+        })
+
+        markersLayer.addLayer(marker)
+        signalMarkers.set(signal.ID, marker)
+      }
     })
   }
 }
@@ -567,38 +759,56 @@ function autoZoomToSignals() {
     }
     console.log('🔍 autoZoomToSignals: initial bounds (markers only)', initialBounds)
 
-    // Add bounds of ONLY the filtered XD segments
-    // OPTIMIZATION: Only iterate through the XDs we care about, not all 16k layers
+    // OPTIMIZATION: Skip XD bounds iteration for large datasets (>20 signals)
+    // Marker bounds are sufficient for zoom, and iterating XDs is expensive
     const displayedXDs = new Set(props.signals.map(signal => signal.XD))
     let xdBoundsAdded = 0
 
-    // Instead of iterating through all xdLayers, only check the ones we need
-    displayedXDs.forEach(xd => {
-      const layer = xdLayers.get(xd)
-      if (layer) {
-        const layerBounds = layer.getBounds()
-        if (layerBounds.isValid()) {
-          mapBounds.extend(layerBounds)
-          xdBoundsAdded++
+    if (signalMarkers.size <= 20) {
+      // Small dataset - include XD bounds for precision
+      displayedXDs.forEach(xd => {
+        const layer = xdLayers.get(xd)
+        if (layer) {
+          const layerBounds = layer.getBounds()
+          if (layerBounds.isValid()) {
+            mapBounds.extend(layerBounds)
+            xdBoundsAdded++
+          }
         }
-      }
-    })
+      })
 
-    console.log('🔍 autoZoomToSignals: after adding XD bounds', {
-      xdBoundsAdded,
-      displayedXDsCount: displayedXDs.size,
-      finalBounds: {
-        north: mapBounds.getNorth(),
-        south: mapBounds.getSouth(),
-        east: mapBounds.getEast(),
-        west: mapBounds.getWest()
-      }
-    })
+      console.log('🔍 autoZoomToSignals: after adding XD bounds', {
+        xdBoundsAdded,
+        displayedXDsCount: displayedXDs.size,
+        finalBounds: {
+          north: mapBounds.getNorth(),
+          south: mapBounds.getSouth(),
+          east: mapBounds.getEast(),
+          west: mapBounds.getWest()
+        }
+      })
+    } else {
+      // Large dataset - skip XD iteration, use marker bounds only
+      console.log('🔍 autoZoomToSignals: SKIPPING XD bounds (>20 signals, using marker bounds only)')
+    }
 
     if (mapBounds.isValid()) {
       console.log('🔍 autoZoomToSignals: CALLING fitBounds')
-      // Set maxZoom to 15 to prevent zooming in too far on single signals
-      map.fitBounds(mapBounds, { padding: [50, 50], maxZoom: 15 })
+
+      // OPTIMIZATION: For very large datasets, use faster fitBounds options
+      if (signalMarkers.size > 100) {
+        // Large dataset - use animate: false for instant zoom, no animation overhead
+        map.fitBounds(mapBounds, {
+          padding: [50, 50],
+          maxZoom: 15,
+          animate: false,  // Skip animation for faster performance
+          duration: 0       // No transition time
+        })
+      } else {
+        // Small dataset - use animated zoom for better UX
+        map.fitBounds(mapBounds, { padding: [50, 50], maxZoom: 15 })
+      }
+
       console.log('🔍 autoZoomToSignals: DONE, new zoom:', map.getZoom())
     } else {
       console.log('🔍 autoZoomToSignals: SKIPPED (invalid bounds)')
@@ -645,12 +855,19 @@ function updateSelectionStyles() {
       }
     }
     
-    layer.setStyle({
+    const styleUpdate = {
       color: isSelected ? '#000000' : (isInFilteredSet ? fillColor : '#808080'),
       weight: isSelected ? 3 : 1,
       opacity: isSelected ? 1 : (isInFilteredSet ? 0.8 : 0.3),
-      fillColor: fillColor,
+      fillColor: isInFilteredSet ? fillColor : '#cccccc',  // FIX: Consistent with color logic
       fillOpacity: isInFilteredSet ? (isSelected ? 0.7 : 0.6) : 0.2
+    }
+
+    // GeoJSON layers are LayerGroups, need to iterate through all child layers
+    layer.eachLayer((childLayer) => {
+      if (childLayer.setStyle) {
+        childLayer.setStyle(styleUpdate)
+      }
     })
   })
 }

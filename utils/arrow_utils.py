@@ -61,11 +61,15 @@ def serialize_arrow_to_ipc(arrow_table: pa.Table) -> bytes:
     Convert Arrow table to IPC stream bytes with minimal overhead.
     Optimized for small queries - uses single-pass serialization.
 
+    Note: Arrow IPC compression (LZ4/ZSTD) is not available in apache-arrow JS 21.0.0
+    because compressionRegistry is not exposed in the public API. HTTP-level compression
+    via Flask-Compress should be used instead for production deployments.
+
     Args:
         arrow_table: PyArrow table to serialize
 
     Returns:
-        Serialized bytes in Arrow IPC format
+        Serialized bytes in Arrow IPC format (uncompressed)
     """
     sink = pa.BufferOutputStream()
 

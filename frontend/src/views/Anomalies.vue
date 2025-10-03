@@ -129,12 +129,14 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useFiltersStore } from '@/stores/filters'
 import { useSelectionStore } from '@/stores/selection'
+import { useMapDataCacheStore } from '@/stores/mapDataCache'
 import ApiService from '@/services/api'
 import SharedMap from '@/components/SharedMap.vue'
 import AnomalyChart from '@/components/AnomalyChart.vue'
 
 const filtersStore = useFiltersStore()
 const selectionStore = useSelectionStore()
+const mapDataCacheStore = useMapDataCacheStore()
 const mapData = ref([])
 const chartData = ref([])
 const detailedData = ref([])
@@ -213,9 +215,45 @@ onMounted(async () => {
 
 async function loadMapData() {
   try {
+    const t0 = performance.now()
     loadingMap.value = true
+
+    // Check if this is an "all signals" query (no signal filter)
+    const isAllSignals = !filtersStore.selectedSignalIds || filtersStore.selectedSignalIds.length === 0
+
+    // Try cache first for "all signals" queries
+    if (isAllSignals) {
+      const cached = mapDataCacheStore.getAnomalyCache(
+        filtersStore.startDate,
+        filtersStore.endDate,
+        filtersStore.anomalyType
+      )
+
+      if (cached) {
+        mapData.value = cached
+        const t1 = performance.now()
+        console.log(`📡 API: Loading anomaly map data DONE (CACHED) - ${mapData.value.length} records in ${(t1 - t0).toFixed(2)}ms`)
+        return
+      }
+    }
+
+    // Cache miss or filtered query - fetch from backend
     const arrowTable = await ApiService.getAnomalySummary(filtersStore.filterParams)
-    mapData.value = ApiService.arrowTableToObjects(arrowTable)
+    const objects = ApiService.arrowTableToObjects(arrowTable)
+
+    // Cache "all signals" result
+    if (isAllSignals) {
+      mapDataCacheStore.setAnomalyCache(
+        filtersStore.startDate,
+        filtersStore.endDate,
+        filtersStore.anomalyType,
+        objects
+      )
+    }
+
+    mapData.value = objects
+    const t1 = performance.now()
+    console.log(`📡 API: Loading anomaly map data DONE - ${mapData.value.length} records in ${(t1 - t0).toFixed(2)}ms`)
   } catch (error) {
     console.error('Failed to load anomaly map data:', error)
     mapData.value = []

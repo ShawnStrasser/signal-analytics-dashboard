@@ -52,48 +52,6 @@ This is a full-stack traffic signal analytics dashboard that visualizes travel t
 
 Full schema definitions are in README.md.
 
-## Development Commands
-
-### Backend
-```bash
-# Install Python dependencies
-pip install -r requirements.txt
-
-# Run Flask development server (localhost:5000)
-python app.py
-```
-
-### Frontend
-```bash
-# Navigate to frontend directory
-cd frontend
-
-# Install Node dependencies
-npm install
-
-# Run Vite development server with proxy to Flask (localhost:5173)
-npm run dev
-
-# Build production bundle (outputs to ../static/dist)
-npm run build
-
-# Preview production build
-npm run preview
-```
-
-### Environment Setup
-Set Snowflake connection using one of these methods:
-1. **Active session** (preferred): Ensure active Snowflake session exists
-2. **Environment variable**:
-   ```bash
-   export SNOWFLAKE_CONNECTION='{"account":"...","user":"...","password":"...","warehouse":"...","database":"...","schema":"..."}'
-   ```
-
-## Development Workflow
-
-1. **Frontend development**: Run `npm run dev` in `frontend/` directory, which proxies `/api` calls to Flask backend
-2. **Backend development**: Run `python app.py` in root directory
-3. **Production deployment**: Run `npm run build` to bundle frontend, then run Flask app which serves from `static/dist`
 
 ## Important Notes
 
@@ -105,4 +63,10 @@ Set Snowflake connection using one of these methods:
 
 ## Claude Code Workflow
 
-**At the start of every new conversation**: Commit all current changes before making any modifications. Use a simple, concise commit message (one sentence or less) that briefly describes the changes. Do not include Claude Code signatures or co-authorship attributions. Do not commit .md files that are just developer notes or instructions.
+Commit all current changes before making any modifications. Use a simple, concise commit message (one sentence or less) that briefly describes the changes. Do not include Claude Code signatures or co-authorship attributions. Do not commit .md files that are just developer notes or instructions. Only commit at the start of a new conversation, do not commit mid-conversation unless explicitly instructed.
+
+Do not try to run the server or frontend and do not try to npm install anything. Instead, instruct the user when to run npm install or pip install. The user is already running the server and frontend.
+
+When debugging code avoid guessing or making asumptions, instead first add debugging statments to provide necessary info for troubleshooting. You may run commands against the app api's or run python scripts as needed to gather info for troubleshooting. When needed, ask the user to copy/paste server and client console logs into the chat.
+
+Periodically update CLAUDE.md as needed to keep it accurate and up to date with the current state of the codebase, but keep it concise and precise.
