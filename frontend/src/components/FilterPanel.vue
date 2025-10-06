@@ -106,7 +106,8 @@
             {{ formatTime(filtersStore.startHour) }} - {{ formatTime(filtersStore.endHour) }}
           </div>
           <v-range-slider
-            v-model="timeRange"
+            :model-value="timeRange"
+            @end="updateTimeRange"
             :min="0"
             :max="23"
             :step="1"
@@ -149,13 +150,13 @@ const filtersStore = useFiltersStore()
 const loadingSignals = ref(false)
 const signals = ref([])
 
-// Two-way binding for range slider
-const timeRange = computed({
-  get: () => [filtersStore.startHour, filtersStore.endHour],
-  set: (value) => {
-    filtersStore.setTimeOfDayRange(value[0], value[1])
-  }
-})
+// Display value for range slider
+const timeRange = computed(() => [filtersStore.startHour, filtersStore.endHour])
+
+// Update time range only when slider is released
+function updateTimeRange(value) {
+  filtersStore.setTimeOfDayRange(value[0], value[1])
+}
 
 // Format hour to HH:00 time string
 function formatTime(hour) {

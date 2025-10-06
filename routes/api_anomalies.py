@@ -227,7 +227,7 @@ def get_anomaly_aggregated():
             """
         else:
             # Materialized view: aggregate using pre-computed sums
-            timestamp_col = "DATE_ONLY as TIMESTAMP" if agg_table == "TRAVEL_TIME_DAILY_AGG" else "TIMESTAMP"
+            timestamp_col = "CAST(DATE_ONLY AS TIMESTAMP_NTZ) as TIMESTAMP" if agg_table == "TRAVEL_TIME_DAILY_AGG" else "TIMESTAMP"
             date_filter = "DATE_ONLY" if agg_table == "TRAVEL_TIME_DAILY_AGG" else "TIMESTAMP"
             query = f"""
             SELECT

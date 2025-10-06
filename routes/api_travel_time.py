@@ -382,10 +382,10 @@ def get_travel_time_aggregated():
             ORDER BY 1
             """
         else:  # daily
-            # Daily aggregation: use DATE_ONLY
+            # Daily aggregation: use DATE_ONLY, cast to TIMESTAMP_NTZ to ensure proper timezone handling
             query = f"""
             SELECT
-                DATE_ONLY as TIMESTAMP,
+                CAST(DATE_ONLY AS TIMESTAMP_NTZ) as TIMESTAMP,
                 AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX
             FROM TRAVEL_TIME_ANALYTICS t
             INNER JOIN FREEFLOW f ON t.XD = f.XD

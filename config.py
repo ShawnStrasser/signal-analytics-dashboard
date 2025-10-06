@@ -12,10 +12,10 @@ DEBUG_BACKEND_TIMING = True
 
 # Enable/disable Snowflake query result caching
 # When False, adds ALTER SESSION SET USE_CACHED_RESULT = FALSE
-DEBUG_DISABLE_SNOWFLAKE_CACHE = True
+DEBUG_DISABLE_SNOWFLAKE_CACHE = False
 
 # Enable/disable server-side result caching (geometry cache, etc.)
-DEBUG_DISABLE_SERVER_CACHE = True
+DEBUG_DISABLE_SERVER_CACHE = False
 
 # =============================================================================
 # FRONTEND DEBUG SETTINGS (referenced in API responses)

@@ -103,32 +103,7 @@ function updateChart() {
       type: 'time',
       name: 'Time',
       nameLocation: 'middle',
-      nameGap: 30,
-      axisLabel: {
-        formatter: function(value) {
-          const date = new Date(value)
-          const timeData = props.data
-
-          // Auto-format based on data granularity
-          if (timeData.length > 1) {
-            const firstTimestamp = new Date(timeData[0].TIMESTAMP)
-            const lastTimestamp = new Date(timeData[timeData.length - 1].TIMESTAMP)
-            const rangeDays = (lastTimestamp - firstTimestamp) / (1000 * 60 * 60 * 24)
-
-            // Daily aggregation: show date only
-            if (rangeDays > 7) {
-              return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-            }
-            // Hourly aggregation: show date + hour
-            else if (rangeDays >= 4) {
-              return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric' })
-            }
-          }
-
-          // 15-min aggregation: show full timestamp
-          return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-        }
-      }
+      nameGap: 30
     },
     yAxis: {
       type: 'value',
