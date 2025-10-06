@@ -198,9 +198,10 @@ watch([selectedSignalsList, selectedXdSegmentsList], () => {
   updateSelectionStyles()
 }, { deep: true })
 
-// Watch for theme changes to update map tiles
+// Watch for theme changes to update map tiles and selection styles
 watch(() => themeStore.currentTheme, () => {
   updateTileLayer()
+  updateSelectionStyles()
 })
 
 function updateTileLayer() {
@@ -213,14 +214,29 @@ function updateTileLayer() {
 
   // Add appropriate tile layer based on theme
   const isDark = themeStore.currentTheme === 'dark'
-  const tileUrl = isDark
-    ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
-    : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
 
-  tileLayer = L.tileLayer(tileUrl, {
-    attribution: '© OpenStreetMap contributors, © CartoDB',
-    maxZoom: 19
-  }).addTo(map)
+  // Use dark_nolabels + labels_only for better text contrast in dark mode
+  // For light mode, use light_all as before
+  if (isDark) {
+    // Dark mode: Use dark map without labels as base
+    tileLayer = L.layerGroup([
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors, © CartoDB',
+        maxZoom: 19
+      }),
+      // Add labels with better contrast on top
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        opacity: 1.0
+      })
+    ]).addTo(map)
+  } else {
+    // Light mode: Use standard light theme
+    tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors, © CartoDB',
+      maxZoom: 19
+    }).addTo(map)
+  }
 }
 
 function initializeMap() {
@@ -875,31 +891,36 @@ function autoZoomToSignals() {
 }
 
 function updateSelectionStyles() {
+  // Theme-aware selection colors
+  const isDark = themeStore.currentTheme === 'dark'
+  const selectionColor = isDark ? '#FFFFFF' : '#000000'
+  const unselectedMarkerColor = isDark ? '#CCCCCC' : '#FFFFFF'
+
   // Update signal marker styles
   signalMarkers.forEach((marker, signalId) => {
     const isSelected = selectionStore.isSignalSelected(signalId)
     const currentOptions = marker.options
-    
+
     marker.setStyle({
-      color: isSelected ? '#000000' : '#FFFFFF',
+      color: isSelected ? selectionColor : unselectedMarkerColor,
       weight: isSelected ? 3 : 1,
       opacity: isSelected ? 1 : 0.5
     })
   })
-  
+
   // Build set of XD values from currently displayed signals
   const displayedXDs = new Set(props.signals.map(signal => signal.XD))
-  
+
   // Update XD layer styles
   const xdDataMap = getXdDataMap()
-  
+
   xdLayers.forEach((layer, xd) => {
     const isSelected = selectionStore.isXdSegmentSelected(xd)
     const isInFilteredSet = displayedXDs.has(xd)
     const dataValue = xdDataMap.get(xd)
-    
+
     let fillColor = '#cccccc'
-    
+
     if (isInFilteredSet && dataValue !== undefined && dataValue !== null) {
       if (props.dataType === 'anomaly') {
         const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
@@ -912,9 +933,9 @@ function updateSelectionStyles() {
         fillColor = travelTimeColorScale(tti)
       }
     }
-    
+
     const styleUpdate = {
-      color: isSelected ? '#000000' : (isInFilteredSet ? fillColor : '#808080'),
+      color: isSelected ? selectionColor : (isInFilteredSet ? fillColor : '#808080'),
       weight: isSelected ? 3 : 1,
       opacity: isSelected ? 1 : (isInFilteredSet ? 0.8 : 0.3),
       fillColor: isInFilteredSet ? fillColor : '#cccccc',  // FIX: Consistent with color logic
