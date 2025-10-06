@@ -8,7 +8,7 @@ This is a full-stack traffic signal analytics dashboard that visualizes travel t
 
 ## Claude Code Workflow
 
-IMPORTANT! At start of new chat, commit all current changes! Do this before making any modifications. Use a simple, concise commit message (one sentence or less) that briefly describes the changes. Do not include Claude Code signatures or co-authorship attributions. Do not commit .md files that are just developer notes or instructions. Only commit at the start of a new conversation, do not commit mid-conversation unless explicitly instructed.
+IMPORTANT! At start of new chat, commit all previous changes! Do this before making any modifications. Use a simple, concise commit message (one sentence or less) that briefly describes the changes. Do not include Claude Code signatures or co-authorship attributions. Do not commit .md files that are just developer notes or instructions. Continue to make commits during the conversation as needed, and use git to revert changes if needed.
 
 Do not try to run the server or frontend and do not try to npm install anything. Instead, instruct the user when to run npm install or pip install. The user is already running the server and frontend.
 
