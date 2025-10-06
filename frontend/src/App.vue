@@ -5,8 +5,22 @@
         🚦 Signal Analytics Dashboard
       </v-app-bar-title>
 
-      <!-- Connection status indicator -->
+      <!-- Theme toggle and connection status -->
       <template v-slot:append>
+        <!-- Theme toggle button -->
+        <v-tooltip location="bottom">
+          <template v-slot:activator="{ props }">
+            <v-btn
+              v-bind="props"
+              :icon="themeStore.currentTheme === 'dark' ? 'mdi-weather-night' : 'mdi-weather-sunny'"
+              @click="toggleTheme"
+              variant="text"
+            ></v-btn>
+          </template>
+          <span>Toggle {{ themeStore.currentTheme === 'dark' ? 'light' : 'dark' }} mode</span>
+        </v-tooltip>
+
+        <!-- Connection status indicator -->
         <v-tooltip location="bottom">
           <template v-slot:activator="{ props }">
             <v-chip
@@ -62,10 +76,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useTheme } from 'vuetify'
 import FilterPanel from './components/FilterPanel.vue'
 import ConnectionStatus from './components/ConnectionStatus.vue'
 import { useGeometryStore } from '@/stores/geometry'
+import { useThemeStore } from '@/stores/theme'
 import ApiService from '@/services/api'
 
 const routes = [
@@ -82,8 +98,19 @@ const routes = [
 ]
 
 const geometryStore = useGeometryStore()
+const themeStore = useThemeStore()
+const vuetifyTheme = useTheme()
 const connectionStatus = ref('connecting') // 'idle', 'connecting', 'connected', 'error'
 const connectionError = ref(null)
+
+// Sync Vuetify theme with theme store
+watch(() => themeStore.currentTheme, (newTheme) => {
+  vuetifyTheme.global.name.value = newTheme
+}, { immediate: true })
+
+const toggleTheme = () => {
+  themeStore.toggleTheme()
+}
 
 const connectionChipColor = computed(() => {
   switch (connectionStatus.value) {

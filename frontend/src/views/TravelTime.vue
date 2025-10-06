@@ -40,7 +40,7 @@
                 data-type="travel-time"
                 @selection-changed="onSelectionChanged"
               />
-              <div v-else class="d-flex justify-center align-center" style="height: 100%;">
+              <div v-if="loading || mapData.length === 0" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 1000;">
                 <v-progress-circular indeterminate size="64"></v-progress-circular>
               </div>
             </div>
@@ -80,12 +80,12 @@
             📈 Travel Time Index Time Series
           </v-card-title>
           <v-card-text>
-            <div style="height: 500px;">
+            <div style="height: 500px; position: relative;">
               <TravelTimeChart
                 v-if="chartData.length > 0"
                 :data="chartData"
               />
-              <div v-else class="d-flex justify-center align-center" style="height: 100%;">
+              <div v-if="loading || chartData.length === 0" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 1000;">
                 <v-progress-circular indeterminate size="64"></v-progress-circular>
               </div>
             </div>
@@ -112,27 +112,63 @@ const mapData = ref([])
 const chartData = ref([])
 const loadingMap = ref(false)
 const loadingChart = ref(false)
+const loading = ref(false) // Global loading state
 const mapRef = ref(null)
 
-// Watch for filter changes that should reset map selections
-// (anything except date range changes)
+// Watch for geometry/signal filter changes (triggers auto-zoom)
 watch(() => [
   filtersStore.selectedSignalIds,
   filtersStore.approach,
   filtersStore.validGeometry
-], () => {
-  // Reset map selections when these filters change
-  if (selectionStore.hasMapSelections) {
-    selectionStore.clearAllSelections()
+], async () => {
+  if (loading.value) {
+    console.log('⏸️ Already loading - skipping filter change')
+    return
   }
-  // Note: Map will auto-zoom via autoZoomToSignals when new data loads
-})
 
-// Watch for any filter changes - reload map data
-watch(() => filtersStore.filterParams, async () => {
-  await loadMapData()
-  await loadChartData()
+  console.log('🔄 Geometry filters changed - reloading with auto-zoom')
+  loading.value = true
+  try {
+    // Reset map selections when these filters change
+    if (selectionStore.hasMapSelections) {
+      selectionStore.clearAllSelections()
+    }
+
+    // Reload data (map will auto-zoom via SharedMap watch)
+    await Promise.all([
+      loadMapData(),
+      loadChartData()
+    ])
+  } finally {
+    loading.value = false
+  }
 }, { deep: true })
+
+// Watch for date/time filter changes only (no auto-zoom needed)
+watch(() => [
+  filtersStore.startDate,
+  filtersStore.endDate,
+  filtersStore.startHour,
+  filtersStore.endHour,
+  filtersStore.timeFilterEnabled
+], async () => {
+  if (loading.value) {
+    console.log('⏸️ Already loading - skipping filter change')
+    return
+  }
+
+  console.log('📅 Date/time filters changed - reloading data only (no zoom)')
+  loading.value = true
+  try {
+    // Don't reset selections on date changes - just refresh data
+    await Promise.all([
+      loadMapData(),
+      loadChartData()
+    ])
+  } finally {
+    loading.value = false
+  }
+})
 
 // Watch for selection changes - reload chart data only
 // Watch the Set sizes and allSelectedXdSegments size to detect changes
@@ -148,13 +184,15 @@ watch(() => [
 onMounted(async () => {
   const t0 = performance.now()
   console.log('🚀 TravelTime.vue: onMounted START')
-  await loadMapData()
+
+  // Load map and chart data in parallel
+  await Promise.all([
+    loadMapData(),
+    loadChartData()
+  ])
+
   const t1 = performance.now()
-  console.log(`⏱️ TravelTime.vue: loadMapData complete, took ${(t1 - t0).toFixed(2)}ms`)
-  await loadChartData()
-  const t2 = performance.now()
-  console.log(`⏱️ TravelTime.vue: loadChartData complete, took ${(t2 - t1).toFixed(2)}ms`)
-  console.log(`✅ TravelTime.vue: onMounted COMPLETE, total ${(t2 - t0).toFixed(2)}ms`)
+  console.log(`✅ TravelTime.vue: onMounted COMPLETE, total ${(t1 - t0).toFixed(2)}ms`)
 })
 
 async function loadMapData() {

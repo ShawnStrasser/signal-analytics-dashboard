@@ -4,6 +4,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { useTheme } from 'vuetify'
 import * as echarts from 'echarts'
 
 const props = defineProps({
@@ -19,9 +20,15 @@ const props = defineProps({
 
 const chartContainer = ref(null)
 let chart = null
+const theme = useTheme()
 
 onMounted(() => {
   initializeChart()
+  updateChart()
+})
+
+// Watch for theme changes
+watch(() => theme.global.current.value.dark, () => {
   updateChart()
 })
 
@@ -78,13 +85,20 @@ function updateChart() {
   const title = props.selectedSignal
     ? `Travel Time Index for Signal ${props.selectedSignal}`
     : 'Travel Time Index - All Selected Signals'
-  
+
+  const isDark = theme.global.current.value.dark
+  const textColor = isDark ? '#E0E0E0' : '#333333'
+  const lineColor = isDark ? '#90CAF9' : '#1976D2'
+  const backgroundColor = isDark ? 'transparent' : 'transparent'
+
   const option = {
+    backgroundColor: backgroundColor,
     title: {
       text: title,
       left: 'center',
       textStyle: {
-        fontSize: 16
+        fontSize: 16,
+        color: textColor
       }
     },
     tooltip: {
@@ -103,13 +117,40 @@ function updateChart() {
       type: 'time',
       name: 'Time',
       nameLocation: 'middle',
-      nameGap: 30
+      nameGap: 30,
+      nameTextStyle: {
+        color: textColor
+      },
+      axisLabel: {
+        color: textColor
+      },
+      axisLine: {
+        lineStyle: {
+          color: textColor
+        }
+      }
     },
     yAxis: {
       type: 'value',
       name: 'Travel Time Index',
       nameLocation: 'middle',
-      nameGap: 50
+      nameGap: 50,
+      nameTextStyle: {
+        color: textColor
+      },
+      axisLabel: {
+        color: textColor
+      },
+      axisLine: {
+        lineStyle: {
+          color: textColor
+        }
+      },
+      splitLine: {
+        lineStyle: {
+          color: isDark ? '#424242' : '#E0E0E0'
+        }
+      }
     },
     series: [
       {
@@ -118,11 +159,11 @@ function updateChart() {
         data: travelTimeData,
         smooth: true,
         lineStyle: {
-          color: '#1976D2',
+          color: lineColor,
           width: 2
         },
         itemStyle: {
-          color: '#1976D2'
+          color: lineColor
         },
         symbol: 'circle',
         symbolSize: 4

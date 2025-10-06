@@ -41,7 +41,7 @@
                 :anomaly-type="filtersStore.anomalyType"
                 @selection-changed="onSelectionChanged"
               />
-              <div v-else class="d-flex justify-center align-center" style="height: 100%;">
+              <div v-if="loading || mapData.length === 0" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 1000;">
                 <v-progress-circular indeterminate size="64"></v-progress-circular>
               </div>
             </div>
@@ -81,12 +81,12 @@
             📈 Travel Time Analysis with Anomaly Detection
           </v-card-title>
           <v-card-text>
-            <div style="height: 500px;">
+            <div style="height: 500px; position: relative;">
               <AnomalyChart
                 v-if="chartData.length > 0"
                 :data="chartData"
               />
-              <div v-else class="d-flex justify-center align-center" style="height: 100%;">
+              <div v-if="loading || chartData.length === 0" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 1000;">
                 <v-progress-circular indeterminate size="64"></v-progress-circular>
               </div>
             </div>
@@ -144,6 +144,7 @@ const mapRef = ref(null)
 const loadingMap = ref(false)
 const loadingChart = ref(false)
 const loadingDetails = ref(false)
+const loading = ref(false) // Global loading state
 
 const tableHeaders = [
   { title: 'Timestamp', key: 'TIMESTAMP', sortable: true },
@@ -166,36 +167,65 @@ const anomaliesTableData = computed(() => {
     .slice(0, 100) // Limit to first 100 for performance
 })
 
-// Watch for filter changes that should reset map selections
-// (anything except date range changes)
+// Watch for geometry/signal/anomaly filter changes (triggers auto-zoom)
 watch(() => [
   filtersStore.selectedSignalIds,
   filtersStore.approach,
   filtersStore.validGeometry,
   filtersStore.anomalyType
-], () => {
-  // Reset map selections when these filters change
-  if (selectionStore.hasMapSelections) {
-    selectionStore.clearAllSelections()
+], async () => {
+  if (loading.value) {
+    console.log('⏸️ Already loading - skipping filter change')
+    return
   }
-  
-  // Rezoom map to fit the new filtered signals after data loads
-  // Wait a bit for the map to update with new markers
-  setTimeout(() => {
-    if (mapRef.value) {
-      mapRef.value.rezoomToSignals()
-    }
-  }, 100)
-})
 
-// Watch for filter changes - reload all data
-watch(() => filtersStore.filterParams, async () => {
-  await loadMapData()
-  await loadChartData()
-  await loadDetailedData()
+  console.log('🔄 Geometry/anomaly filters changed - reloading with auto-zoom')
+  loading.value = true
+  try {
+    // Reset map selections when these filters change
+    if (selectionStore.hasMapSelections) {
+      selectionStore.clearAllSelections()
+    }
+
+    // Reload data (map will auto-zoom via SharedMap watch)
+    await Promise.all([
+      loadMapData(),
+      loadChartData(),
+      loadDetailedData()
+    ])
+  } finally {
+    loading.value = false
+  }
 }, { deep: true })
 
-// Watch for selection changes - reload chart and detail data only
+// Watch for date/time filter changes only (no auto-zoom needed)
+watch(() => [
+  filtersStore.startDate,
+  filtersStore.endDate,
+  filtersStore.startHour,
+  filtersStore.endHour,
+  filtersStore.timeFilterEnabled
+], async () => {
+  if (loading.value) {
+    console.log('⏸️ Already loading - skipping filter change')
+    return
+  }
+
+  console.log('📅 Date/time filters changed - reloading data only (no zoom)')
+  loading.value = true
+  try {
+    // Don't reset selections on date changes - just refresh data
+    await Promise.all([
+      loadMapData(),
+      loadChartData(),
+      loadDetailedData()
+    ])
+  } finally {
+    loading.value = false
+  }
+})
+
+// Watch for selection changes - reload chart and detail data in parallel
 // Watch the Set sizes and allSelectedXdSegments size to detect changes
 watch(() => [
   selectionStore.selectedSignals.size,
@@ -203,14 +233,25 @@ watch(() => [
   selectionStore.allSelectedXdSegments.size
 ], async () => {
   console.log('Selection changed - reloading chart and detail data')
-  await loadChartData()
-  await loadDetailedData()
+  await Promise.all([
+    loadChartData(),
+    loadDetailedData()
+  ])
 })
 
 onMounted(async () => {
-  await loadMapData()
-  await loadChartData()
-  await loadDetailedData()
+  const t0 = performance.now()
+  console.log('🚀 Anomalies.vue: onMounted START')
+
+  // Load all data in parallel
+  await Promise.all([
+    loadMapData(),
+    loadChartData(),
+    loadDetailedData()
+  ])
+
+  const t1 = performance.now()
+  console.log(`✅ Anomalies.vue: onMounted COMPLETE, total ${(t1 - t0).toFixed(2)}ms`)
 })
 
 async function loadMapData() {

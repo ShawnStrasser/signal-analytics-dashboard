@@ -4,6 +4,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { useTheme } from 'vuetify'
 import * as echarts from 'echarts'
 
 const props = defineProps({
@@ -19,9 +20,15 @@ const props = defineProps({
 
 const chartContainer = ref(null)
 let chart = null
+const theme = useTheme()
 
 onMounted(() => {
   initializeChart()
+  updateChart()
+})
+
+// Watch for theme changes
+watch(() => theme.global.current.value.dark, () => {
   updateChart()
 })
 
@@ -60,16 +67,24 @@ function updateChart() {
     Number(d.TOTAL_PREDICTION) || 0
   ])
   
-  const title = props.selectedSignal 
+  const title = props.selectedSignal
     ? `Total Travel Time vs Prediction - Signal ${props.selectedSignal}`
     : 'Total Travel Time vs Prediction - All Selected Signals'
-  
+
+  const isDark = theme.global.current.value.dark
+  const textColor = isDark ? '#E0E0E0' : '#333333'
+  const actualLineColor = isDark ? '#90CAF9' : '#1976D2'
+  const predictedLineColor = isDark ? '#81C784' : '#4CAF50'
+  const backgroundColor = isDark ? 'transparent' : 'transparent'
+
   const option = {
+    backgroundColor: backgroundColor,
     title: {
       text: title,
       left: 'center',
       textStyle: {
-        fontSize: 16
+        fontSize: 16,
+        color: textColor
       }
     },
     tooltip: {
@@ -89,19 +104,49 @@ function updateChart() {
     },
     legend: {
       data: ['Actual Travel Time', 'Predicted Travel Time'],
-      top: 30
+      top: 30,
+      textStyle: {
+        color: textColor
+      }
     },
     xAxis: {
       type: 'time',
       name: 'Time',
       nameLocation: 'middle',
-      nameGap: 30
+      nameGap: 30,
+      nameTextStyle: {
+        color: textColor
+      },
+      axisLabel: {
+        color: textColor
+      },
+      axisLine: {
+        lineStyle: {
+          color: textColor
+        }
+      }
     },
     yAxis: {
       type: 'value',
       name: 'Total Travel Time (seconds)',
       nameLocation: 'middle',
-      nameGap: 50
+      nameGap: 50,
+      nameTextStyle: {
+        color: textColor
+      },
+      axisLabel: {
+        color: textColor
+      },
+      axisLine: {
+        lineStyle: {
+          color: textColor
+        }
+      },
+      splitLine: {
+        lineStyle: {
+          color: isDark ? '#424242' : '#E0E0E0'
+        }
+      }
     },
     series: [
       {
@@ -110,11 +155,11 @@ function updateChart() {
         data: actualData,
         smooth: true,
         lineStyle: {
-          color: '#1976D2',
+          color: actualLineColor,
           width: 2
         },
         itemStyle: {
-          color: '#1976D2'
+          color: actualLineColor
         },
         symbol: 'circle',
         symbolSize: 4
@@ -125,12 +170,12 @@ function updateChart() {
         data: predictedData,
         smooth: true,
         lineStyle: {
-          color: '#4CAF50',
+          color: predictedLineColor,
           width: 2,
           type: 'dashed'
         },
         itemStyle: {
-          color: '#4CAF50'
+          color: predictedLineColor
         },
         symbol: 'circle',
         symbolSize: 4

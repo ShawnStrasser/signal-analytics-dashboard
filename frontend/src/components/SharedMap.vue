@@ -9,6 +9,7 @@ import L from 'leaflet'
 import { useGeometryStore } from '@/stores/geometry'
 import { useMapStateStore } from '@/stores/mapState'
 import { useSelectionStore } from '@/stores/selection'
+import { useThemeStore } from '@/stores/theme'
 import { travelTimeColorScale, anomalyColorScale } from '@/utils/colorScale'
 import { DEBUG_FRONTEND_LOGGING } from '@/config'
 
@@ -36,11 +37,13 @@ let signalMarkers = new Map() // Map signal ID to marker
 let xdLayers = new Map() // Map XD to layer
 let markersLayer = null
 let geometryLayer = null
+let tileLayer = null // Reference to current tile layer for theme switching
 let previousDisplayedXDs = new Set() // Track previous filter state for selective updates
 
 const geometryStore = useGeometryStore()
 const mapStateStore = useMapStateStore()
 const selectionStore = useSelectionStore()
+const themeStore = useThemeStore()
 const { featureCollection } = storeToRefs(geometryStore)
 const { selectedSignalsList, selectedXdSegmentsList } = storeToRefs(selectionStore)
 
@@ -121,8 +124,11 @@ onUnmounted(() => {
   xdLayers.clear()
 })
 
+// Track previous signal IDs to detect when signal set actually changes
+let previousSignalIds = new Set()
+
 // Watch for signal data changes
-watch(() => props.signals, (newSignals) => {
+watch(() => props.signals, (newSignals, oldSignals) => {
   const watchStart = performance.now()
   console.log('🔄 WATCH: props.signals changed (watch triggered)', {
     signalCount: newSignals.length,
@@ -139,17 +145,40 @@ watch(() => props.signals, (newSignals) => {
   const t1 = performance.now()
   console.log(`⏱️ updateMappings: ${(t1 - t0).toFixed(2)}ms`)
 
+  // Check if signal IDs actually changed (not just data values)
+  const currentSignalIds = new Set(newSignals.map(s => s.ID))
+  const signalSetChanged = currentSignalIds.size !== previousSignalIds.size ||
+    ![...currentSignalIds].every(id => previousSignalIds.has(id))
+
   updateMarkers()
   const t2 = performance.now()
   console.log(`⏱️ updateMarkers: ${(t2 - t1).toFixed(2)}ms`)
 
-  updateGeometry() // Update geometry to reflect filtered state
-  const t3 = performance.now()
-  console.log(`⏱️ updateGeometry: ${(t3 - t2).toFixed(2)}ms`)
+  // Defer geometry updates for large datasets to avoid blocking
+  const shouldDeferGeometry = newSignals.length > 5000
+  if (shouldDeferGeometry) {
+    console.log('⏳ Deferring geometry update (large dataset)')
+    requestIdleCallback(() => {
+      updateGeometry()
+    }, { timeout: 1000 })
+  } else {
+    updateGeometry() // Update geometry to reflect filtered state
+  }
 
-  autoZoomToSignals() // Zoom after both markers and geometry are updated
+  const t3 = performance.now()
+  console.log(`⏱️ updateGeometry: ${shouldDeferGeometry ? '0.00 (deferred)' : (t3 - t2).toFixed(2)}ms`)
+
+  // Only auto-zoom if the signal set actually changed
+  if (signalSetChanged) {
+    console.log('🔍 Signal set changed - performing auto-zoom')
+    autoZoomToSignals()
+    previousSignalIds = currentSignalIds
+  } else {
+    console.log('🔍 Signal set unchanged - skipping auto-zoom (data-only update)')
+  }
+
   const t4 = performance.now()
-  console.log(`⏱️ autoZoomToSignals: ${(t4 - t3).toFixed(2)}ms`)
+  console.log(`⏱️ autoZoomToSignals: ${signalSetChanged ? (t4 - t3).toFixed(2) : '0.00 (skipped)'}ms`)
   console.log(`⏱️ TOTAL map updates: ${(t4 - t0).toFixed(2)}ms`)
   console.log(`⏱️ Watch overhead (trigger to start): ${(t0 - watchStart).toFixed(2)}ms`)
 }, { deep: true })
@@ -169,6 +198,31 @@ watch([selectedSignalsList, selectedXdSegmentsList], () => {
   updateSelectionStyles()
 }, { deep: true })
 
+// Watch for theme changes to update map tiles
+watch(() => themeStore.currentTheme, () => {
+  updateTileLayer()
+})
+
+function updateTileLayer() {
+  if (!map) return
+
+  // Remove existing tile layer if present
+  if (tileLayer) {
+    map.removeLayer(tileLayer)
+  }
+
+  // Add appropriate tile layer based on theme
+  const isDark = themeStore.currentTheme === 'dark'
+  const tileUrl = isDark
+    ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
+    : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
+
+  tileLayer = L.tileLayer(tileUrl, {
+    attribution: '© OpenStreetMap contributors, © CartoDB',
+    maxZoom: 19
+  }).addTo(map)
+}
+
 function initializeMap() {
   // Use saved map state or defaults
   const savedCenter = mapStateStore.mapCenter
@@ -179,11 +233,8 @@ function initializeMap() {
     keyboard: false
   }).setView(savedCenter, savedZoom)
 
-  // Use CartoDB Positron (grayscale) basemap for better contrast
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors, © CartoDB',
-    maxZoom: 19
-  }).addTo(map)
+  // Add tile layer based on current theme
+  updateTileLayer()
 
   // Create layers - ORDER MATTERS: geometry on top of markers
   markersLayer = L.layerGroup().addTo(map)
@@ -308,20 +359,27 @@ function updateGeometry() {
       return true
     }
 
-    // Update existing layer
+    // Update existing layer - style only, skip tooltip for performance
+    // Tooltips will be regenerated on first hover via mouseover event
     existingLayer.eachLayer((childLayer) => {
       if (childLayer.setStyle) {
         childLayer.setStyle(newStyle)
       }
 
-      // OPTIMIZATION: Only update tooltip if XD is in filtered set (visible)
-      // Hidden layers don't need tooltip updates since they won't be hovered
-      if (isInFilteredSet) {
-        const tooltipContent = createXdTooltip(xd, dataValue)
-        childLayer.unbindTooltip()
-        childLayer.bindTooltip(tooltipContent, {
-          sticky: true,
-          direction: 'top'
+      // OPTIMIZATION: Use lazy tooltip updates - only regenerate on hover
+      // This saves significant time during bulk geometry updates
+      if (!childLayer._tooltipUpdateBound) {
+        childLayer._tooltipUpdateBound = true
+        childLayer.on('mouseover', () => {
+          const tooltipContent = createXdTooltip(xd, getXdDataMap().get(xd))
+          if (childLayer.getTooltip()) {
+            childLayer.setTooltipContent(tooltipContent)
+          } else {
+            childLayer.bindTooltip(tooltipContent, {
+              sticky: true,
+              direction: 'top'
+            })
+          }
         })
       }
     })

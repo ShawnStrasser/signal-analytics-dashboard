@@ -10,7 +10,7 @@
       <v-row>
         <v-col cols="12">
           <v-text-field
-            v-model="filtersStore.startDate"
+            v-model="localStartDate"
             label="Start Date"
             type="date"
             density="compact"
@@ -19,7 +19,7 @@
         </v-col>
         <v-col cols="12">
           <v-text-field
-            v-model="filtersStore.endDate"
+            v-model="localEndDate"
             label="End Date"
             type="date"
             density="compact"
@@ -149,6 +149,34 @@ import ApiService from '@/services/api'
 const filtersStore = useFiltersStore()
 const loadingSignals = ref(false)
 const signals = ref([])
+
+// Local date state with debouncing
+const localStartDate = ref(filtersStore.startDate)
+const localEndDate = ref(filtersStore.endDate)
+let dateDebounceTimer = null
+
+// Watch for external changes to store (e.g., programmatic updates)
+watch(() => filtersStore.startDate, (newVal) => {
+  if (newVal !== localStartDate.value) {
+    localStartDate.value = newVal
+  }
+})
+
+watch(() => filtersStore.endDate, (newVal) => {
+  if (newVal !== localEndDate.value) {
+    localEndDate.value = newVal
+  }
+})
+
+// Debounced update of store when local values change
+watch([localStartDate, localEndDate], ([newStart, newEnd]) => {
+  clearTimeout(dateDebounceTimer)
+  dateDebounceTimer = setTimeout(() => {
+    if (newStart !== filtersStore.startDate || newEnd !== filtersStore.endDate) {
+      filtersStore.setDateRange(newStart, newEnd)
+    }
+  }, 500) // 500ms debounce delay
+})
 
 // Display value for range slider
 const timeRange = computed(() => [filtersStore.startHour, filtersStore.endHour])
