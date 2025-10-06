@@ -192,6 +192,32 @@ def get_aggregation_table(start_date: str, end_date: str) -> str:
         return "TRAVEL_TIME_ANALYTICS"
 
 
+def build_day_of_week_filter(day_of_week: Optional[List[int]] = None) -> str:
+    """
+    Build SQL filter clause for day-of-week filtering with DIM_DATE join.
+
+    Args:
+        day_of_week: List of day numbers (1=Mon, 2=Tue, ..., 7=Sun), None means no filter
+
+    Returns:
+        SQL fragment like "INNER JOIN DIM_DATE d ON t.DATE_ONLY = d.DATE_ONLY AND d.DAY_OF_WEEK_ISO IN (1, 2, 3)" or empty string
+    """
+    if day_of_week is None or len(day_of_week) == 0:
+        return ""
+
+    try:
+        # Validate day numbers
+        days = [int(d) for d in day_of_week if 1 <= int(d) <= 7]
+        if not days:
+            return ""
+
+        days_str = ', '.join(map(str, days))
+        # Qualify DATE_ONLY with table aliases to avoid ambiguity
+        return f" INNER JOIN DIM_DATE d ON t.DATE_ONLY = d.DATE_ONLY AND d.DAY_OF_WEEK_ISO IN ({days_str})"
+    except (ValueError, TypeError):
+        return ""
+
+
 def build_time_of_day_filter(start_hour: Optional[int] = None, end_hour: Optional[int] = None) -> str:
     """
     Build SQL filter clause for time-of-day filtering.
@@ -201,7 +227,7 @@ def build_time_of_day_filter(start_hour: Optional[int] = None, end_hour: Optiona
         end_hour: End hour (0-23), None means no filter
 
     Returns:
-        SQL fragment like "AND HOUR_OF_DAY BETWEEN 15 AND 18" or empty string
+        SQL fragment like "AND TIME_15MIN BETWEEN '15:00:00' AND '18:59:59'" or empty string
     """
     if start_hour is None or end_hour is None:
         return ""
@@ -218,6 +244,9 @@ def build_time_of_day_filter(start_hour: Optional[int] = None, end_hour: Optiona
         if start == 0 and end == 23:
             return ""
 
-        return f" AND HOUR_OF_DAY BETWEEN {start} AND {end}"
+        # Format as TIME values
+        start_time = f"{start:02d}:00:00"
+        end_time = f"{end:02d}:59:59"
+        return f" AND TIME_15MIN BETWEEN '{start_time}' AND '{end_time}'"
     except (ValueError, TypeError):
         return ""

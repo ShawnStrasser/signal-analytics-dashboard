@@ -25,7 +25,7 @@ Periodically update CLAUDE.md as needed to keep it accurate and up to date with 
   1. Active session (preferred): Uses `get_active_session()` from `snowflake.snowpark.context`
   2. Connection parameters: Reads `SNOWFLAKE_CONNECTION` environment variable
 - **API routes**: Organized as Flask blueprints in `routes/`:
-  - `api_travel_time.py` - Travel time data endpoints
+  - `api_travel_time.py` - Travel time data endpoints (summary, aggregated, time-of-day)
   - `api_anomalies.py` - Anomaly analysis endpoints
 - **Data format**: All API responses return Apache Arrow IPC streams (`application/octet-stream`) for efficient data transfer
 
@@ -33,12 +33,12 @@ Periodically update CLAUDE.md as needed to keep it accurate and up to date with 
 - **Entry point**: `frontend/src/main.js` - Initializes Vue app with Pinia, Vue Router, and Vuetify
 - **Router**: `frontend/src/router.js` - Two main routes: `/travel-time` and `/anomalies`
 - **State management**: Pinia stores in `frontend/src/stores/`:
-  - `filters.js` - Date range, signal selection, approach/geometry filters (shared across pages)
+  - `filters.js` - Date range, signal selection, approach/geometry filters, day-of-week filter, time-of-day filter (shared across pages)
   - `selection.js` - Selected XD segments from map interactions
   - `mapState.js` - Map view state persistence
   - `geometry.js` - Cached XD road segment geometries (GeoJSON)
 - **Views**: `frontend/src/views/`
-  - `TravelTime.vue` - Map + time series chart for travel time analysis
+  - `TravelTime.vue` - Map + time series chart for travel time analysis with optional time-of-day aggregation
   - `Anomalies.vue` - Map + dual-series chart comparing actual vs predicted travel times
 - **Components**: `frontend/src/components/`
   - `SharedMap.vue` - Leaflet map component used by both views
@@ -56,7 +56,8 @@ Periodically update CLAUDE.md as needed to keep it accurate and up to date with 
 
 ### Tables
 - **DIM_SIGNALS_XD**: Signal dimension table with XD segments, lat/lon, approach/extended flags, valid_geometry
-- **TRAVEL_TIME_ANALYTICS**: Time series data with XD, timestamp, travel_time_seconds, prediction, anomaly flags
+- **TRAVEL_TIME_ANALYTICS**: Time series data with XD, timestamp, travel_time_seconds, prediction, anomaly flags, TIME_15MIN (computed as TO_TIME(TIMESTAMP))
+- **DIM_DATE**: Date dimension table with DATE_ONLY and DAY_OF_WEEK_ISO (1=Mon, 7=Sun)
 - **XD_GEOM**: Road segment geometries (ST_ASGEOJSON format) keyed by XD
 - **CHANGEPOINTS**: Detected changepoints with scores and before/after averages
 - **FREEFLOW**: Free-flow travel times by XD segment

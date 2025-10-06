@@ -40,8 +40,11 @@
                 data-type="travel-time"
                 @selection-changed="onSelectionChanged"
               />
-              <div v-if="loading || mapData.length === 0" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 1000;">
+              <div v-if="loading" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 1000;">
                 <v-progress-circular indeterminate size="64"></v-progress-circular>
+              </div>
+              <div v-else-if="!loading && mapData.length === 0" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0;">
+                <div class="text-h5 text-grey">NO DATA</div>
               </div>
             </div>
           </v-card-text>
@@ -78,15 +81,33 @@
         <v-card>
           <v-card-title>
             📈 Travel Time Index Time Series
+            <v-spacer></v-spacer>
+            <v-btn-toggle
+              v-model="aggregateByTimeOfDay"
+              mandatory
+              density="compact"
+              color="primary"
+            >
+              <v-btn value="false" size="small">
+                By Date/Time
+              </v-btn>
+              <v-btn value="true" size="small">
+                By Time of Day
+              </v-btn>
+            </v-btn-toggle>
           </v-card-title>
           <v-card-text>
             <div style="height: 500px; position: relative;">
               <TravelTimeChart
                 v-if="chartData.length > 0"
                 :data="chartData"
+                :is-time-of-day="aggregateByTimeOfDay === 'true'"
               />
-              <div v-if="loading || chartData.length === 0" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 1000;">
+              <div v-if="loading" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 1000;">
                 <v-progress-circular indeterminate size="64"></v-progress-circular>
+              </div>
+              <div v-else-if="!loading && chartData.length === 0" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0;">
+                <div class="text-h5 text-grey">NO DATA</div>
               </div>
             </div>
           </v-card-text>
@@ -114,6 +135,7 @@ const loadingMap = ref(false)
 const loadingChart = ref(false)
 const loading = ref(false) // Global loading state
 const mapRef = ref(null)
+const aggregateByTimeOfDay = ref('false') // Toggle for time-of-day aggregation
 
 // Watch for geometry/signal filter changes (triggers auto-zoom)
 watch(() => [
@@ -150,7 +172,8 @@ watch(() => [
   filtersStore.endDate,
   filtersStore.startHour,
   filtersStore.endHour,
-  filtersStore.timeFilterEnabled
+  filtersStore.timeFilterEnabled,
+  filtersStore.dayOfWeek
 ], async () => {
   if (loading.value) {
     console.log('⏸️ Already loading - skipping filter change')
@@ -168,6 +191,12 @@ watch(() => [
   } finally {
     loading.value = false
   }
+}, { deep: true })
+
+// Watch for time-of-day aggregation toggle
+watch(aggregateByTimeOfDay, async () => {
+  console.log('🕐 Time-of-day aggregation toggled - reloading chart data')
+  await loadChartData()
 })
 
 // Watch for selection changes - reload chart data only
@@ -279,9 +308,18 @@ async function loadChartData() {
       }
     }
 
-    const arrowTable = await ApiService.getTravelTimeAggregated(filters)
-    const t1 = performance.now()
-    console.log(`📊 API: getTravelTimeAggregated took ${(t1 - t0).toFixed(2)}ms`)
+    // Use different API based on aggregation type
+    let arrowTable
+    let t1
+    if (aggregateByTimeOfDay.value === 'true') {
+      arrowTable = await ApiService.getTravelTimeByTimeOfDay(filters)
+      t1 = performance.now()
+      console.log(`📊 API: getTravelTimeByTimeOfDay took ${(t1 - t0).toFixed(2)}ms`)
+    } else {
+      arrowTable = await ApiService.getTravelTimeAggregated(filters)
+      t1 = performance.now()
+      console.log(`📊 API: getTravelTimeAggregated took ${(t1 - t0).toFixed(2)}ms`)
+    }
 
     chartData.value = ApiService.arrowTableToObjects(arrowTable)
     const t2 = performance.now()

@@ -12,6 +12,7 @@ export const useFiltersStore = defineStore('filters', () => {
   const startHour = ref(0)   // 00:00
   const endHour = ref(23)    // 23:00
   const timeFilterEnabled = ref(false)  // Whether time-of-day filter is active
+  const dayOfWeek = ref([])  // Selected days of week (1=Mon, 2=Tue, ..., 7=Sun)
 
   // Computed
   const hasSignalFilters = computed(() => selectedSignalIds.value.length > 0)
@@ -40,7 +41,8 @@ export const useFiltersStore = defineStore('filters', () => {
     valid_geometry: validGeometry.value,
     anomaly_type: anomalyType.value,
     start_hour: timeFilterEnabled.value ? startHour.value : undefined,
-    end_hour: timeFilterEnabled.value ? endHour.value : undefined
+    end_hour: timeFilterEnabled.value ? endHour.value : undefined,
+    day_of_week: dayOfWeek.value.length > 0 ? dayOfWeek.value : undefined
   }))
 
   // Actions
@@ -74,6 +76,10 @@ export const useFiltersStore = defineStore('filters', () => {
     timeFilterEnabled.value = enabled
   }
 
+  function setDayOfWeek(days) {
+    dayOfWeek.value = days
+  }
+
   return {
     // State
     startDate,
@@ -85,6 +91,7 @@ export const useFiltersStore = defineStore('filters', () => {
     startHour,
     endHour,
     timeFilterEnabled,
+    dayOfWeek,
 
     // Computed
     hasSignalFilters,
@@ -99,6 +106,7 @@ export const useFiltersStore = defineStore('filters', () => {
     setValidGeometry,
     setAnomalyType,
     setTimeOfDayRange,
-    setTimeFilterEnabled
+    setTimeFilterEnabled,
+    setDayOfWeek
   }
 })

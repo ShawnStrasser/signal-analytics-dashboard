@@ -88,6 +88,22 @@
         </v-col>
       </v-row>
 
+      <!-- Day of Week Filter -->
+      <v-row>
+        <v-col cols="12">
+          <v-select
+            v-model="filtersStore.dayOfWeek"
+            :items="dayOfWeekOptions"
+            label="Day of Week"
+            multiple
+            chips
+            density="compact"
+            variant="outlined"
+            clearable
+          />
+        </v-col>
+      </v-row>
+
       <!-- Time of Day Filter -->
       <v-row>
         <v-col cols="12">
@@ -133,6 +149,7 @@
             <div v-if="filtersStore.approach !== null"><strong>Approach:</strong> {{ filtersStore.approach ? 'True' : 'False' }}</div>
             <div v-if="filtersStore.validGeometry !== null"><strong>Valid Geometry:</strong> {{ validGeometryDisplayText }}</div>
             <div v-if="$route.name === 'Anomalies'"><strong>Anomaly Type:</strong> {{ filtersStore.anomalyType }}</div>
+            <div v-if="filtersStore.dayOfWeek.length > 0"><strong>Days:</strong> {{ dayOfWeekDisplayText }}</div>
             <div v-if="filtersStore.timeFilterEnabled"><strong>Time of Day:</strong> {{ formatTime(filtersStore.startHour) }} - {{ formatTime(filtersStore.endHour) }}</div>
           </div>
         </v-card-text>
@@ -222,6 +239,24 @@ const anomalyTypeOptions = [
   { title: 'All Anomalies', value: 'All' },
   { title: 'Point Source', value: 'Point Source' }
 ]
+
+const dayOfWeekOptions = [
+  { title: 'Mon', value: 1 },
+  { title: 'Tue', value: 2 },
+  { title: 'Wed', value: 3 },
+  { title: 'Thu', value: 4 },
+  { title: 'Fri', value: 5 },
+  { title: 'Sat', value: 6 },
+  { title: 'Sun', value: 7 }
+]
+
+const dayOfWeekDisplayText = computed(() => {
+  if (filtersStore.dayOfWeek.length === 0) return ''
+  const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  return filtersStore.dayOfWeek
+    .map(d => dayNames[d - 1])
+    .join(', ')
+})
 
 onMounted(async () => {
   await loadSignals()

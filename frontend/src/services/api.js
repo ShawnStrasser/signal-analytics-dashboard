@@ -101,6 +101,10 @@ class ApiService {
     return this.fetchArrowData('/travel-time-aggregated', filters)
   }
 
+  async getTravelTimeByTimeOfDay(filters) {
+    return this.fetchArrowData('/travel-time-by-time-of-day', filters)
+  }
+
   async getAnomalySummary(filters) {
     return this.fetchArrowData('/anomaly-summary', filters)
   }
