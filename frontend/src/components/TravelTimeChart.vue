@@ -65,10 +65,12 @@ watch(() => [props.data, props.selectedSignal, props.isTimeOfDay, props.legendBy
 
 function initializeChart() {
   chart = echarts.init(chartContainer.value)
-  
+
   // Handle window resize
   window.addEventListener('resize', () => {
     chart?.resize()
+    // Re-render chart with updated responsive settings
+    updateChart()
   })
 }
 
@@ -86,6 +88,9 @@ function updateChart() {
 
   // Check if data has LEGEND_GROUP column
   const hasLegend = props.data.length > 0 && props.data[0].LEGEND_GROUP !== undefined
+
+  // Detect mobile screen size
+  const isMobile = window.innerWidth < 600
 
   let xAxisConfig, tooltipFormatter, title
   let seriesData = []
@@ -166,26 +171,42 @@ function updateChart() {
     // Determine appropriate interval for x-axis labels based on data range
     const rangeMinutes = maxMinutes - minMinutes
     let labelInterval
-    if (rangeMinutes <= 120) { // 2 hours or less
-      labelInterval = 15 // Every 15 minutes
-    } else if (rangeMinutes <= 360) { // 6 hours or less
-      labelInterval = 30 // Every 30 minutes
-    } else if (rangeMinutes <= 720) { // 12 hours or less
-      labelInterval = 60 // Every hour
+    if (isMobile) {
+      // Fewer labels on mobile
+      if (rangeMinutes <= 120) {
+        labelInterval = 30 // Every 30 minutes
+      } else if (rangeMinutes <= 360) {
+        labelInterval = 60 // Every hour
+      } else if (rangeMinutes <= 720) {
+        labelInterval = 120 // Every 2 hours
+      } else {
+        labelInterval = 240 // Every 4 hours
+      }
     } else {
-      labelInterval = 120 // Every 2 hours
+      // Desktop
+      if (rangeMinutes <= 120) {
+        labelInterval = 15 // Every 15 minutes
+      } else if (rangeMinutes <= 360) {
+        labelInterval = 30 // Every 30 minutes
+      } else if (rangeMinutes <= 720) {
+        labelInterval = 60 // Every hour
+      } else {
+        labelInterval = 120 // Every 2 hours
+      }
     }
 
     xAxisConfig = {
       type: 'value',
       name: 'Time of Day',
       nameLocation: 'middle',
-      nameGap: 30,
+      nameGap: isMobile ? 35 : 30,
       min: minMinutes,
       max: maxMinutes,
       interval: labelInterval,
       axisLabel: {
         color: textColor,
+        rotate: isMobile ? 45 : 0,
+        fontSize: isMobile ? 10 : 12,
         formatter: function(value) {
           const hours = Math.floor(value / 60)
           const minutes = value % 60
@@ -193,7 +214,8 @@ function updateChart() {
         }
       },
       nameTextStyle: {
-        color: textColor
+        color: textColor,
+        fontSize: isMobile ? 11 : 12
       },
       axisLine: {
         lineStyle: {
@@ -257,12 +279,15 @@ function updateChart() {
       type: 'time',
       name: 'Time',
       nameLocation: 'middle',
-      nameGap: 30,
+      nameGap: isMobile ? 35 : 30,
       nameTextStyle: {
-        color: textColor
+        color: textColor,
+        fontSize: isMobile ? 11 : 12
       },
       axisLabel: {
         color: textColor,
+        rotate: isMobile ? 45 : 0,
+        fontSize: isMobile ? 10 : 12,
         formatter: function(value) {
           const date = new Date(value)
           const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -274,6 +299,10 @@ function updateChart() {
 
           // Show date with day-of-week when day changes (midnight)
           if (date.getHours() === 0 && date.getMinutes() === 0) {
+            if (isMobile) {
+              // Compact format for mobile
+              return `${month}/${day}\n${hours}:${minutes}`
+            }
             return `${dayOfWeek} ${month}/${day}\n${hours}:${minutes}`
           }
 
@@ -342,13 +371,47 @@ function updateChart() {
     }
   })
 
+  // Calculate dynamic y-axis range for more exaggerated display
+  const allTTI = seriesData.flatMap(([_, data]) => data.map(d => d[1]))
+
+  const minTTI = Math.min(...allTTI)
+  const maxTTI = Math.max(...allTTI)
+  const ttiRange = maxTTI - minTTI
+
+  // Safety check: ensure values are valid numbers
+  if (!isFinite(minTTI) || !isFinite(maxTTI) || allTTI.length === 0) {
+    console.error('📊 CHART ERROR: Invalid y-axis data', { minTTI, maxTTI, allTTILength: allTTI.length })
+    return
+  }
+
+  // Set min/max with 2% padding, but round to nice intervals
+  const rawMin = Math.max(0, minTTI - (ttiRange * 0.02))
+  const rawMax = maxTTI + (ttiRange * 0.02)
+
+  // Determine appropriate interval based on range
+  const paddedRange = rawMax - rawMin
+  let interval
+  if (paddedRange < 0.5) {
+    interval = 0.05  // Small range: 0.05 intervals (e.g., 1.00, 1.05, 1.10)
+  } else if (paddedRange < 1) {
+    interval = 0.1   // Medium range: 0.1 intervals (e.g., 1.0, 1.1, 1.2)
+  } else if (paddedRange < 2) {
+    interval = 0.2   // Larger range: 0.2 intervals
+  } else {
+    interval = 0.5   // Very large range: 0.5 intervals
+  }
+
+  // Round min down and max up to nearest interval
+  const yAxisMin = Math.floor(rawMin / interval) * interval
+  const yAxisMax = Math.ceil(rawMax / interval) * interval
+
   const option = {
     backgroundColor: backgroundColor,
     title: {
       text: title,
       left: 'center',
       textStyle: {
-        fontSize: 16,
+        fontSize: isMobile ? 13 : 16,
         color: textColor
       }
     },
@@ -358,11 +421,13 @@ function updateChart() {
     },
     legend: hasLegend ? {
       type: 'scroll',
-      orient: 'vertical',
-      right: 10,
-      top: 'center',
+      orient: isMobile ? 'horizontal' : 'vertical',
+      right: isMobile ? 'auto' : 10,
+      left: isMobile ? 'center' : 'auto',
+      top: isMobile ? 35 : 'center',
       textStyle: {
-        color: textColor
+        color: textColor,
+        fontSize: isMobile ? 10 : 12
       },
       pageTextStyle: {
         color: textColor
@@ -373,12 +438,20 @@ function updateChart() {
       type: 'value',
       name: 'Travel Time Index',
       nameLocation: 'middle',
-      nameGap: 50,
+      nameGap: isMobile ? 40 : 50,
+      min: yAxisMin,
+      max: yAxisMax,
+      interval: interval,
       nameTextStyle: {
-        color: textColor
+        color: textColor,
+        fontSize: isMobile ? 11 : 12
       },
       axisLabel: {
-        color: textColor
+        color: textColor,
+        fontSize: isMobile ? 10 : 12,
+        formatter: function(value) {
+          return value.toFixed(2)
+        }
       },
       axisLine: {
         lineStyle: {
@@ -393,10 +466,10 @@ function updateChart() {
     },
     series: series,
     grid: {
-      left: '80px',
-      right: hasLegend ? '200px' : '50px',
-      bottom: '60px',
-      top: '80px'
+      left: isMobile ? '60px' : '80px',
+      right: hasLegend ? (isMobile ? '20px' : '200px') : (isMobile ? '20px' : '50px'),
+      bottom: isMobile ? '70px' : '60px',
+      top: hasLegend ? (isMobile ? '100px' : '80px') : (isMobile ? '60px' : '80px')
     },
     dataZoom: [
       {

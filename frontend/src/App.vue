@@ -1,6 +1,11 @@
 <template>
   <v-app>
     <v-app-bar color="primary" dark>
+      <!-- Hamburger menu button (mobile + desktop when drawer is closed) -->
+      <v-app-bar-nav-icon
+        @click="toggleDrawer"
+      ></v-app-bar-nav-icon>
+
       <v-app-bar-title>
         🚦 Signal Analytics Dashboard
       </v-app-bar-title>
@@ -38,7 +43,28 @@
       </template>
     </v-app-bar>
 
-    <v-navigation-drawer permanent>
+    <v-navigation-drawer
+      v-model="drawer"
+      :permanent="isPinned && !mobile"
+      :temporary="!isPinned || mobile"
+      :width="320"
+    >
+      <!-- Pin button (desktop only) -->
+      <div v-if="!mobile" class="d-flex justify-end pa-2">
+        <v-tooltip location="bottom">
+          <template v-slot:activator="{ props }">
+            <v-btn
+              v-bind="props"
+              :icon="isPinned ? 'mdi-pin' : 'mdi-pin-outline'"
+              @click="togglePin"
+              variant="text"
+              size="small"
+            ></v-btn>
+          </template>
+          <span>{{ isPinned ? 'Unpin drawer' : 'Pin drawer' }}</span>
+        </v-tooltip>
+      </div>
+
       <v-list>
         <v-list-item
           v-for="route in routes"
@@ -46,6 +72,7 @@
           :to="route.path"
           :prepend-icon="route.icon"
           :title="route.title"
+          @click="onRouteClick"
         />
       </v-list>
 
@@ -56,7 +83,7 @@
     </v-navigation-drawer>
 
     <v-main>
-      <v-container fluid>
+      <v-container fluid class="pa-4" style="height: 100%;">
         <!-- Router view with keep-alive for component persistence -->
         <router-view v-slot="{ Component }">
           <keep-alive>
@@ -77,7 +104,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { useTheme } from 'vuetify'
+import { useTheme, useDisplay } from 'vuetify'
 import FilterPanel from './components/FilterPanel.vue'
 import ConnectionStatus from './components/ConnectionStatus.vue'
 import { useGeometryStore } from '@/stores/geometry'
@@ -100,8 +127,40 @@ const routes = [
 const geometryStore = useGeometryStore()
 const themeStore = useThemeStore()
 const vuetifyTheme = useTheme()
+const { mobile } = useDisplay()
 const connectionStatus = ref('connecting') // 'idle', 'connecting', 'connected', 'error'
 const connectionError = ref(null)
+
+// Drawer state management
+const drawer = ref(true) // Start open by default
+const isPinned = ref(true) // Start pinned by default on desktop
+
+// Watch mobile breakpoint to reset drawer behavior
+watch(mobile, (isMobile) => {
+  if (isMobile) {
+    drawer.value = false // Close drawer on mobile by default
+  } else if (isPinned.value) {
+    drawer.value = true // Open drawer on desktop if pinned
+  }
+}, { immediate: true })
+
+const toggleDrawer = () => {
+  drawer.value = !drawer.value
+}
+
+const togglePin = () => {
+  isPinned.value = !isPinned.value
+  if (isPinned.value) {
+    drawer.value = true // Open when pinning
+  }
+}
+
+const onRouteClick = () => {
+  // Close drawer on route click if on mobile or not pinned
+  if (mobile.value || !isPinned.value) {
+    drawer.value = false
+  }
+}
 
 // Sync Vuetify theme with theme store
 watch(() => themeStore.currentTheme, (newTheme) => {

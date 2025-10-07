@@ -47,9 +47,11 @@ watch(() => [props.data, props.selectedSignal], () => {
 
 function initializeChart() {
   chart = echarts.init(chartContainer.value)
-  
+
   window.addEventListener('resize', () => {
     chart?.resize()
+    // Re-render chart with updated responsive settings
+    updateChart()
   })
 }
 
@@ -66,7 +68,7 @@ function updateChart() {
     new Date(d.TIMESTAMP).getTime(),
     Number(d.TOTAL_PREDICTION) || 0
   ])
-  
+
   const title = props.selectedSignal
     ? `Total Travel Time vs Prediction - Signal ${props.selectedSignal}`
     : 'Total Travel Time vs Prediction - All Selected Signals'
@@ -77,13 +79,16 @@ function updateChart() {
   const predictedLineColor = isDark ? '#81C784' : '#4CAF50'
   const backgroundColor = isDark ? 'transparent' : 'transparent'
 
+  // Detect mobile screen size
+  const isMobile = window.innerWidth < 600
+
   const option = {
     backgroundColor: backgroundColor,
     title: {
       text: title,
       left: 'center',
       textStyle: {
-        fontSize: 16,
+        fontSize: isMobile ? 13 : 16,
         color: textColor
       }
     },
@@ -104,21 +109,39 @@ function updateChart() {
     },
     legend: {
       data: ['Actual Travel Time', 'Predicted Travel Time'],
-      top: 30,
+      top: isMobile ? 30 : 30,
       textStyle: {
-        color: textColor
+        color: textColor,
+        fontSize: isMobile ? 10 : 12
       }
     },
     xAxis: {
       type: 'time',
       name: 'Time',
       nameLocation: 'middle',
-      nameGap: 30,
+      nameGap: isMobile ? 35 : 30,
       nameTextStyle: {
-        color: textColor
+        color: textColor,
+        fontSize: isMobile ? 11 : 12
       },
       axisLabel: {
-        color: textColor
+        color: textColor,
+        rotate: isMobile ? 45 : 0,
+        fontSize: isMobile ? 10 : 12,
+        formatter: function(value) {
+          const date = new Date(value)
+          const month = String(date.getMonth() + 1).padStart(2, '0')
+          const day = String(date.getDate()).padStart(2, '0')
+          const hours = String(date.getHours()).padStart(2, '0')
+          const minutes = String(date.getMinutes()).padStart(2, '0')
+
+          // Show date when day changes (midnight)
+          if (date.getHours() === 0 && date.getMinutes() === 0) {
+            return `${month}/${day}\n${hours}:${minutes}`
+          }
+
+          return `${hours}:${minutes}`
+        }
       },
       axisLine: {
         lineStyle: {
@@ -130,12 +153,14 @@ function updateChart() {
       type: 'value',
       name: 'Total Travel Time (seconds)',
       nameLocation: 'middle',
-      nameGap: 50,
+      nameGap: isMobile ? 40 : 50,
       nameTextStyle: {
-        color: textColor
+        color: textColor,
+        fontSize: isMobile ? 11 : 12
       },
       axisLabel: {
-        color: textColor
+        color: textColor,
+        fontSize: isMobile ? 10 : 12
       },
       axisLine: {
         lineStyle: {
@@ -182,10 +207,10 @@ function updateChart() {
       }
     ],
     grid: {
-      left: '80px',
-      right: '50px',
-      bottom: '80px',
-      top: '100px'
+      left: isMobile ? '60px' : '80px',
+      right: isMobile ? '20px' : '50px',
+      bottom: isMobile ? '80px' : '80px',
+      top: isMobile ? '80px' : '100px'
     },
     dataZoom: [
       {
@@ -195,7 +220,8 @@ function updateChart() {
       {
         type: 'slider',
         xAxisIndex: 0,
-        bottom: 10
+        bottom: 10,
+        height: isMobile ? 15 : 20
       }
     ]
   }

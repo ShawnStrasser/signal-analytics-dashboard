@@ -1,87 +1,75 @@
 <template>
-  <div>
-    <v-row>
-      <v-col cols="12">
-        <v-card>
-          <v-card-title>
-            <v-icon left>mdi-chart-line</v-icon>
-            Travel Time Index Analysis
-          </v-card-title>
-        </v-card>
-      </v-col>
-    </v-row>
-
-    <!-- Map Section -->
-    <v-row class="mt-4">
-      <v-col cols="12">
-        <v-card>
-          <v-card-title>
-            🗺️ Traffic Signals Map
-            <v-spacer></v-spacer>
-            <v-btn 
-              v-if="selectionStore.hasMapSelections"
-              size="small" 
-              variant="outlined" 
-              color="error"
-              @click="clearMapSelections"
-            >
-              Clear Map Selections
-            </v-btn>
-          </v-card-title>
-          <v-card-subtitle>
-            Signal points show travel time index by color. Click signals or XD segments to filter the chart below.
-          </v-card-subtitle>
-          <v-card-text>
-            <div style="height: 500px; position: relative;">
-              <SharedMap
-                ref="mapRef"
-                v-if="mapData.length > 0"
-                :signals="mapData"
-                data-type="travel-time"
-                @selection-changed="onSelectionChanged"
-              />
-              <div v-if="loading" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 1000;">
-                <v-progress-circular indeterminate size="64"></v-progress-circular>
-              </div>
-              <div v-else-if="!loading && mapData.length === 0" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0;">
-                <div class="text-h5 text-grey">NO DATA</div>
-              </div>
-            </div>
-          </v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
+  <div class="travel-time-view">
+    <!-- Page Title -->
+    <v-card class="mb-3">
+      <v-card-title class="py-2">
+        <v-icon left>mdi-chart-line</v-icon>
+        Travel Time Index Analysis
+      </v-card-title>
+    </v-card>
 
     <!-- Selection Summary -->
-    <v-row v-if="selectionStore.hasMapSelections" class="mt-2">
-      <v-col cols="12">
-        <v-card color="info" variant="tonal">
-          <v-card-text>
-            <div>
-              <strong>Map Selection:</strong>
-              <span v-if="selectionStore.selectedSignals.size > 0">
-                {{ selectionStore.selectedSignals.size }} signal(s) selected
-              </span>
-              <span v-if="selectionStore.selectedSignals.size > 0 && selectionStore.selectedXdSegments.size > 0"> • </span>
-              <span v-if="selectionStore.selectedXdSegments.size > 0">
-                {{ selectionStore.selectedXdSegments.size }} XD segment(s) directly selected
-              </span>
-            </div>
-            <div class="text-caption mt-1">
-              Chart below is filtered to {{ selectionStore.allSelectedXdSegments.size }} total XD segment(s)
-            </div>
-          </v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
+    <v-card v-if="selectionStore.hasMapSelections" color="info" variant="tonal" class="mb-3">
+      <v-card-text class="py-2">
+        <div>
+          <strong>Map Selection:</strong>
+          <span v-if="selectionStore.selectedSignals.size > 0">
+            {{ selectionStore.selectedSignals.size }} signal(s) selected
+          </span>
+          <span v-if="selectionStore.selectedSignals.size > 0 && selectionStore.selectedXdSegments.size > 0"> • </span>
+          <span v-if="selectionStore.selectedXdSegments.size > 0">
+            {{ selectionStore.selectedXdSegments.size }} XD segment(s) directly selected
+          </span>
+        </div>
+        <div class="text-caption mt-1">
+          Chart below is filtered to {{ selectionStore.allSelectedXdSegments.size }} total XD segment(s)
+        </div>
+      </v-card-text>
+    </v-card>
 
-    <!-- Time Series Chart -->
-    <v-row class="mt-4">
-      <v-col cols="12">
-        <v-card>
-          <v-card-title>
-            📈 Travel Time Index Time Series
-            <v-spacer></v-spacer>
+    <!-- Main Content Area with Dynamic Height -->
+    <div class="content-grid">
+      <!-- Map Section -->
+      <v-card class="map-card">
+        <v-card-title class="py-2 d-flex align-center">
+          🗺️ Traffic Signals Map
+          <v-spacer></v-spacer>
+          <v-btn
+            v-if="selectionStore.hasMapSelections"
+            size="small"
+            variant="outlined"
+            color="error"
+            @click="clearMapSelections"
+          >
+            Clear Map Selections
+          </v-btn>
+        </v-card-title>
+        <v-card-subtitle class="py-1">
+          Signal points show travel time index by color. Click signals or XD segments to filter the chart below.
+        </v-card-subtitle>
+        <v-card-text class="map-container">
+          <SharedMap
+            ref="mapRef"
+            v-if="mapData.length > 0"
+            :signals="mapData"
+            data-type="travel-time"
+            @selection-changed="onSelectionChanged"
+          />
+          <div v-if="loading" class="d-flex justify-center align-center loading-overlay">
+            <v-progress-circular indeterminate size="64"></v-progress-circular>
+          </div>
+          <div v-else-if="!loading && mapData.length === 0" class="d-flex justify-center align-center loading-overlay">
+            <div class="text-h5 text-grey">NO DATA</div>
+          </div>
+        </v-card-text>
+      </v-card>
+
+      <!-- Time Series Chart -->
+      <v-card class="chart-card">
+        <v-card-title class="py-2 d-flex align-center flex-wrap">
+          📈 Travel Time Index Time Series
+          <v-spacer></v-spacer>
+          <div class="d-flex align-center flex-wrap gap-2">
             <v-select
               v-model="legendBy"
               :items="legendOptions"
@@ -89,7 +77,7 @@
               density="compact"
               variant="outlined"
               hide-details
-              style="max-width: 200px; margin-right: 16px;"
+              style="max-width: 200px;"
             ></v-select>
             <v-btn-toggle
               v-model="aggregateByTimeOfDay"
@@ -104,32 +92,30 @@
                 By Time of Day
               </v-btn>
             </v-btn-toggle>
-          </v-card-title>
-          <v-card-subtitle v-if="legendClipped">
-            <v-alert density="compact" variant="outlined" color="orange-darken-2" icon="mdi-alert-circle-outline">
-              <strong>Maximum legend items reached ({{ maxLegendEntities }})</strong> — Only the first {{ maxLegendEntities }} {{ legendByLabel }} are displayed.
-              To see other {{ legendByLabel }}, try filtering by date range, signal selection, or map selection.
-            </v-alert>
-          </v-card-subtitle>
-          <v-card-text>
-            <div style="height: 500px; position: relative;">
-              <TravelTimeChart
-                v-if="chartData.length > 0"
-                :data="chartData"
-                :is-time-of-day="aggregateByTimeOfDay === 'true'"
-                :legend-by="legendBy"
-              />
-              <div v-if="loading" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 1000;">
-                <v-progress-circular indeterminate size="64"></v-progress-circular>
-              </div>
-              <div v-else-if="!loading && chartData.length === 0" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0;">
-                <div class="text-h5 text-grey">NO DATA</div>
-              </div>
-            </div>
-          </v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
+          </div>
+        </v-card-title>
+        <v-card-subtitle v-if="legendClipped" class="py-1">
+          <v-alert density="compact" variant="outlined" color="orange-darken-2" icon="mdi-alert-circle-outline">
+            <strong>Maximum legend items reached ({{ maxLegendEntities }})</strong> — Only the first {{ maxLegendEntities }} {{ legendByLabel }} are displayed.
+            To see other {{ legendByLabel }}, try filtering by date range, signal selection, or map selection.
+          </v-alert>
+        </v-card-subtitle>
+        <v-card-text class="chart-container">
+          <TravelTimeChart
+            v-if="chartData.length > 0"
+            :data="chartData"
+            :is-time-of-day="aggregateByTimeOfDay === 'true'"
+            :legend-by="legendBy"
+          />
+          <div v-if="loading" class="d-flex justify-center align-center loading-overlay">
+            <v-progress-circular indeterminate size="64"></v-progress-circular>
+          </div>
+          <div v-else-if="!loading && chartData.length === 0" class="d-flex justify-center align-center loading-overlay">
+            <div class="text-h5 text-grey">NO DATA</div>
+          </div>
+        </v-card-text>
+      </v-card>
+    </div>
   </div>
 </template>
 
@@ -404,3 +390,61 @@ function clearMapSelections() {
   selectionStore.clearAllSelections()
 }
 </script>
+
+<style scoped>
+.travel-time-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 12px;
+  flex: 1;
+  min-height: 0; /* Critical for grid to respect parent height */
+}
+
+.map-card,
+.chart-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* Allow cards to shrink */
+  overflow: hidden;
+}
+
+.map-container,
+.chart-container {
+  flex: 1;
+  position: relative;
+  min-height: 0; /* Allow containers to shrink */
+  padding: 12px !important;
+}
+
+.loading-overlay {
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.8);
+  z-index: 1000;
+}
+
+/* Mobile optimizations */
+@media (max-width: 960px) {
+  .content-grid {
+    grid-template-rows: auto auto;
+    gap: 8px;
+  }
+
+  .map-container,
+  .chart-container {
+    min-height: 300px; /* Ensure minimum height on mobile */
+    padding: 8px !important;
+  }
+}
+</style>

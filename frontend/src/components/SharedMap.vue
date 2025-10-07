@@ -227,7 +227,6 @@ function updateTileLayer() {
     // Dark mode: Use dark map without labels as base
     roadmapLayer = L.layerGroup([
       L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors, © CartoDB',
         maxZoom: 19
       }),
       // Add labels with better contrast on top
@@ -239,7 +238,6 @@ function updateTileLayer() {
   } else {
     // Light mode: Use standard light theme
     roadmapLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors, © CartoDB',
       maxZoom: 19
     })
   }
@@ -247,7 +245,6 @@ function updateTileLayer() {
   // Satellite layer with labels (works for both light and dark themes)
   satelliteLayer = L.layerGroup([
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      attribution: '© Esri, Maxar, Earthstar Geographics, and the GIS User Community',
       maxZoom: 19
     }),
     // Add labels on top of satellite imagery
@@ -282,7 +279,8 @@ function initializeMap() {
 
   map = L.map(mapContainer.value, {
     // Remove focus outline on click
-    keyboard: false
+    keyboard: false,
+    attributionControl: false
   }).setView(savedCenter, savedZoom)
 
   // Add tile layer based on current theme

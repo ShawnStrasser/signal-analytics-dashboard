@@ -37,12 +37,13 @@ Periodically update CLAUDE.md as needed to keep it accurate and up to date with 
   - `selection.js` - Selected XD segments from map interactions
   - `mapState.js` - Map view state persistence
   - `geometry.js` - Cached XD road segment geometries (GeoJSON)
+- **Layout**: `App.vue` - Main app layout with collapsible navigation drawer (pinned by default on desktop, hamburger menu on mobile)
 - **Views**: `frontend/src/views/`
-  - `TravelTime.vue` - Map + time series chart for travel time analysis with optional time-of-day aggregation
-  - `Anomalies.vue` - Map + dual-series chart comparing actual vs predicted travel times
+  - `TravelTime.vue` - Responsive grid layout with map above chart, uses CSS Grid with dynamic height
+  - `Anomalies.vue` - Responsive grid layout with map, chart, and optional table, uses CSS Grid with dynamic height
 - **Components**: `frontend/src/components/`
   - `SharedMap.vue` - Leaflet map component used by both views
-  - `FilterPanel.vue` - Filter controls for date range and signal selection
+  - `FilterPanel.vue` - Filter controls for date range and signal selection (in navigation drawer)
   - `TravelTimeChart.vue` - ECharts time series visualization
   - `AnomalyChart.vue` - ECharts dual-series chart with anomaly highlighting
 
@@ -51,6 +52,7 @@ Periodically update CLAUDE.md as needed to keep it accurate and up to date with 
 2. **XD-based filtering**: Map interactions pass XD segment IDs directly to avoid repeated dimension table lookups
 3. **Arrow data flow**: Backend streams Arrow data → Frontend deserializes with `apache-arrow` library
 4. **Shared state**: Pinia stores enable filter persistence when switching between Travel Time and Anomalies pages
+5. **Responsive layout**: CSS Grid with flexbox for dynamic height management, no scrolling required on desktop, mobile-optimized with fixed heights
 
 ## Database Schema
 
