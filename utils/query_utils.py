@@ -310,8 +310,11 @@ def build_legend_filter(
     No need to join TRAVEL_TIME_ANALYTICS or apply date/time filters in subquery since
     the main query already filters by XD, and we just want distinct legend values from those XDs.
 
+    SPECIAL CASE FOR XD: When legend_field is 'XD', we need to query TRAVEL_TIME_ANALYTICS
+    to get the top XDs by data volume, not just the dimension table.
+
     Args:
-        legend_field: The field to limit (e.g., 'COUNTY', 'BEARING')
+        legend_field: The field to limit (e.g., 'COUNTY', 'BEARING', 'XD')
         max_entities: Maximum number of entities
         xd_filter: XD filter like "AND XD IN (...)" - ONLY this is needed
 
@@ -321,7 +324,33 @@ def build_legend_filter(
     if not legend_field:
         return ""
 
-    # Build WHERE clause - only need XD filter
+    # Special handling for XD legend - query actual data table for top XDs by volume
+    if legend_field == 'XD':
+        where_clause = ""
+        if xd_filter:
+            clean_xd = xd_filter.strip()
+            if clean_xd.startswith('AND '):
+                clean_xd = clean_xd[4:].strip()
+            where_clause = f"WHERE {clean_xd}"
+
+        # Query TRAVEL_TIME_ANALYTICS for top XDs by data volume within date range
+        if start_date and end_date:
+            date_filter = f"DATE_ONLY BETWEEN '{start_date}' AND '{end_date}'"
+            if where_clause:
+                where_clause += f" AND {date_filter}"
+            else:
+                where_clause = f"WHERE {date_filter}"
+
+        subquery = f"""SELECT XD
+            FROM TRAVEL_TIME_ANALYTICS
+            {where_clause}
+            GROUP BY XD
+            ORDER BY COUNT(*) DESC
+            LIMIT {max_entities}"""
+
+        return f" AND t.XD IN ({subquery})"
+
+    # For non-XD legend fields, query DIM_SIGNALS_XD
     where_clause = ""
     if xd_filter:
         # Remove leading AND and strip, then replace table alias

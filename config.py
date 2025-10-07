@@ -45,6 +45,15 @@ TIMEZONE = 'America/Los_Angeles'
 MAX_LEGEND_ENTITIES = 10
 
 # =============================================================================
+# TIME OF DAY FILTER SETTINGS
+# =============================================================================
+
+# Default time range for time-of-day filter
+# Data collection window (24-hour format)
+DEFAULT_START_HOUR = 6   # 06:00
+DEFAULT_END_HOUR = 19    # 19:00
+
+# =============================================================================
 # PRODUCTION SETTINGS
 # =============================================================================
 

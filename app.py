@@ -51,6 +51,14 @@ def connection_status():
     status = get_connection_status()
     return jsonify(status)
 
+@app.route('/api/config')
+def get_config():
+    """Get frontend configuration values"""
+    from config import MAX_LEGEND_ENTITIES
+    return jsonify({
+        'maxLegendEntities': MAX_LEGEND_ENTITIES
+    })
+
 # Import route modules
 from routes.api_travel_time import travel_time_bp
 from routes.api_anomalies import anomalies_bp

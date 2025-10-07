@@ -106,10 +106,10 @@
             </v-btn-toggle>
           </v-card-title>
           <v-card-subtitle v-if="legendClipped">
-            <v-chip color="warning" size="small">
-              <v-icon start size="small">mdi-alert</v-icon>
-              Legend limited to 10 items
-            </v-chip>
+            <v-alert density="compact" variant="outlined" color="orange-darken-2" icon="mdi-alert-circle-outline">
+              <strong>Maximum legend items reached ({{ maxLegendEntities }})</strong> — Only the first {{ maxLegendEntities }} {{ legendByLabel }} are displayed.
+              To see other {{ legendByLabel }}, try filtering by date range, signal selection, or map selection.
+            </v-alert>
           </v-card-subtitle>
           <v-card-text>
             <div style="height: 500px; position: relative;">
@@ -134,7 +134,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
 import { useFiltersStore } from '@/stores/filters'
 import { useSelectionStore } from '@/stores/selection'
 import { useMapDataCacheStore } from '@/stores/mapDataCache'
@@ -154,6 +154,7 @@ const mapRef = ref(null)
 const aggregateByTimeOfDay = ref('false') // Toggle for time-of-day aggregation
 const legendBy = ref('none') // Legend grouping selection
 const legendClipped = ref(false) // Whether legend entities were clipped
+const maxLegendEntities = ref(10) // Max legend entities from backend config
 
 // Legend options for the dropdown
 const legendOptions = [
@@ -164,6 +165,18 @@ const legendOptions = [
   { title: 'Road Name', value: 'roadname' },
   { title: 'Signal ID', value: 'id' }
 ]
+
+// Computed label for legend clipping message
+const legendByLabel = computed(() => {
+  const labels = {
+    'xd': 'XD segments',
+    'bearing': 'bearings',
+    'county': 'counties',
+    'roadname': 'road names',
+    'id': 'signal IDs'
+  }
+  return labels[legendBy.value] || 'items'
+})
 
 // Watch for geometry/signal filter changes (triggers auto-zoom)
 watch(() => [
@@ -247,6 +260,10 @@ watch(() => [
 onMounted(async () => {
   const t0 = performance.now()
   console.log('🚀 TravelTime.vue: onMounted START')
+
+  // Fetch config first
+  const config = await ApiService.getConfig()
+  maxLegendEntities.value = config.maxLegendEntities
 
   // Load map and chart data in parallel
   await Promise.all([
@@ -359,9 +376,10 @@ async function loadChartData() {
 
     // Check if data contains LEGEND_GROUP column (indicates legend grouping is active)
     if (data.length > 0 && data[0].LEGEND_GROUP !== undefined) {
-      // Count unique legend groups to detect if clipped
+      // Count unique legend groups to detect if we hit the MAX_LEGEND_ENTITIES limit
       const uniqueGroups = new Set(data.map(row => row.LEGEND_GROUP))
-      legendClipped.value = uniqueGroups.size >= 10 // Matches MAX_LEGEND_ENTITIES
+      // Show warning when we have exactly maxLegendEntities groups (the backend limit from config.py)
+      legendClipped.value = uniqueGroups.size === maxLegendEntities.value
     } else {
       legendClipped.value = false
     }

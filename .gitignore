@@ -216,3 +216,4 @@ frontend/dist/
 test*
 
 .claude/
+.vscode/

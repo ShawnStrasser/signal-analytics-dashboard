@@ -217,6 +217,20 @@ class ApiService {
     }
     return false
   }
+
+  async getConfig() {
+    try {
+      const response = await fetch(`${this.baseURL}/config`)
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      return await response.json()
+    } catch (error) {
+      console.error('Error fetching config:', error)
+      // Return default values if config fetch fails
+      return { maxLegendEntities: 10 }
+    }
+  }
 }
 
 export default new ApiService()
