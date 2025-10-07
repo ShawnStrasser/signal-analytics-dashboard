@@ -2,6 +2,10 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
 export const useFiltersStore = defineStore('filters', () => {
+  // Config values from backend (will be populated on init)
+  const defaultStartHour = ref(6)   // Default from config.py
+  const defaultEndHour = ref(19)    // Default from config.py
+
   // State
   const startDate = ref(new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]) // 2 days ago
   const endDate = ref(new Date().toISOString().split('T')[0]) // Today
@@ -9,15 +13,21 @@ export const useFiltersStore = defineStore('filters', () => {
   const approach = ref(null)
   const validGeometry = ref('all') // 'all', 'valid', or 'invalid'
   const anomalyType = ref('All')
-  const startHour = ref(0)   // 00:00
-  const endHour = ref(23)    // 23:00
-  const timeFilterEnabled = ref(false)  // Whether time-of-day filter is active
+  const startHour = ref(6)   // Will be set from config
+  const startMinute = ref(0)
+  const endHour = ref(19)    // Will be set from config
+  const endMinute = ref(0)
+  const timeFilterEnabled = ref(true)  // Time-of-day filter always enabled
   const dayOfWeek = ref([])  // Selected days of week (1=Mon, 2=Tue, ..., 7=Sun)
 
   // Computed
   const hasSignalFilters = computed(() => selectedSignalIds.value.length > 0)
 
-  const allDaySelected = computed(() => startHour.value === 0 && endHour.value === 23)
+  // Check if time range is at default (full data range)
+  const isDefaultTimeRange = computed(() =>
+    startHour.value === defaultStartHour.value && startMinute.value === 0 &&
+    endHour.value === defaultEndHour.value && endMinute.value === 0
+  )
 
   const aggregationLevel = computed(() => {
     try {
@@ -40,8 +50,11 @@ export const useFiltersStore = defineStore('filters', () => {
     approach: approach.value,
     valid_geometry: validGeometry.value,
     anomaly_type: anomalyType.value,
-    start_hour: timeFilterEnabled.value ? startHour.value : undefined,
-    end_hour: timeFilterEnabled.value ? endHour.value : undefined,
+    // Only include time filter when different from defaults (for efficiency)
+    start_hour: !isDefaultTimeRange.value ? startHour.value : undefined,
+    start_minute: !isDefaultTimeRange.value ? startMinute.value : undefined,
+    end_hour: !isDefaultTimeRange.value ? endHour.value : undefined,
+    end_minute: !isDefaultTimeRange.value ? endMinute.value : undefined,
     day_of_week: dayOfWeek.value.length > 0 ? dayOfWeek.value : undefined
   }))
 
@@ -67,9 +80,11 @@ export const useFiltersStore = defineStore('filters', () => {
     anomalyType.value = value
   }
 
-  function setTimeOfDayRange(start, end) {
-    startHour.value = start
-    endHour.value = end
+  function setTimeOfDayRange(startH, startM, endH, endM) {
+    startHour.value = startH
+    startMinute.value = startM
+    endHour.value = endH
+    endMinute.value = endM
   }
 
   function setTimeFilterEnabled(enabled) {
@@ -78,6 +93,26 @@ export const useFiltersStore = defineStore('filters', () => {
 
   function setDayOfWeek(days) {
     dayOfWeek.value = days
+  }
+
+  // Initialize config values from backend
+  async function initializeConfig() {
+    try {
+      const response = await fetch('/api/config')
+      const config = await response.json()
+
+      if (config.defaultStartHour !== undefined) {
+        defaultStartHour.value = config.defaultStartHour
+        startHour.value = config.defaultStartHour
+      }
+      if (config.defaultEndHour !== undefined) {
+        defaultEndHour.value = config.defaultEndHour
+        endHour.value = config.defaultEndHour
+      }
+    } catch (error) {
+      console.error('Failed to load config:', error)
+      // Keep default values on error
+    }
   }
 
   return {
@@ -89,13 +124,17 @@ export const useFiltersStore = defineStore('filters', () => {
     validGeometry,
     anomalyType,
     startHour,
+    startMinute,
     endHour,
+    endMinute,
     timeFilterEnabled,
     dayOfWeek,
+    defaultStartHour,
+    defaultEndHour,
 
     // Computed
     hasSignalFilters,
-    allDaySelected,
+    isDefaultTimeRange,
     aggregationLevel,
     filterParams,
 
@@ -107,6 +146,7 @@ export const useFiltersStore = defineStore('filters', () => {
     setAnomalyType,
     setTimeOfDayRange,
     setTimeFilterEnabled,
-    setDayOfWeek
+    setDayOfWeek,
+    initializeConfig
   }
 })

@@ -54,9 +54,11 @@ def connection_status():
 @app.route('/api/config')
 def get_config():
     """Get frontend configuration values"""
-    from config import MAX_LEGEND_ENTITIES
+    from config import MAX_LEGEND_ENTITIES, DEFAULT_START_HOUR, DEFAULT_END_HOUR
     return jsonify({
-        'maxLegendEntities': MAX_LEGEND_ENTITIES
+        'maxLegendEntities': MAX_LEGEND_ENTITIES,
+        'defaultStartHour': DEFAULT_START_HOUR,
+        'defaultEndHour': DEFAULT_END_HOUR
     })
 
 # Import route modules

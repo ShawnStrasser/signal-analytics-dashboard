@@ -218,35 +218,49 @@ def build_day_of_week_filter(day_of_week: Optional[List[int]] = None) -> str:
         return ""
 
 
-def build_time_of_day_filter(start_hour: Optional[int] = None, end_hour: Optional[int] = None) -> str:
+def build_time_of_day_filter(
+    start_hour: Optional[int] = None,
+    start_minute: Optional[int] = None,
+    end_hour: Optional[int] = None,
+    end_minute: Optional[int] = None
+) -> str:
     """
     Build SQL filter clause for time-of-day filtering.
 
     Args:
         start_hour: Start hour (0-23), None means no filter
+        start_minute: Start minute (0, 15, 30, 45), defaults to 0
         end_hour: End hour (0-23), None means no filter
+        end_minute: End minute (0, 15, 30, 45), defaults to 59
 
     Returns:
-        SQL fragment like "AND TIME_15MIN BETWEEN '15:00:00' AND '18:59:59'" or empty string
+        SQL fragment like "AND TIME_15MIN BETWEEN '06:00:00' AND '19:14:59'" or empty string
     """
     if start_hour is None or end_hour is None:
         return ""
 
     try:
-        start = int(start_hour)
-        end = int(end_hour)
+        start_h = int(start_hour)
+        end_h = int(end_hour)
+        start_m = int(start_minute) if start_minute is not None else 0
+        end_m = int(end_minute) if end_minute is not None else 0
 
-        # Validate hour range
-        if not (0 <= start <= 23 and 0 <= end <= 23):
+        # Validate hour and minute ranges
+        if not (0 <= start_h <= 23 and 0 <= end_h <= 23):
             return ""
-
-        # If filtering all day (0-23), no need for filter
-        if start == 0 and end == 23:
+        if not (0 <= start_m <= 59 and 0 <= end_m <= 59):
             return ""
 
         # Format as TIME values
-        start_time = f"{start:02d}:00:00"
-        end_time = f"{end:02d}:59:59"
+        # End minute should go to :59 of the 15-minute period
+        # e.g., if end is 19:00, we want 19:14:59 to include the entire 19:00-19:14 period
+        # If end is 19:15, we want 19:29:59, etc.
+        end_minute_seconds = end_m + 14 if end_m < 45 else 59
+        if end_minute_seconds >= 60:
+            end_minute_seconds = 59
+
+        start_time = f"{start_h:02d}:{start_m:02d}:00"
+        end_time = f"{end_h:02d}:{end_minute_seconds:02d}:59"
         return f" AND TIME_15MIN BETWEEN '{start_time}' AND '{end_time}'"
     except (ValueError, TypeError):
         return ""

@@ -41,7 +41,9 @@ def get_anomaly_summary():
     valid_geometry = request.args.get('valid_geometry')
     anomaly_type = request.args.get('anomaly_type', default='All')
     start_hour = request.args.get('start_hour')
+    start_minute = request.args.get('start_minute')
     end_hour = request.args.get('end_hour')
+    end_minute = request.args.get('end_minute')
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -51,7 +53,7 @@ def get_anomaly_summary():
     agg_table = get_aggregation_table(start_date_str, end_date_str)
 
     # Build time-of-day filter
-    time_filter = build_time_of_day_filter(start_hour, end_hour)
+    time_filter = build_time_of_day_filter(start_hour, start_minute, end_hour, end_minute)
 
     try:
         # Step 1: Query DIM_SIGNALS_XD to get XD segments and signal info
@@ -171,7 +173,9 @@ def get_anomaly_aggregated():
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
     start_hour = request.args.get('start_hour')
+    start_minute = request.args.get('start_minute')
     end_hour = request.args.get('end_hour')
+    end_minute = request.args.get('end_minute')
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -181,7 +185,7 @@ def get_anomaly_aggregated():
     agg_table = get_aggregation_table(start_date_str, end_date_str)
 
     # Build time-of-day filter
-    time_filter = build_time_of_day_filter(start_hour, end_hour)
+    time_filter = build_time_of_day_filter(start_hour, start_minute, end_hour, end_minute)
 
     try:
         # Resolve XD segments if signal_ids provided

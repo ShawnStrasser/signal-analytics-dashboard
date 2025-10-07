@@ -138,7 +138,9 @@ def get_travel_time_summary():
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
     start_hour = request.args.get('start_hour')
+    start_minute = request.args.get('start_minute')
     end_hour = request.args.get('end_hour')
+    end_minute = request.args.get('end_minute')
     day_of_week = request.args.getlist('day_of_week')
 
     # Normalize dates
@@ -146,7 +148,7 @@ def get_travel_time_summary():
     end_date_str = normalize_date(end_date)
 
     # Build time-of-day filter
-    time_filter = build_time_of_day_filter(start_hour, end_hour)
+    time_filter = build_time_of_day_filter(start_hour, start_minute, end_hour, end_minute)
 
     # Build day-of-week filter
     dow_filter = build_day_of_week_filter(day_of_week)
@@ -306,7 +308,9 @@ def get_travel_time_aggregated():
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
     start_hour = request.args.get('start_hour')
+    start_minute = request.args.get('start_minute')
     end_hour = request.args.get('end_hour')
+    end_minute = request.args.get('end_minute')
     day_of_week = request.args.getlist('day_of_week')
     legend_by = request.args.get('legend_by')  # New parameter
 
@@ -318,7 +322,7 @@ def get_travel_time_aggregated():
     agg_level = get_aggregation_level(start_date_str, end_date_str)
 
     # Build time-of-day filter
-    time_filter = build_time_of_day_filter(start_hour, end_hour)
+    time_filter = build_time_of_day_filter(start_hour, start_minute, end_hour, end_minute)
 
     # Build day-of-week filter
     dow_filter = build_day_of_week_filter(day_of_week)
@@ -476,7 +480,9 @@ def get_travel_time_by_time_of_day():
     valid_geometry = request.args.get('valid_geometry')
     day_of_week = request.args.getlist('day_of_week')
     start_hour = request.args.get('start_hour')
+    start_minute = request.args.get('start_minute')
     end_hour = request.args.get('end_hour')
+    end_minute = request.args.get('end_minute')
     legend_by = request.args.get('legend_by')  # New parameter
 
     # Normalize dates
@@ -487,7 +493,7 @@ def get_travel_time_by_time_of_day():
     dow_filter = build_day_of_week_filter(day_of_week)
 
     # Build time-of-day filter
-    time_filter = build_time_of_day_filter(start_hour, end_hour)
+    time_filter = build_time_of_day_filter(start_hour, start_minute, end_hour, end_minute)
 
     if DEBUG_BACKEND_TIMING:
         print(f"\n[TIMING] /travel-time-by-time-of-day START")

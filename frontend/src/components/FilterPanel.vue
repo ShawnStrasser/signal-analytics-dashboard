@@ -88,6 +88,29 @@
         </v-col>
       </v-row>
 
+      <!-- Time of Day Filter -->
+      <v-row>
+        <v-col cols="12">
+          <div class="text-caption mb-2">
+            Time of Day: {{ formatTimeDetailed(filtersStore.startHour, filtersStore.startMinute) }} - {{ formatTimeDetailed(filtersStore.endHour, filtersStore.endMinute) }}
+          </div>
+          <v-range-slider
+            :model-value="timeRangeQuarters"
+            @end="updateTimeRangeQuarters"
+            :min="sliderMin"
+            :max="sliderMax"
+            :step="1"
+            thumb-label="always"
+            density="compact"
+            color="primary"
+          >
+            <template v-slot:thumb-label="{ modelValue }">
+              {{ formatQuarterHour(modelValue) }}
+            </template>
+          </v-range-slider>
+        </v-col>
+      </v-row>
+
       <!-- Day of Week Filter -->
       <v-row>
         <v-col cols="12">
@@ -104,40 +127,6 @@
         </v-col>
       </v-row>
 
-      <!-- Time of Day Filter -->
-      <v-row>
-        <v-col cols="12">
-          <v-checkbox
-            v-model="filtersStore.timeFilterEnabled"
-            label="Filter by Time of Day"
-            density="compact"
-            hide-details
-          />
-        </v-col>
-      </v-row>
-
-      <v-row v-if="filtersStore.timeFilterEnabled">
-        <v-col cols="12">
-          <div class="text-caption mb-2">
-            {{ formatTime(filtersStore.startHour) }} - {{ formatTime(filtersStore.endHour) }}
-          </div>
-          <v-range-slider
-            :model-value="timeRange"
-            @end="updateTimeRange"
-            :min="0"
-            :max="23"
-            :step="1"
-            thumb-label="always"
-            density="compact"
-            color="primary"
-          >
-            <template v-slot:thumb-label="{ modelValue }">
-              {{ formatTime(modelValue) }}
-            </template>
-          </v-range-slider>
-        </v-col>
-      </v-row>
-
       <!-- Filter Summary -->
       <v-divider class="my-4"></v-divider>
       <v-card variant="tonal" class="mb-2">
@@ -149,8 +138,8 @@
             <div v-if="filtersStore.approach !== null"><strong>Approach:</strong> {{ filtersStore.approach ? 'True' : 'False' }}</div>
             <div v-if="filtersStore.validGeometry !== null"><strong>Valid Geometry:</strong> {{ validGeometryDisplayText }}</div>
             <div v-if="$route.name === 'Anomalies'"><strong>Anomaly Type:</strong> {{ filtersStore.anomalyType }}</div>
+            <div><strong>Time of Day:</strong> {{ formatTimeDetailed(filtersStore.startHour, filtersStore.startMinute) }} - {{ formatTimeDetailed(filtersStore.endHour, filtersStore.endMinute) }}</div>
             <div v-if="filtersStore.dayOfWeek.length > 0"><strong>Days:</strong> {{ dayOfWeekDisplayText }}</div>
-            <div v-if="filtersStore.timeFilterEnabled"><strong>Time of Day:</strong> {{ formatTime(filtersStore.startHour) }} - {{ formatTime(filtersStore.endHour) }}</div>
           </div>
         </v-card-text>
       </v-card>
@@ -195,15 +184,47 @@ watch([localStartDate, localEndDate], ([newStart, newEnd]) => {
   }, 500) // 500ms debounce delay
 })
 
-// Display value for range slider
-const timeRange = computed(() => [filtersStore.startHour, filtersStore.endHour])
+// Slider min/max in quarter-hour units (computed from config)
+const sliderMin = computed(() => timeToQuarters(filtersStore.defaultStartHour, 0))
+const sliderMax = computed(() => timeToQuarters(filtersStore.defaultEndHour, 0))
 
-// Update time range only when slider is released
-function updateTimeRange(value) {
-  filtersStore.setTimeOfDayRange(value[0], value[1])
+// Convert hour/minute to quarter-hour index (0-95)
+function timeToQuarters(hour, minute) {
+  return hour * 4 + Math.floor(minute / 15)
 }
 
-// Format hour to HH:00 time string
+// Convert quarter-hour index to hour and minute
+function quartersToTime(quarters) {
+  const hour = Math.floor(quarters / 4)
+  const minute = (quarters % 4) * 15
+  return { hour, minute }
+}
+
+// Display value for range slider (in quarter-hour units)
+const timeRangeQuarters = computed(() => [
+  timeToQuarters(filtersStore.startHour, filtersStore.startMinute),
+  timeToQuarters(filtersStore.endHour, filtersStore.endMinute)
+])
+
+// Update time range when slider is released
+function updateTimeRangeQuarters(value) {
+  const start = quartersToTime(value[0])
+  const end = quartersToTime(value[1])
+  filtersStore.setTimeOfDayRange(start.hour, start.minute, end.hour, end.minute)
+}
+
+// Format quarter-hour index to HH:MM time string
+function formatQuarterHour(quarters) {
+  const { hour, minute } = quartersToTime(quarters)
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
+// Format hour and minute to HH:MM time string
+function formatTimeDetailed(hour, minute) {
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
+// Format hour to HH:00 time string (kept for filter summary)
 function formatTime(hour) {
   return `${String(hour).padStart(2, '0')}:00`
 }
@@ -259,6 +280,7 @@ const dayOfWeekDisplayText = computed(() => {
 })
 
 onMounted(async () => {
+  await filtersStore.initializeConfig()
   await loadSignals()
 })
 
