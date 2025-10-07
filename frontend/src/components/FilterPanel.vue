@@ -91,23 +91,24 @@
       <!-- Time of Day Filter -->
       <v-row>
         <v-col cols="12">
-          <div class="text-caption mb-2">
-            Time of Day: {{ formatTimeDetailed(filtersStore.startHour, filtersStore.startMinute) }} - {{ formatTimeDetailed(filtersStore.endHour, filtersStore.endMinute) }}
-          </div>
-          <v-range-slider
-            :model-value="timeRangeQuarters"
-            @end="updateTimeRangeQuarters"
-            :min="sliderMin"
-            :max="sliderMax"
-            :step="1"
-            thumb-label="always"
-            density="compact"
-            color="primary"
-          >
-            <template v-slot:thumb-label="{ modelValue }">
-              {{ formatQuarterHour(modelValue) }}
-            </template>
-          </v-range-slider>
+          <fieldset style="border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); border-radius: 4px; padding: 32px 12px 12px 12px;">
+            <legend style="padding: 0 4px; margin-left: 8px; font-size: 0.75rem; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));">Time of Day</legend>
+            <v-range-slider
+              :model-value="timeRangeQuarters"
+              @end="updateTimeRangeQuarters"
+              :min="sliderMin"
+              :max="sliderMax"
+              :step="1"
+              thumb-label="always"
+              density="compact"
+              color="primary"
+              hide-details
+            >
+              <template v-slot:thumb-label="{ modelValue }">
+                {{ formatQuarterHour(modelValue) }}
+              </template>
+            </v-range-slider>
+          </fieldset>
         </v-col>
       </v-row>
 

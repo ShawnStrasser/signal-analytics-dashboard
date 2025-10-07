@@ -38,6 +38,7 @@ let xdLayers = new Map() // Map XD to layer
 let markersLayer = null
 let geometryLayer = null
 let tileLayer = null // Reference to current tile layer for theme switching
+let layerControl = null // Reference to layer control for base map switching
 let previousDisplayedXDs = new Set() // Track previous filter state for selective updates
 
 const geometryStore = useGeometryStore()
@@ -207,19 +208,24 @@ watch(() => themeStore.currentTheme, () => {
 function updateTileLayer() {
   if (!map) return
 
-  // Remove existing tile layer if present
+  // Remove existing layer control and tile layers
+  if (layerControl) {
+    map.removeControl(layerControl)
+    layerControl = null
+  }
   if (tileLayer) {
     map.removeLayer(tileLayer)
+    tileLayer = null
   }
 
-  // Add appropriate tile layer based on theme
+  // Add appropriate tile layers based on theme
   const isDark = themeStore.currentTheme === 'dark'
 
-  // Use dark_nolabels + labels_only for better text contrast in dark mode
-  // For light mode, use light_all as before
+  let roadmapLayer, satelliteLayer
+
   if (isDark) {
     // Dark mode: Use dark map without labels as base
-    tileLayer = L.layerGroup([
+    roadmapLayer = L.layerGroup([
       L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors, © CartoDB',
         maxZoom: 19
@@ -229,14 +235,44 @@ function updateTileLayer() {
         maxZoom: 19,
         opacity: 1.0
       })
-    ]).addTo(map)
+    ])
   } else {
     // Light mode: Use standard light theme
-    tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
+    roadmapLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors, © CartoDB',
       maxZoom: 19
-    }).addTo(map)
+    })
   }
+
+  // Satellite layer with labels (works for both light and dark themes)
+  satelliteLayer = L.layerGroup([
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: '© Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+      maxZoom: 19
+    }),
+    // Add labels on top of satellite imagery
+    L.tileLayer(isDark
+      ? 'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png'
+      : 'https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      opacity: 0.8
+    })
+  ])
+
+  // Add roadmap as default layer
+  tileLayer = roadmapLayer
+  roadmapLayer.addTo(map)
+
+  // Create layer control
+  const baseMaps = {
+    "Roadmap": roadmapLayer,
+    "Satellite": satelliteLayer
+  }
+
+  layerControl = L.control.layers(baseMaps, null, {
+    position: 'topright',
+    collapsed: false
+  }).addTo(map)
 }
 
 function initializeMap() {
