@@ -82,6 +82,11 @@ function updateChart() {
   }
   console.log('📊 CHART: updateChart START', { dataPoints: props.data.length, isTimeOfDay: props.isTimeOfDay, legendBy: props.legendBy })
 
+  // Use nextTick to ensure chart resize happens after DOM updates
+  nextTick(() => {
+    chart?.resize()
+  })
+
   const isDark = theme.global.current.value.dark
   const textColor = isDark ? '#E0E0E0' : '#333333'
   const backgroundColor = isDark ? 'transparent' : 'transparent'
@@ -199,7 +204,7 @@ function updateChart() {
       type: 'value',
       name: 'Time of Day',
       nameLocation: 'middle',
-      nameGap: isMobile ? 35 : 30,
+      nameGap: isMobile ? 40 : 35,
       min: minMinutes,
       max: maxMinutes,
       interval: labelInterval,
@@ -215,7 +220,8 @@ function updateChart() {
       },
       nameTextStyle: {
         color: textColor,
-        fontSize: isMobile ? 11 : 12
+        fontSize: isMobile ? 12 : 13,
+        fontWeight: 'bold'
       },
       axisLine: {
         lineStyle: {
@@ -275,14 +281,38 @@ function updateChart() {
       ? `Travel Time Index for Signal ${props.selectedSignal}`
       : 'Travel Time Index - All Selected Signals'
 
+    // Determine aggregation level from data timestamps
+    let xAxisName = 'Time'
+    if (props.data.length >= 2) {
+      const timestamps = props.data.slice(0, 10).map(d => new Date(d.TIMESTAMP).getTime())
+      const intervals = []
+      for (let i = 1; i < timestamps.length; i++) {
+        intervals.push(timestamps[i] - timestamps[i - 1])
+      }
+      const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length
+      const avgMinutes = avgInterval / (1000 * 60)
+
+      // Determine aggregation level based on average interval
+      if (avgMinutes < 30) {
+        xAxisName = 'Date & Time (15-minute)'
+      } else if (avgMinutes < 90) {
+        xAxisName = 'Date & Time (Hourly)'
+      } else if (avgMinutes < 1440) {
+        xAxisName = 'Date & Time'
+      } else {
+        xAxisName = 'Date'
+      }
+    }
+
     xAxisConfig = {
       type: 'time',
-      name: 'Time',
+      name: xAxisName,
       nameLocation: 'middle',
-      nameGap: isMobile ? 35 : 30,
+      nameGap: isMobile ? 40 : 35,
       nameTextStyle: {
         color: textColor,
-        fontSize: isMobile ? 11 : 12
+        fontSize: isMobile ? 12 : 13,
+        fontWeight: 'bold'
       },
       axisLabel: {
         color: textColor,
@@ -438,13 +468,14 @@ function updateChart() {
       type: 'value',
       name: 'Travel Time Index',
       nameLocation: 'middle',
-      nameGap: isMobile ? 40 : 50,
+      nameGap: isMobile ? 45 : 55,
       min: yAxisMin,
       max: yAxisMax,
       interval: interval,
       nameTextStyle: {
         color: textColor,
-        fontSize: isMobile ? 11 : 12
+        fontSize: isMobile ? 12 : 13,
+        fontWeight: 'bold'
       },
       axisLabel: {
         color: textColor,

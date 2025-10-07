@@ -119,10 +119,11 @@ function updateChart() {
       type: 'time',
       name: 'Time',
       nameLocation: 'middle',
-      nameGap: isMobile ? 35 : 30,
+      nameGap: isMobile ? 40 : 35,
       nameTextStyle: {
         color: textColor,
-        fontSize: isMobile ? 11 : 12
+        fontSize: isMobile ? 12 : 13,
+        fontWeight: 'bold'
       },
       axisLabel: {
         color: textColor,
@@ -153,10 +154,11 @@ function updateChart() {
       type: 'value',
       name: 'Total Travel Time (seconds)',
       nameLocation: 'middle',
-      nameGap: isMobile ? 40 : 50,
+      nameGap: isMobile ? 45 : 55,
       nameTextStyle: {
         color: textColor,
-        fontSize: isMobile ? 11 : 12
+        fontSize: isMobile ? 12 : 13,
+        fontWeight: 'bold'
       },
       axisLabel: {
         color: textColor,
