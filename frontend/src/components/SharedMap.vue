@@ -48,17 +48,112 @@ const themeStore = useThemeStore()
 const { featureCollection } = storeToRefs(geometryStore)
 const { selectedSignalsList, selectedXdSegmentsList } = storeToRefs(selectionStore)
 
-// Dynamic marker radius based on zoom level
-const BASE_RADIUS_PIXELS = 15
-const REFERENCE_ZOOM = 12 // Zoom level where base radius looks good
-const RADIUS_SCALE_FACTOR = 1 // How much radius grows per zoom level
+// Dynamic marker size based on zoom level
+const BASE_ICON_SIZE = 30 // Base size in pixels (width/height)
+const REFERENCE_ZOOM = 12 // Zoom level where base size looks good
+const SIZE_SCALE_FACTOR = 2 // How much size grows per zoom level
 
-// Calculate marker radius based on current zoom
-function getMarkerRadius() {
-  if (!map) return BASE_RADIUS_PIXELS
+// Calculate marker icon size based on current zoom
+function getMarkerSize() {
+  if (!map) return BASE_ICON_SIZE
   const currentZoom = map.getZoom()
   const zoomDelta = currentZoom - REFERENCE_ZOOM
-  return BASE_RADIUS_PIXELS + (zoomDelta * RADIUS_SCALE_FACTOR)
+  return BASE_ICON_SIZE + (zoomDelta * SIZE_SCALE_FACTOR)
+}
+
+// Categorize values into green/yellow/red thresholds
+function getCategoryFromValue(value, dataType) {
+  if (dataType === 'anomaly') {
+    // Anomaly percentage thresholds
+    if (value < 3.3) return 'green'
+    if (value < 6.7) return 'yellow'
+    return 'red'
+  } else {
+    // Travel Time Index thresholds
+    if (value < 1.5) return 'green'
+    if (value < 2.25) return 'yellow'
+    return 'red'
+  }
+}
+
+// Generate SVG traffic signal icon as data URI
+function createTrafficSignalIcon(category, isSelected, iconSize) {
+  const isDark = themeStore.currentTheme === 'dark'
+  const selectionColor = isDark ? '#FFFFFF' : '#000000'
+
+  // Traffic light colors
+  const activeColors = {
+    green: '#4caf50',
+    yellow: '#ffc107',
+    red: '#d32f2f'
+  }
+
+  const inactiveColor = '#2a2a2a'
+  const backplateColor = '#ffc107' // Yellow backplate (reflectorized)
+
+  // Calculate sizes
+  const width = iconSize
+  const height = iconSize * 1.4 // Taller to fit 3 lights
+  const lightRadius = iconSize * 0.12
+  const backplateStroke = iconSize * 0.08
+  const selectionStroke = isSelected ? iconSize * 0.15 : 0
+
+  // Light positions (centered horizontally, stacked vertically)
+  const centerX = width / 2
+  const topY = height * 0.25
+  const middleY = height * 0.5
+  const bottomY = height * 0.75
+
+  // Determine which light is active
+  const redActive = category === 'red'
+  const yellowActive = category === 'yellow'
+  const greenActive = category === 'green'
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      ${isSelected ? `
+        <!-- Selection border -->
+        <rect x="${selectionStroke/2}" y="${selectionStroke/2}"
+              width="${width - selectionStroke}" height="${height - selectionStroke}"
+              rx="${iconSize * 0.15}"
+              fill="none" stroke="${selectionColor}" stroke-width="${selectionStroke}"/>
+      ` : ''}
+
+      <!-- Backplate (yellow outline) -->
+      <rect x="${iconSize * 0.15}" y="${iconSize * 0.1}"
+            width="${width - iconSize * 0.3}" height="${height - iconSize * 0.2}"
+            rx="${iconSize * 0.1}"
+            fill="#1a1a1a" stroke="${backplateColor}" stroke-width="${backplateStroke}"/>
+
+      <!-- Red light (top) -->
+      <circle cx="${centerX}" cy="${topY}" r="${lightRadius}"
+              fill="${redActive ? activeColors.red : inactiveColor}"
+              ${redActive ? `filter="url(#glow)"` : ''}/>
+
+      <!-- Yellow light (middle) -->
+      <circle cx="${centerX}" cy="${middleY}" r="${lightRadius}"
+              fill="${yellowActive ? activeColors.yellow : inactiveColor}"
+              ${yellowActive ? `filter="url(#glow)"` : ''}/>
+
+      <!-- Green light (bottom) -->
+      <circle cx="${centerX}" cy="${bottomY}" r="${lightRadius}"
+              fill="${greenActive ? activeColors.green : inactiveColor}"
+              ${greenActive ? `filter="url(#glow)"` : ''}/>
+
+      <!-- Glow effect definition -->
+      <defs>
+        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="${lightRadius * 0.3}" result="coloredBlur"/>
+          <feMerge>
+            <feMergeNode in="coloredBlur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+    </svg>
+  `.trim()
+
+  return `data:image/svg+xml;base64,${btoa(svg)}`
 }
 
 onMounted(() => {
@@ -582,10 +677,38 @@ function createXdTooltip(xd, dataValue) {
 function updateMarkerSizes() {
   if (!map || !markersLayer) return
 
-  const newRadius = getMarkerRadius()
+  const iconSize = getMarkerSize()
 
-  signalMarkers.forEach((marker) => {
-    marker.setRadius(newRadius)
+  signalMarkers.forEach((marker, signalId) => {
+    const isSelected = selectionStore.isSignalSelected(signalId)
+
+    // Get current marker data to determine category
+    let category = 'green' // Default
+    const signal = props.signals.find(s => s.ID === signalId)
+
+    if (signal) {
+      if (props.dataType === 'anomaly') {
+        const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
+        const count = signal[countColumn] || 0
+        const totalRecords = signal.RECORD_COUNT || 0
+        const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
+        category = getCategoryFromValue(percentage, 'anomaly')
+      } else {
+        const tti = signal.TRAVEL_TIME_INDEX || 0
+        category = getCategoryFromValue(tti, 'travel-time')
+      }
+    }
+
+    // Recreate icon with new size
+    const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+    const icon = L.divIcon({
+      html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
+      className: 'traffic-signal-icon',
+      iconSize: [iconSize, iconSize * 1.4],
+      iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
+    })
+
+    marker.setIcon(icon)
   })
 }
 
@@ -659,20 +782,22 @@ function updateMarkers() {
       const totalRecords = signal.RECORD_COUNT || 0
       const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
 
-      const color = anomalyColorScale(percentage)
+      const category = getCategoryFromValue(percentage, 'anomaly')
       const isSelected = selectionStore.isSignalSelected(signal.ID)
 
       const existingMarker = signalMarkers.get(signal.ID)
 
       if (existingMarker) {
-        // Update existing marker style
-        existingMarker.setStyle({
-          fillColor: color,
-          color: isSelected ? '#000000' : '#FFFFFF',
-          weight: isSelected ? 3 : 1,
-          opacity: isSelected ? 1 : 0.5,
-          fillOpacity: 0.8
+        // Update existing marker icon
+        const iconSize = getMarkerSize()
+        const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+        const icon = L.divIcon({
+          html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
+          className: 'traffic-signal-icon',
+          iconSize: [iconSize, iconSize * 1.4],
+          iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
         })
+        existingMarker.setIcon(icon)
 
         // Update tooltip
         const tooltipContent = `
@@ -686,16 +811,19 @@ function updateMarkers() {
         `
         existingMarker.setTooltipContent(tooltipContent)
       } else {
-        // Create new marker
-        const marker = L.circleMarker([signal.LATITUDE, signal.LONGITUDE], {
-          radius: getMarkerRadius(),
-          fillColor: color,
-          color: isSelected ? '#000000' : '#FFFFFF',
-          weight: isSelected ? 3 : 1,
-          opacity: isSelected ? 1 : 0.5,
-          fillOpacity: 0.8,
-          interactive: true,
-          bubblingMouseEvents: false
+        // Create new marker with traffic signal icon
+        const iconSize = getMarkerSize()
+        const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+        const icon = L.divIcon({
+          html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
+          className: 'traffic-signal-icon',
+          iconSize: [iconSize, iconSize * 1.4],
+          iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
+        })
+
+        const marker = L.marker([signal.LATITUDE, signal.LONGITUDE], {
+          icon: icon,
+          interactive: true
         })
 
         const tooltipContent = `
@@ -794,20 +922,22 @@ function updateMarkers() {
         ? signal.TRAVEL_TIME_INDEX / signal.ttiCount
         : 0
 
-      const color = travelTimeColorScale(avgTTI)
+      const category = getCategoryFromValue(avgTTI, 'travel-time')
       const isSelected = selectionStore.isSignalSelected(signal.ID)
 
       const existingMarker = signalMarkers.get(signal.ID)
 
       if (existingMarker) {
-        // Update existing marker style
-        existingMarker.setStyle({
-          fillColor: color,
-          color: isSelected ? '#000000' : '#FFFFFF',
-          weight: isSelected ? 3 : 1,
-          opacity: isSelected ? 1 : 0.5,
-          fillOpacity: 0.8
+        // Update existing marker icon
+        const iconSize = getMarkerSize()
+        const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+        const icon = L.divIcon({
+          html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
+          className: 'traffic-signal-icon',
+          iconSize: [iconSize, iconSize * 1.4],
+          iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
         })
+        existingMarker.setIcon(icon)
 
         // Update tooltip
         const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
@@ -821,16 +951,19 @@ function updateMarkers() {
         `
         existingMarker.setTooltipContent(tooltipContent)
       } else {
-        // Create new marker
-        const marker = L.circleMarker([signal.LATITUDE, signal.LONGITUDE], {
-          radius: getMarkerRadius(),
-          fillColor: color,
-          color: isSelected ? '#000000' : '#FFFFFF',
-          weight: isSelected ? 3 : 1,
-          opacity: isSelected ? 1 : 0.5,
-          fillOpacity: 0.8,
-          interactive: true,
-          bubblingMouseEvents: false
+        // Create new marker with traffic signal icon
+        const iconSize = getMarkerSize()
+        const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+        const icon = L.divIcon({
+          html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
+          className: 'traffic-signal-icon',
+          iconSize: [iconSize, iconSize * 1.4],
+          iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
+        })
+
+        const marker = L.marker([signal.LATITUDE, signal.LONGITUDE], {
+          icon: icon,
+          interactive: true
         })
 
         const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
@@ -951,21 +1084,39 @@ function autoZoomToSignals() {
 }
 
 function updateSelectionStyles() {
-  // Theme-aware selection colors
-  const isDark = themeStore.currentTheme === 'dark'
-  const selectionColor = isDark ? '#FFFFFF' : '#000000'
-  const unselectedMarkerColor = isDark ? '#CCCCCC' : '#FFFFFF'
+  // Update signal marker icons with selection state
+  const iconSize = getMarkerSize()
 
-  // Update signal marker styles
   signalMarkers.forEach((marker, signalId) => {
     const isSelected = selectionStore.isSignalSelected(signalId)
-    const currentOptions = marker.options
 
-    marker.setStyle({
-      color: isSelected ? selectionColor : unselectedMarkerColor,
-      weight: isSelected ? 3 : 1,
-      opacity: isSelected ? 1 : 0.5
+    // Get current marker data to determine category
+    let category = 'green' // Default
+    const signal = props.signals.find(s => s.ID === signalId)
+
+    if (signal) {
+      if (props.dataType === 'anomaly') {
+        const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
+        const count = signal[countColumn] || 0
+        const totalRecords = signal.RECORD_COUNT || 0
+        const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
+        category = getCategoryFromValue(percentage, 'anomaly')
+      } else {
+        const tti = signal.TRAVEL_TIME_INDEX || 0
+        category = getCategoryFromValue(tti, 'travel-time')
+      }
+    }
+
+    // Recreate icon with updated selection state
+    const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+    const icon = L.divIcon({
+      html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
+      className: 'traffic-signal-icon',
+      iconSize: [iconSize, iconSize * 1.4],
+      iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
     })
+
+    marker.setIcon(icon)
   })
 
   // Build set of XD values from currently displayed signals
@@ -1063,5 +1214,18 @@ defineExpose({
 
 :deep(path:focus) {
   outline: none !important;
+}
+
+/* Custom traffic signal icon styling */
+:deep(.traffic-signal-icon) {
+  background: none !important;
+  border: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+:deep(.traffic-signal-icon img) {
+  display: block;
+  pointer-events: none;
 }
 </style>
