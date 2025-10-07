@@ -82,6 +82,15 @@
           <v-card-title>
             📈 Travel Time Index Time Series
             <v-spacer></v-spacer>
+            <v-select
+              v-model="legendBy"
+              :items="legendOptions"
+              label="Legend"
+              density="compact"
+              variant="outlined"
+              hide-details
+              style="max-width: 200px; margin-right: 16px;"
+            ></v-select>
             <v-btn-toggle
               v-model="aggregateByTimeOfDay"
               mandatory
@@ -96,12 +105,19 @@
               </v-btn>
             </v-btn-toggle>
           </v-card-title>
+          <v-card-subtitle v-if="legendClipped">
+            <v-chip color="warning" size="small">
+              <v-icon start size="small">mdi-alert</v-icon>
+              Legend limited to 10 items
+            </v-chip>
+          </v-card-subtitle>
           <v-card-text>
             <div style="height: 500px; position: relative;">
               <TravelTimeChart
                 v-if="chartData.length > 0"
                 :data="chartData"
                 :is-time-of-day="aggregateByTimeOfDay === 'true'"
+                :legend-by="legendBy"
               />
               <div v-if="loading" class="d-flex justify-center align-center" style="height: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); z-index: 1000;">
                 <v-progress-circular indeterminate size="64"></v-progress-circular>
@@ -136,6 +152,18 @@ const loadingChart = ref(false)
 const loading = ref(false) // Global loading state
 const mapRef = ref(null)
 const aggregateByTimeOfDay = ref('false') // Toggle for time-of-day aggregation
+const legendBy = ref('none') // Legend grouping selection
+const legendClipped = ref(false) // Whether legend entities were clipped
+
+// Legend options for the dropdown
+const legendOptions = [
+  { title: 'None', value: 'none' },
+  { title: 'XD Segment', value: 'xd' },
+  { title: 'Bearing', value: 'bearing' },
+  { title: 'County', value: 'county' },
+  { title: 'Road Name', value: 'roadname' },
+  { title: 'Signal ID', value: 'id' }
+]
 
 // Watch for geometry/signal filter changes (triggers auto-zoom)
 watch(() => [
@@ -196,6 +224,12 @@ watch(() => [
 // Watch for time-of-day aggregation toggle
 watch(aggregateByTimeOfDay, async () => {
   console.log('🕐 Time-of-day aggregation toggled - reloading chart data')
+  await loadChartData()
+})
+
+// Watch for legend selection changes
+watch(legendBy, async () => {
+  console.log('🏷️ Legend selection changed - reloading chart data')
   await loadChartData()
 })
 
@@ -312,16 +346,27 @@ async function loadChartData() {
     let arrowTable
     let t1
     if (aggregateByTimeOfDay.value === 'true') {
-      arrowTable = await ApiService.getTravelTimeByTimeOfDay(filters)
+      arrowTable = await ApiService.getTravelTimeByTimeOfDay(filters, legendBy.value)
       t1 = performance.now()
       console.log(`📊 API: getTravelTimeByTimeOfDay took ${(t1 - t0).toFixed(2)}ms`)
     } else {
-      arrowTable = await ApiService.getTravelTimeAggregated(filters)
+      arrowTable = await ApiService.getTravelTimeAggregated(filters, legendBy.value)
       t1 = performance.now()
       console.log(`📊 API: getTravelTimeAggregated took ${(t1 - t0).toFixed(2)}ms`)
     }
 
-    chartData.value = ApiService.arrowTableToObjects(arrowTable)
+    const data = ApiService.arrowTableToObjects(arrowTable)
+
+    // Check if data contains LEGEND_GROUP column (indicates legend grouping is active)
+    if (data.length > 0 && data[0].LEGEND_GROUP !== undefined) {
+      // Count unique legend groups to detect if clipped
+      const uniqueGroups = new Set(data.map(row => row.LEGEND_GROUP))
+      legendClipped.value = uniqueGroups.size >= 10 // Matches MAX_LEGEND_ENTITIES
+    } else {
+      legendClipped.value = false
+    }
+
+    chartData.value = data
     const t2 = performance.now()
     console.log(`📊 API: arrowTableToObjects took ${(t2 - t1).toFixed(2)}ms`)
     console.log(`📊 API: Loading chart data DONE - ${chartData.value.length} records in ${(t2 - t0).toFixed(2)}ms`)

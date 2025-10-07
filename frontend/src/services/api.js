@@ -97,12 +97,20 @@ class ApiService {
     return this.fetchArrowData('/travel-time-summary', filters)
   }
 
-  async getTravelTimeAggregated(filters) {
-    return this.fetchArrowData('/travel-time-aggregated', filters)
+  async getTravelTimeAggregated(filters, legendBy = null) {
+    const params = { ...filters }
+    if (legendBy && legendBy !== 'none') {
+      params.legend_by = legendBy
+    }
+    return this.fetchArrowData('/travel-time-aggregated', params)
   }
 
-  async getTravelTimeByTimeOfDay(filters) {
-    return this.fetchArrowData('/travel-time-by-time-of-day', filters)
+  async getTravelTimeByTimeOfDay(filters, legendBy = null) {
+    const params = { ...filters }
+    if (legendBy && legendBy !== 'none') {
+      params.legend_by = legendBy
+    }
+    return this.fetchArrowData('/travel-time-by-time-of-day', params)
   }
 
   async getAnomalySummary(filters) {

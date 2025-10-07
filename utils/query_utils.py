@@ -250,3 +250,96 @@ def build_time_of_day_filter(start_hour: Optional[int] = None, end_hour: Optiona
         return f" AND TIME_15MIN BETWEEN '{start_time}' AND '{end_time}'"
     except (ValueError, TypeError):
         return ""
+
+
+def build_legend_join(
+    legend_by: Optional[str] = None,
+    max_entities: int = 10
+) -> tuple[str, str]:
+    """
+    Build SQL JOIN clause for legend grouping.
+    Uses SELECT DISTINCT to handle many-to-many relationship in DIM_SIGNALS_XD.
+
+    IMPORTANT: This returns a simple JOIN that should be added AFTER the main WHERE clause.
+    The subquery to limit entities should use the SAME filters as the main query.
+
+    Args:
+        legend_by: Field to group by ('xd', 'bearing', 'county', 'roadname', 'id', or None)
+        max_entities: Maximum number of legend entities to return
+
+    Returns:
+        Tuple of (join_clause, legend_field_name)
+        - join_clause: SQL JOIN fragment (just "INNER JOIN DIM_SIGNALS_XD s ON t.XD = s.XD")
+        - legend_field_name: Column name for legend field or empty string
+    """
+    if not legend_by or legend_by == 'none':
+        return ("", "")
+
+    # Map legend_by parameter to actual column name
+    legend_field_map = {
+        'xd': 'XD',
+        'bearing': 'BEARING',
+        'county': 'COUNTY',
+        'roadname': 'ROADNAME',
+        'id': 'ID'
+    }
+
+    legend_field = legend_field_map.get(legend_by.lower())
+    if not legend_field:
+        return ("", "")
+
+    # Return simple join - the WHERE clause will be built by the endpoint
+    join_clause = "INNER JOIN DIM_SIGNALS_XD s ON t.XD = s.XD"
+
+    return (join_clause, legend_field)
+
+
+def build_legend_filter(
+    legend_field: str,
+    max_entities: int,
+    xd_filter: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    time_filter: str = "",
+    dow_join: str = ""
+) -> str:
+    """
+    Build WHERE clause to limit legend entities.
+
+    SIMPLIFIED LOGIC: Just query DIM_SIGNALS_XD with the same XD filter as main query.
+    No need to join TRAVEL_TIME_ANALYTICS or apply date/time filters in subquery since
+    the main query already filters by XD, and we just want distinct legend values from those XDs.
+
+    Args:
+        legend_field: The field to limit (e.g., 'COUNTY', 'BEARING')
+        max_entities: Maximum number of entities
+        xd_filter: XD filter like "AND XD IN (...)" - ONLY this is needed
+
+    Returns:
+        SQL fragment like "AND s.COUNTY IN (SELECT DISTINCT ...)"
+    """
+    if not legend_field:
+        return ""
+
+    # Build WHERE clause - only need XD filter
+    where_clause = ""
+    if xd_filter:
+        # Remove leading AND and strip, then replace table alias
+        clean_xd = xd_filter.strip()
+        if clean_xd.startswith('AND '):
+            clean_xd = clean_xd[4:].strip()
+        # Replace t.XD with sub_s.XD
+        clean_xd = clean_xd.replace('t.XD', 'sub_s.XD')
+        if clean_xd and 'sub_s.XD' not in clean_xd and 'XD IN' in clean_xd:
+            # Handle case where it's just "XD IN (...)"
+            clean_xd = clean_xd.replace('XD IN', 'sub_s.XD IN')
+        if clean_xd:
+            where_clause = f"WHERE {clean_xd}"
+
+    # Build simple subquery - just query DIM_SIGNALS_XD
+    subquery = f"""SELECT DISTINCT sub_s.{legend_field}
+        FROM DIM_SIGNALS_XD sub_s
+        {where_clause}
+        LIMIT {max_entities}"""
+
+    return f" AND s.{legend_field} IN ({subquery})"

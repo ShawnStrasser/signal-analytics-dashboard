@@ -8,7 +8,7 @@ import time
 import pyarrow as pa
 from flask import Blueprint, request, jsonify
 
-from config import DEBUG_BACKEND_TIMING, DEBUG_DISABLE_SERVER_CACHE
+from config import DEBUG_BACKEND_TIMING, DEBUG_DISABLE_SERVER_CACHE, MAX_LEGEND_ENTITIES
 from database import get_snowflake_session
 from utils.arrow_utils import (
     serialize_arrow_to_ipc,
@@ -24,7 +24,9 @@ from utils.query_utils import (
     create_xd_lookup_dict,
     build_time_of_day_filter,
     build_day_of_week_filter,
-    get_aggregation_level
+    get_aggregation_level,
+    build_legend_join,
+    build_legend_filter
 )
 
 travel_time_bp = Blueprint('travel_time', __name__)
@@ -306,6 +308,7 @@ def get_travel_time_aggregated():
     start_hour = request.args.get('start_hour')
     end_hour = request.args.get('end_hour')
     day_of_week = request.args.getlist('day_of_week')
+    legend_by = request.args.get('legend_by')  # New parameter
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -322,7 +325,7 @@ def get_travel_time_aggregated():
 
     if DEBUG_BACKEND_TIMING:
         print(f"\n[TIMING] /travel-time-aggregated START")
-        print(f"  Params: date={start_date_str} to {end_date_str}, xd_segments={len(xd_segments) if xd_segments else 0}, signals={len(signal_ids) if signal_ids else 0}, agg_level={agg_level}")
+        print(f"  Params: date={start_date_str} to {end_date_str}, xd_segments={len(xd_segments) if xd_segments else 0}, signals={len(signal_ids) if signal_ids else 0}, agg_level={agg_level}, legend_by={legend_by}")
 
     try:
         # Resolve XD segments if signal_ids provided
@@ -360,54 +363,83 @@ def get_travel_time_aggregated():
         # Build XD filter - only if we have specific XDs to filter
         xd_filter = build_xd_filter(xd_values) if xd_values else ""
 
+        # Build legend join if legend_by is specified
+        legend_join, legend_field = build_legend_join(legend_by, MAX_LEGEND_ENTITIES)
+
         # Build query based on aggregation level
         query_start = time.time()
 
         if agg_level == "none":
             # No aggregation: query by TIMESTAMP (15-minute intervals)
-            query = f"""
-            SELECT
-                t.TIMESTAMP,
-                AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX
-            FROM TRAVEL_TIME_ANALYTICS t
-            {dow_filter}
-            INNER JOIN FREEFLOW f ON t.XD = f.XD
-            WHERE t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'
-            {xd_filter.replace('XD', 't.XD')}
-            {time_filter.replace('TIME_15MIN', 't.TIME_15MIN')}
-            GROUP BY 1
-            ORDER BY 1
-            """
+            timestamp_expr = "t.TIMESTAMP"
         elif agg_level == "hourly":
             # Hourly aggregation: truncate timestamp to hour
-            query = f"""
-            SELECT
-                DATE_TRUNC('HOUR', t.TIMESTAMP) as TIMESTAMP,
-                AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX
-            FROM TRAVEL_TIME_ANALYTICS t
-            {dow_filter}
-            INNER JOIN FREEFLOW f ON t.XD = f.XD
-            WHERE t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'
-            {xd_filter.replace('XD', 't.XD')}
-            {time_filter.replace('TIME_15MIN', 't.TIME_15MIN')}
-            GROUP BY 1
-            ORDER BY 1
-            """
+            timestamp_expr = "DATE_TRUNC('HOUR', t.TIMESTAMP) as TIMESTAMP"
         else:  # daily
-            # Daily aggregation: use DATE_ONLY, cast to TIMESTAMP_NTZ to ensure proper timezone handling
-            query = f"""
-            SELECT
-                CAST(t.DATE_ONLY AS TIMESTAMP_NTZ) as TIMESTAMP,
-                AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX
-            FROM TRAVEL_TIME_ANALYTICS t
-            {dow_filter}
-            INNER JOIN FREEFLOW f ON t.XD = f.XD
-            WHERE t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'
-            {xd_filter.replace('XD', 't.XD')}
-            {time_filter.replace('TIME_15MIN', 't.TIME_15MIN')}
-            GROUP BY 1
-            ORDER BY 1
-            """
+            # Daily aggregation: use DATE_ONLY, cast to TIMESTAMP_NTZ
+            timestamp_expr = "CAST(t.DATE_ONLY AS TIMESTAMP_NTZ) as TIMESTAMP"
+
+        # Determine SELECT and GROUP BY clauses based on legend
+        if legend_field:
+            select_clause = f"{timestamp_expr}, s.{legend_field} AS LEGEND_GROUP, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX"
+            group_by_clause = "GROUP BY 1, 2\nORDER BY 1, 2"
+        else:
+            select_clause = f"{timestamp_expr}, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX"
+            group_by_clause = "GROUP BY 1\nORDER BY 1"
+
+        # Build WHERE clause parts - SAME AS BEFORE, just building on top
+        where_parts = [f"t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'"]
+
+        # Add XD filter if present
+        if xd_filter:
+            clean_xd = xd_filter.strip()
+            if clean_xd.startswith('AND '):
+                clean_xd = clean_xd[4:]  # Remove only leading "AND "
+            clean_xd = clean_xd.replace('XD', 't.XD')
+            where_parts.append(clean_xd)
+
+        # Add time filter if present
+        if time_filter:
+            clean_time = time_filter.strip()
+            if clean_time.startswith('AND '):
+                clean_time = clean_time[4:]  # Remove only leading "AND "
+            clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
+            where_parts.append(clean_time)
+
+        where_clause = " AND ".join(where_parts)
+
+        # Build FROM clause
+        from_clause = f"""FROM TRAVEL_TIME_ANALYTICS t
+        {dow_filter}
+        INNER JOIN FREEFLOW f ON t.XD = f.XD"""
+
+        # Add legend join if specified
+        if legend_join:
+            from_clause += f"\n{legend_join}"
+
+            # Add legend filter to limit number of entities
+            legend_entity_filter = build_legend_filter(
+                legend_field=legend_field,
+                max_entities=MAX_LEGEND_ENTITIES,
+                xd_filter=xd_filter,
+                start_date=start_date_str,
+                end_date=end_date_str,
+                time_filter=time_filter,
+                dow_join=dow_filter
+            )
+            where_clause += legend_entity_filter
+
+        # Construct final query
+        query = f"""
+        SELECT
+            {select_clause}
+        {from_clause}
+        WHERE {where_clause}
+        {group_by_clause}
+        """
+
+        if DEBUG_BACKEND_TIMING and legend_field:
+            print(f"\n[LEGEND QUERY DEBUG]:\n{query}\n")
 
         arrow_data = session.sql(query).to_arrow()
         query_time = (time.time() - query_start) * 1000
@@ -445,6 +477,7 @@ def get_travel_time_by_time_of_day():
     day_of_week = request.args.getlist('day_of_week')
     start_hour = request.args.get('start_hour')
     end_hour = request.args.get('end_hour')
+    legend_by = request.args.get('legend_by')  # New parameter
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -458,7 +491,7 @@ def get_travel_time_by_time_of_day():
 
     if DEBUG_BACKEND_TIMING:
         print(f"\n[TIMING] /travel-time-by-time-of-day START")
-        print(f"  Params: date={start_date_str} to {end_date_str}, xd_segments={len(xd_segments) if xd_segments else 0}, signals={len(signal_ids) if signal_ids else 0}")
+        print(f"  Params: date={start_date_str} to {end_date_str}, xd_segments={len(xd_segments) if xd_segments else 0}, signals={len(signal_ids) if signal_ids else 0}, legend_by={legend_by}")
 
     try:
         # Resolve XD segments if signal_ids provided
@@ -496,22 +529,73 @@ def get_travel_time_by_time_of_day():
         # Build XD filter - only if we have specific XDs to filter
         xd_filter = build_xd_filter(xd_values) if xd_values else ""
 
+        # Build legend join if legend_by is specified
+        legend_join, legend_field = build_legend_join(legend_by, MAX_LEGEND_ENTITIES)
+
         # Build query - aggregate by TIME_15MIN (time of day)
         query_start = time.time()
 
+        # Determine SELECT and GROUP BY clauses based on legend
+        if legend_field:
+            select_clause = f"t.TIME_15MIN AS TIME_OF_DAY, s.{legend_field} AS LEGEND_GROUP, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX"
+            group_by_clause = "GROUP BY 1, 2\nORDER BY 1, 2"
+        else:
+            select_clause = f"t.TIME_15MIN AS TIME_OF_DAY, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX"
+            group_by_clause = "GROUP BY 1\nORDER BY 1"
+
+        # Build WHERE clause parts - SAME AS BEFORE
+        where_parts = [f"t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'"]
+
+        # Add XD filter if present
+        if xd_filter:
+            clean_xd = xd_filter.strip()
+            if clean_xd.startswith('AND '):
+                clean_xd = clean_xd[4:]  # Remove only leading "AND "
+            clean_xd = clean_xd.replace('XD', 't.XD')
+            where_parts.append(clean_xd)
+
+        # Add time filter if present
+        if time_filter:
+            clean_time = time_filter.strip()
+            if clean_time.startswith('AND '):
+                clean_time = clean_time[4:]  # Remove only leading "AND "
+            clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
+            where_parts.append(clean_time)
+
+        where_clause = " AND ".join(where_parts)
+
+        # Build FROM clause
+        from_clause = f"""FROM TRAVEL_TIME_ANALYTICS t
+        {dow_filter}
+        INNER JOIN FREEFLOW f ON t.XD = f.XD"""
+
+        # Add legend join if specified
+        if legend_join:
+            from_clause += f"\n{legend_join}"
+
+            # Add legend filter to limit number of entities
+            legend_entity_filter = build_legend_filter(
+                legend_field=legend_field,
+                max_entities=MAX_LEGEND_ENTITIES,
+                xd_filter=xd_filter,
+                start_date=start_date_str,
+                end_date=end_date_str,
+                time_filter=time_filter,
+                dow_join=dow_filter
+            )
+            where_clause += legend_entity_filter
+
+        # Construct final query
         query = f"""
         SELECT
-            t.TIME_15MIN AS TIME_OF_DAY,
-            AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX
-        FROM TRAVEL_TIME_ANALYTICS t
-        {dow_filter}
-        INNER JOIN FREEFLOW f ON t.XD = f.XD
-        WHERE t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'
-        {xd_filter.replace('XD', 't.XD')}
-        {time_filter.replace('TIME_15MIN', 't.TIME_15MIN')}
-        GROUP BY 1
-        ORDER BY 1
+            {select_clause}
+        {from_clause}
+        WHERE {where_clause}
+        {group_by_clause}
         """
+
+        if DEBUG_BACKEND_TIMING and legend_field:
+            print(f"\n[LEGEND QUERY DEBUG TIME OF DAY]:\n{query}\n")
 
         arrow_data = session.sql(query).to_arrow()
         query_time = (time.time() - query_start) * 1000

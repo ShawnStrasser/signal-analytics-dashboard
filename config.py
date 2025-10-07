@@ -36,6 +36,15 @@ DEBUG_FRONTEND_LOGGING = True
 TIMEZONE = 'America/Los_Angeles'
 
 # =============================================================================
+# CHART SETTINGS
+# =============================================================================
+
+# Maximum number of entities to display in chart legends
+# Prevents overwhelming charts with too many series
+# Applies to legend grouping by: XD, BEARING, COUNTY, ROADNAME, ID
+MAX_LEGEND_ENTITIES = 10
+
+# =============================================================================
 # PRODUCTION SETTINGS
 # =============================================================================
 
