@@ -48,9 +48,18 @@ const themeStore = useThemeStore()
 const { featureCollection } = storeToRefs(geometryStore)
 const { selectedSignalsList, selectedXdSegmentsList } = storeToRefs(selectionStore)
 
-// Marker radius in meters (real-world distance)
-// This will scale with the map automatically, just like XD segments
-const SIGNAL_RADIUS_METERS = 50 // About 197 feet
+// Dynamic marker radius based on zoom level
+const BASE_RADIUS_PIXELS = 15
+const REFERENCE_ZOOM = 12 // Zoom level where base radius looks good
+const RADIUS_SCALE_FACTOR = 1 // How much radius grows per zoom level
+
+// Calculate marker radius based on current zoom
+function getMarkerRadius() {
+  if (!map) return BASE_RADIUS_PIXELS
+  const currentZoom = map.getZoom()
+  const zoomDelta = currentZoom - REFERENCE_ZOOM
+  return BASE_RADIUS_PIXELS + (zoomDelta * RADIUS_SCALE_FACTOR)
+}
 
 onMounted(() => {
   const mountStart = performance.now()
@@ -302,6 +311,11 @@ function initializeMap() {
     const center = map.getCenter()
     const zoom = map.getZoom()
     mapStateStore.updateMapState([center.lat, center.lng], zoom)
+  })
+
+  // Update marker sizes when zoom changes
+  map.on('zoomend', () => {
+    updateMarkerSizes()
   })
 
   updateGeometry()
@@ -565,6 +579,16 @@ function createXdTooltip(xd, dataValue) {
   }
 }
 
+function updateMarkerSizes() {
+  if (!map || !markersLayer) return
+
+  const newRadius = getMarkerRadius()
+
+  signalMarkers.forEach((marker) => {
+    marker.setRadius(newRadius)
+  })
+}
+
 function updateMarkers() {
   if (!map || !markersLayer) return
 
@@ -663,7 +687,8 @@ function updateMarkers() {
         existingMarker.setTooltipContent(tooltipContent)
       } else {
         // Create new marker
-        const marker = L.circle([signal.LATITUDE, signal.LONGITUDE], SIGNAL_RADIUS_METERS, {
+        const marker = L.circleMarker([signal.LATITUDE, signal.LONGITUDE], {
+          radius: getMarkerRadius(),
           fillColor: color,
           color: isSelected ? '#000000' : '#FFFFFF',
           weight: isSelected ? 3 : 1,
@@ -698,7 +723,7 @@ function updateMarkers() {
         signalMarkers.set(signal.ID, marker)
       }
     })
-    
+
   } else {
     // Travel time mode: group signals by ID first, then aggregate
     const signalGroups = new Map()
@@ -797,7 +822,8 @@ function updateMarkers() {
         existingMarker.setTooltipContent(tooltipContent)
       } else {
         // Create new marker
-        const marker = L.circle([signal.LATITUDE, signal.LONGITUDE], SIGNAL_RADIUS_METERS, {
+        const marker = L.circleMarker([signal.LATITUDE, signal.LONGITUDE], {
+          radius: getMarkerRadius(),
           fillColor: color,
           color: isSelected ? '#000000' : '#FFFFFF',
           weight: isSelected ? 3 : 1,
