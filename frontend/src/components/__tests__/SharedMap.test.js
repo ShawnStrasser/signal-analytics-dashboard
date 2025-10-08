@@ -53,8 +53,10 @@ vi.mock('leaflet', () => {
       addLayer: vi.fn(),
       removeLayer: vi.fn(),
       removeControl: vi.fn(),
+      addControl: vi.fn(),
     })),
     layerGroup: vi.fn(() => mockLayer),
+    featureGroup: vi.fn(() => mockLayer),
     geoJSON: vi.fn(() => mockLayer),
     marker: vi.fn(() => mockMarker),
     divIcon: vi.fn((options) => options),
@@ -72,13 +74,47 @@ vi.mock('leaflet', () => {
         addTo: vi.fn().mockReturnThis(),
       })),
     },
+    Control: {
+      extend: vi.fn((options) => {
+        return function() {
+          return {
+            onAdd: options.onAdd || vi.fn(),
+            addTo: vi.fn().mockReturnThis(),
+          }
+        }
+      }),
+      Draw: vi.fn(function(options) {
+        this.options = options
+        this.addTo = vi.fn().mockReturnThis()
+      }),
+    },
+    Draw: {
+      Event: {
+        CREATED: 'draw:created',
+        DELETED: 'draw:deleted',
+      },
+    },
     DomEvent: {
       stopPropagation: vi.fn(),
+      preventDefault: vi.fn(),
+      on: vi.fn(),
+    },
+    DomUtil: {
+      create: vi.fn((tag, className) => {
+        const el = document.createElement(tag)
+        if (className) el.className = className
+        return el
+      }),
     },
   }
 
   return { default: L }
 })
+
+// Mock leaflet-draw (depends on Leaflet being loaded first)
+vi.mock('leaflet-draw', () => ({
+  default: {},
+}))
 
 // Mock requestIdleCallback (not available in jsdom)
 global.requestIdleCallback = vi.fn((cb) => setTimeout(cb, 0))
