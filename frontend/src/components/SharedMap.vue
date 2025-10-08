@@ -271,9 +271,18 @@ watch(() => props.signals, (newSignals, oldSignals) => {
   const signalSetChanged = currentSignalIds.size !== previousSignalIds.size ||
     ![...currentSignalIds].every(id => previousSignalIds.has(id))
 
+  // Clear marker state cache to force icon regeneration with new data values
+  // This ensures icons update when TTI or anomaly values change
+  markerStates.clear()
+
   updateMarkers()
   const t2 = performance.now()
   console.log(`⏱️ updateMarkers: ${(t2 - t1).toFixed(2)}ms`)
+
+  // Update marker sizes/icons to reflect new data values (TTI, anomaly counts)
+  updateMarkerSizes()
+  const t2b = performance.now()
+  console.log(`⏱️ updateMarkerSizes: ${(t2b - t2).toFixed(2)}ms`)
 
   // Defer geometry updates for large datasets to avoid blocking
   const shouldDeferGeometry = newSignals.length > 5000
@@ -287,7 +296,7 @@ watch(() => props.signals, (newSignals, oldSignals) => {
   }
 
   const t3 = performance.now()
-  console.log(`⏱️ updateGeometry: ${shouldDeferGeometry ? '0.00 (deferred)' : (t3 - t2).toFixed(2)}ms`)
+  console.log(`⏱️ updateGeometry: ${shouldDeferGeometry ? '0.00 (deferred)' : (t3 - t2b).toFixed(2)}ms`)
 
   // Only auto-zoom if the signal set actually changed
   if (signalSetChanged) {
@@ -1246,6 +1255,10 @@ function autoZoomToSignals() {
 }
 
 function updateSelectionStyles() {
+  // Theme-aware selection colors
+  const isDark = themeStore.currentTheme === 'dark'
+  const selectionColor = isDark ? '#FFFFFF' : '#000000'
+
   // Update signal marker icons with selection state
   const iconSize = getMarkerSize()
   let updatedCount = 0
