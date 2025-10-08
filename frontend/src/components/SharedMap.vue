@@ -62,9 +62,17 @@ const { selectedSignalsList, selectedXdSegmentsList } = storeToRefs(selectionSto
 // Fixed marker size (no dynamic scaling on zoom)
 const MARKER_ICON_SIZE = 30 // Fixed size in pixels (width/height)
 
+// Zoom threshold for switching between circle and SVG icons
+const ZOOM_THRESHOLD = 13 // Switch to SVG icons at zoom level 13 and above
+
 // Get marker icon size (fixed, not zoom-dependent)
 function getMarkerSize() {
   return MARKER_ICON_SIZE
+}
+
+// Check if we should use SVG icons based on current zoom level
+function shouldUseSvgIcons() {
+  return map && map.getZoom() >= ZOOM_THRESHOLD
 }
 
 // Categorize values into green/yellow/red thresholds
@@ -82,10 +90,55 @@ function getCategoryFromValue(value, dataType) {
   }
 }
 
-// Generate SVG traffic signal icon as data URI (with caching)
+// Generate SVG circle icon as data URI (with caching) - used when zoomed out
+function createCircleIcon(category, isSelected, iconSize) {
+  // Check cache first
+  const cacheKey = `circle_${category}_${isSelected}_${iconSize}_${themeStore.currentTheme}`
+  const cached = svgIconCache.get(cacheKey)
+  if (cached) {
+    return cached
+  }
+
+  const isDark = themeStore.currentTheme === 'dark'
+  const selectionColor = isDark ? '#FFFFFF' : '#000000'
+
+  // Circle colors matching the traffic light colors
+  const fillColors = {
+    green: '#4caf50',
+    yellow: '#ffc107',
+    red: '#d32f2f'
+  }
+
+  const fillColor = fillColors[category] || fillColors.green
+  const radius = iconSize / 2
+  const selectionStrokeWidth = isSelected ? iconSize * 0.12 : 0
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 ${iconSize} ${iconSize}">
+      ${isSelected ? `
+        <!-- Selection border -->
+        <circle cx="${radius}" cy="${radius}" r="${radius - selectionStrokeWidth/2}"
+                fill="none" stroke="${selectionColor}" stroke-width="${selectionStrokeWidth}"/>
+      ` : ''}
+
+      <!-- Main circle -->
+      <circle cx="${radius}" cy="${radius}" r="${radius - (isSelected ? selectionStrokeWidth : iconSize * 0.08)}"
+              fill="${fillColor}" opacity="0.9"/>
+    </svg>
+  `.trim()
+
+  const dataUri = `data:image/svg+xml;base64,${btoa(svg)}`
+
+  // Cache the result
+  svgIconCache.set(cacheKey, dataUri)
+
+  return dataUri
+}
+
+// Generate SVG traffic signal icon as data URI (with caching) - used when zoomed in
 function createTrafficSignalIcon(category, isSelected, iconSize) {
   // Check cache first
-  const cacheKey = `${category}_${isSelected}_${iconSize}_${themeStore.currentTheme}`
+  const cacheKey = `signal_${category}_${isSelected}_${iconSize}_${themeStore.currentTheme}`
   const cached = svgIconCache.get(cacheKey)
   if (cached) {
     return cached
@@ -517,9 +570,14 @@ function initializeMap() {
   // Update marker sizes when zoom changes
   map.on('zoomend', () => {
     const timeSinceStart = zoomStartTime ? (performance.now() - zoomStartTime).toFixed(2) : 'unknown'
+    const currentZoom = map.getZoom()
+    const usingSvgIcons = currentZoom >= ZOOM_THRESHOLD
+
     console.log(`🔍 ZOOM LIFECYCLE: zoomend fired (${timeSinceStart}ms since zoomstart)`, {
-      newZoom: map.getZoom(),
-      markerCount: signalMarkers.size
+      newZoom: currentZoom,
+      markerCount: signalMarkers.size,
+      iconType: usingSvgIcons ? 'SVG traffic signals' : 'circles',
+      threshold: ZOOM_THRESHOLD
     })
 
     const zoomEndHandlerStart = performance.now()
@@ -947,27 +1005,32 @@ function pointInPolygon(point, polygon) {
 // Helper function to update a single marker icon only if state changed
 function updateMarkerIcon(signalId, marker, category, isSelected, iconSize, dataHash = null) {
   const currentState = markerStates.get(signalId)
+  const useSvg = shouldUseSvgIcons()
 
-  // Check if state actually changed (including data hash if provided)
+  // Check if state actually changed (including data hash and icon type)
   if (currentState &&
       currentState.category === category &&
       currentState.isSelected === isSelected &&
       currentState.iconSize === iconSize &&
+      currentState.useSvg === useSvg &&
       (dataHash === null || currentState.dataHash === dataHash)) {
     return false // No change needed
   }
 
   // State changed or new marker - update icon
   const iconStart = performance.now()
-  const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+  const iconUrl = useSvg
+    ? createTrafficSignalIcon(category, isSelected, iconSize)
+    : createCircleIcon(category, isSelected, iconSize)
   const iconGenTime = performance.now() - iconStart
 
   const divIconStart = performance.now()
+  const iconHeight = useSvg ? iconSize * 1.4 : iconSize
   const icon = L.divIcon({
-    html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
+    html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconHeight}px;">`,
     className: 'traffic-signal-icon',
-    iconSize: [iconSize, iconSize * 1.4],
-    iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
+    iconSize: [iconSize, iconHeight],
+    iconAnchor: [iconSize / 2, iconHeight / 2]
   })
   const divIconTime = performance.now() - divIconStart
 
@@ -984,7 +1047,7 @@ function updateMarkerIcon(signalId, marker, category, isSelected, iconSize, data
   }
 
   // Update tracked state
-  markerStates.set(signalId, { category, isSelected, iconSize, dataHash })
+  markerStates.set(signalId, { category, isSelected, iconSize, dataHash, useSvg })
 
   return true // Icon was updated
 }
@@ -1173,14 +1236,18 @@ function updateMarkers() {
           existingMarker.setTooltipContent(tooltipContent)
         }
       } else {
-        // Create new marker with traffic signal icon
+        // Create new marker with appropriate icon based on zoom level
         const iconSize = getMarkerSize()
-        const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+        const useSvg = shouldUseSvgIcons()
+        const iconUrl = useSvg
+          ? createTrafficSignalIcon(category, isSelected, iconSize)
+          : createCircleIcon(category, isSelected, iconSize)
+        const iconHeight = useSvg ? iconSize * 1.4 : iconSize
         const icon = L.divIcon({
-          html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
+          html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconHeight}px;">`,
           className: 'traffic-signal-icon',
-          iconSize: [iconSize, iconSize * 1.4],
-          iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
+          iconSize: [iconSize, iconHeight],
+          iconAnchor: [iconSize / 2, iconHeight / 2]
         })
 
         const marker = L.marker([signal.LATITUDE, signal.LONGITUDE], {
@@ -1329,14 +1396,18 @@ function updateMarkers() {
           existingMarker.setTooltipContent(tooltipContent)
         }
       } else {
-        // Create new marker with traffic signal icon
+        // Create new marker with appropriate icon based on zoom level
         const iconSize = getMarkerSize()
-        const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+        const useSvg = shouldUseSvgIcons()
+        const iconUrl = useSvg
+          ? createTrafficSignalIcon(category, isSelected, iconSize)
+          : createCircleIcon(category, isSelected, iconSize)
+        const iconHeight = useSvg ? iconSize * 1.4 : iconSize
         const icon = L.divIcon({
-          html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
+          html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconHeight}px;">`,
           className: 'traffic-signal-icon',
-          iconSize: [iconSize, iconSize * 1.4],
-          iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
+          iconSize: [iconSize, iconHeight],
+          iconAnchor: [iconSize / 2, iconHeight / 2]
         })
 
         const marker = L.marker([signal.LATITUDE, signal.LONGITUDE], {
