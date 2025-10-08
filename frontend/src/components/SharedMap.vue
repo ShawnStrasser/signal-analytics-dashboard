@@ -59,15 +59,35 @@ const themeStore = useThemeStore()
 const { featureCollection } = storeToRefs(geometryStore)
 const { selectedSignalsList, selectedXdSegmentsList } = storeToRefs(selectionStore)
 
-// Fixed marker size (no dynamic scaling on zoom)
-const MARKER_ICON_SIZE = 30 // Fixed size in pixels (width/height)
-
 // Signal count threshold for switching between circle and SVG icons
 const SIGNAL_COUNT_THRESHOLD = 200 // Switch to SVG icons when 200 or fewer signals are visible
 
-// Get marker icon size (fixed, not zoom-dependent)
-function getMarkerSize() {
-  return MARKER_ICON_SIZE
+// Marker sizes based on severity (for circles - larger = more important)
+const MARKER_SIZES = {
+  green: 20,   // Smaller, less important
+  yellow: 28,  // Medium
+  red: 36      // Largest, most important
+}
+
+// SVG icon base size (used when zoomed in)
+const SVG_ICON_SIZE = 30
+
+// Get marker icon size based on category and icon type
+function getMarkerSize(category, useSvg = false) {
+  if (useSvg) {
+    return SVG_ICON_SIZE // Fixed size for SVG traffic signals
+  }
+  return MARKER_SIZES[category] || MARKER_SIZES.green
+}
+
+// Get z-index offset based on category (higher severity = higher z-index)
+function getZIndexOffset(category) {
+  const zIndexOffsets = {
+    green: 0,
+    yellow: 100,
+    red: 200
+  }
+  return zIndexOffsets[category] || 0
 }
 
 // Check if we should use SVG icons based on number of signals visible in current viewport
@@ -89,16 +109,6 @@ function shouldUseSvgIcons() {
   })
 
   const useSvg = visibleCount <= SIGNAL_COUNT_THRESHOLD
-
-  console.log('🎨 shouldUseSvgIcons:', {
-    totalSignals: signalMarkers.size,
-    visibleInViewport: visibleCount,
-    threshold: SIGNAL_COUNT_THRESHOLD,
-    useSvg,
-    decision: useSvg ? 'SVG traffic signals' : 'circles',
-    currentZoom: map.getZoom()
-  })
-
   return useSvg
 }
 
@@ -136,7 +146,15 @@ function createCircleIcon(category, isSelected, iconSize) {
     red: '#d32f2f'
   }
 
+  // Opacity based on severity - less important signals are more transparent
+  const opacities = {
+    green: 0.5,   // Semi-transparent (fade into background)
+    yellow: 0.8,  // More visible
+    red: 1.0      // Fully opaque (most important)
+  }
+
   const fillColor = fillColors[category] || fillColors.green
+  const opacity = opacities[category] || opacities.green
   const radius = iconSize / 2
   const selectionStrokeWidth = isSelected ? iconSize * 0.12 : 0
 
@@ -150,7 +168,7 @@ function createCircleIcon(category, isSelected, iconSize) {
 
       <!-- Main circle -->
       <circle cx="${radius}" cy="${radius}" r="${radius - (isSelected ? selectionStrokeWidth : iconSize * 0.08)}"
-              fill="${fillColor}" opacity="0.9"/>
+              fill="${fillColor}" opacity="${opacity}"/>
     </svg>
   `.trim()
 
@@ -1030,9 +1048,10 @@ function pointInPolygon(point, polygon) {
 }
 
 // Helper function to update a single marker icon only if state changed
-function updateMarkerIcon(signalId, marker, category, isSelected, iconSize, dataHash = null) {
+function updateMarkerIcon(signalId, marker, category, isSelected, dataHash = null) {
   const currentState = markerStates.get(signalId)
   const useSvg = shouldUseSvgIcons()
+  const iconSize = getMarkerSize(category, useSvg)
 
   // Check if state actually changed (including data hash and icon type)
   if (currentState &&
@@ -1063,6 +1082,11 @@ function updateMarkerIcon(signalId, marker, category, isSelected, iconSize, data
 
   const setIconStart = performance.now()
   marker.setIcon(icon)
+
+  // Update z-index based on category (ensures red/yellow are always on top)
+  const zIndexOffset = getZIndexOffset(category)
+  marker.setZIndexOffset(zIndexOffset)
+
   const setIconTime = performance.now() - setIconStart
 
   if (setIconTime > 10) {
@@ -1149,7 +1173,7 @@ function updateMarkerSizes() {
 
     // Only update if state changed (including data values)
     const iconStart = performance.now()
-    if (updateMarkerIcon(signalId, marker, category, isSelected, iconSize, dataHash)) {
+    if (updateMarkerIcon(signalId, marker, category, isSelected, dataHash)) {
       updatedCount++
     }
     updateIconTime += (performance.now() - iconStart)
@@ -1246,8 +1270,7 @@ function updateMarkers() {
 
       if (existingMarker) {
         // Update existing marker icon only if state changed
-        const iconSize = getMarkerSize()
-        updateMarkerIcon(signal.ID, existingMarker, category, isSelected, iconSize)
+        updateMarkerIcon(signal.ID, existingMarker, category, isSelected)
 
         // Update tooltip content immediately so it reflects new data
         const tooltipContent = `
@@ -1263,9 +1286,9 @@ function updateMarkers() {
           existingMarker.setTooltipContent(tooltipContent)
         }
       } else {
-        // Create new marker with appropriate icon based on zoom level
-        const iconSize = getMarkerSize()
+        // Create new marker with appropriate icon based on viewport signal count
         const useSvg = shouldUseSvgIcons()
+        const iconSize = getMarkerSize(category, useSvg)
         const iconUrl = useSvg
           ? createTrafficSignalIcon(category, isSelected, iconSize)
           : createCircleIcon(category, isSelected, iconSize)
@@ -1277,9 +1300,11 @@ function updateMarkers() {
           iconAnchor: [iconSize / 2, iconHeight / 2]
         })
 
+        const zIndexOffset = getZIndexOffset(category)
         const marker = L.marker([signal.LATITUDE, signal.LONGITUDE], {
           icon: icon,
-          interactive: true
+          interactive: true,
+          zIndexOffset: zIndexOffset
         })
 
         const tooltipContent = `
@@ -1407,8 +1432,7 @@ function updateMarkers() {
 
       if (existingMarker) {
         // Update existing marker icon only if state changed
-        const iconSize = getMarkerSize()
-        updateMarkerIcon(signal.ID, existingMarker, category, isSelected, iconSize)
+        updateMarkerIcon(signal.ID, existingMarker, category, isSelected)
 
         // Update tooltip content immediately so it reflects new data
         const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
@@ -1423,9 +1447,9 @@ function updateMarkers() {
           existingMarker.setTooltipContent(tooltipContent)
         }
       } else {
-        // Create new marker with appropriate icon based on zoom level
-        const iconSize = getMarkerSize()
+        // Create new marker with appropriate icon based on viewport signal count
         const useSvg = shouldUseSvgIcons()
+        const iconSize = getMarkerSize(category, useSvg)
         const iconUrl = useSvg
           ? createTrafficSignalIcon(category, isSelected, iconSize)
           : createCircleIcon(category, isSelected, iconSize)
@@ -1437,9 +1461,11 @@ function updateMarkers() {
           iconAnchor: [iconSize / 2, iconHeight / 2]
         })
 
+        const zIndexOffset = getZIndexOffset(category)
         const marker = L.marker([signal.LATITUDE, signal.LONGITUDE], {
           icon: icon,
-          interactive: true
+          interactive: true,
+          zIndexOffset: zIndexOffset
         })
 
         const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
