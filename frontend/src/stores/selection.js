@@ -119,19 +119,29 @@ export const useSelectionStore = defineStore('selection', () => {
     selectedXdSegments.value.clear()
   }
 
+  function setXdSegmentSelection(xdSegments) {
+    // Set XD segments from an array (used by lasso selection)
+    selectedXdSegments.value.clear()
+    xdSegments.forEach(xd => selectedXdSegments.value.add(xd))
+  }
+
+  function clearXdSegmentSelection() {
+    selectedXdSegments.value.clear()
+  }
+
   return {
     // State
     selectedSignals,
     selectedXdSegments,
     signalToXdMap,
     xdToSignalsMap,
-    
+
     // Computed
     hasMapSelections,
     allSelectedXdSegments,
     selectedSignalsList,
     selectedXdSegmentsList,
-    
+
     // Actions
     updateMappings,
     toggleSignal,
@@ -141,6 +151,8 @@ export const useSelectionStore = defineStore('selection', () => {
     isXdSegmentDirectlySelected,
     getSignalsForXdSegment,
     getXdSegmentsForSignal,
-    clearAllSelections
+    clearAllSelections,
+    setXdSegmentSelection,
+    clearXdSegmentSelection
   }
 })

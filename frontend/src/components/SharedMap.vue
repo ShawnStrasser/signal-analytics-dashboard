@@ -6,6 +6,8 @@
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import L from 'leaflet'
+import 'leaflet-draw'
+import 'leaflet-draw/dist/leaflet.draw.css'
 import { useGeometryStore } from '@/stores/geometry'
 import { useMapStateStore } from '@/stores/mapState'
 import { useSelectionStore } from '@/stores/selection'
@@ -41,6 +43,8 @@ let geometryLayer = null
 let tileLayer = null // Reference to current tile layer for theme switching
 let layerControl = null // Reference to layer control for base map switching
 let previousDisplayedXDs = new Set() // Track previous filter state for selective updates
+let drawControl = null // Reference to draw control
+let drawnItems = null // Layer group for drawn items
 
 // SVG icon cache to avoid regenerating identical icons
 let svgIconCache = new Map() // Map "category_isSelected_iconSize" to data URI
@@ -438,6 +442,53 @@ function initializeMap() {
     })
   }).addTo(map)
 
+  // Initialize drawing controls for lasso selection
+  drawnItems = L.featureGroup().addTo(map)
+
+  drawControl = new L.Control.Draw({
+    draw: {
+      polygon: {
+        allowIntersection: false,
+        drawError: {
+          color: '#e1e100',
+          message: '<strong>Error:</strong> Shape edges cannot cross!'
+        },
+        shapeOptions: {
+          color: '#97009c',
+          weight: 2,
+          opacity: 0.8,
+          fillOpacity: 0.1
+        }
+      },
+      polyline: false,
+      rectangle: false,
+      circle: false,
+      marker: false,
+      circlemarker: false
+    },
+    edit: false // Disable edit mode completely for simplicity
+  })
+
+  map.addControl(drawControl)
+
+  // Handle polygon creation
+  map.on(L.Draw.Event.CREATED, (event) => {
+    const layer = event.layer
+
+    // Clear any existing polygon (only allow one at a time)
+    drawnItems.clearLayers()
+
+    // Temporarily add the polygon to get its geometry
+    drawnItems.addLayer(layer)
+
+    // Get the polygon bounds and select XD segments
+    const polygon = layer.toGeoJSON()
+    selectXdSegmentsInPolygon(polygon)
+
+    // Hide the polygon immediately after selection is made
+    drawnItems.clearLayers()
+  })
+
   // Save map state when user moves/zooms
   map.on('moveend', () => {
     const center = map.getCenter()
@@ -738,6 +789,159 @@ function createXdTooltip(xd, dataValue) {
       </div>
     `
   }
+}
+
+// Select XD segments and signals that intersect with a drawn polygon
+function selectXdSegmentsInPolygon(polygon) {
+  console.log('🎯 selectXdSegmentsInPolygon: START', {
+    polygonType: polygon.geometry.type,
+    xdLayersCount: xdLayers.size,
+    signalMarkersCount: signalMarkers.size
+  })
+
+  const displayedXDs = new Set(props.signals.map(signal => signal.XD))
+  const selectedXDs = []
+  const selectedSignalIds = []
+
+  // Check each XD layer to see if it intersects with the polygon
+  xdLayers.forEach((layer, xd) => {
+    // Only consider XD segments that are currently displayed (in filtered dataset)
+    if (!displayedXDs.has(xd)) return
+
+    // Get the GeoJSON of the XD layer
+    const xdGeoJSON = layer.toGeoJSON()
+
+    // Check if the XD geometry intersects with the polygon
+    if (geometriesIntersect(xdGeoJSON, polygon)) {
+      selectedXDs.push(xd)
+    }
+  })
+
+  // Check each signal marker to see if it's inside the polygon
+  signalMarkers.forEach((marker, signalId) => {
+    const latLng = marker.getLatLng()
+    if (pointInPolygon(latLng, polygon)) {
+      selectedSignalIds.push(signalId)
+    }
+  })
+
+  console.log('🎯 selectXdSegmentsInPolygon: COMPLETE', {
+    selectedXDsCount: selectedXDs.length,
+    selectedSignalsCount: selectedSignalIds.length,
+    selectedXDs,
+    selectedSignalIds
+  })
+
+  // Update selection store with selected XD segments and signals
+  if (selectedXDs.length > 0 || selectedSignalIds.length > 0) {
+    // Clear existing selections first
+    selectionStore.clearAllSelections()
+
+    // Add XD segments
+    if (selectedXDs.length > 0) {
+      selectionStore.setXdSegmentSelection(selectedXDs)
+    }
+
+    // Add signals (which will also add their associated XD segments)
+    selectedSignalIds.forEach(signalId => {
+      if (!selectionStore.isSignalSelected(signalId)) {
+        selectionStore.toggleSignal(signalId)
+      }
+    })
+
+    emit('selection-changed')
+  }
+}
+
+// Helper function to check if two GeoJSON geometries intersect
+function geometriesIntersect(geojson1, geojson2) {
+  // Simple bounding box intersection check first (fast)
+  const bounds1 = L.geoJSON(geojson1).getBounds()
+  const bounds2 = L.geoJSON(geojson2).getBounds()
+
+  if (!bounds1.intersects(bounds2)) {
+    return false
+  }
+
+  // More detailed check: see if any coordinates of geojson1 are inside geojson2
+  const polygon2Layer = L.geoJSON(geojson2)
+  const coords1 = extractCoordinates(geojson1)
+
+  // Check if any point from the XD segment is inside the polygon
+  for (const coord of coords1) {
+    const point = L.latLng(coord[1], coord[0])
+    let isInside = false
+
+    polygon2Layer.eachLayer(layer => {
+      if (layer.getBounds && layer.getBounds().contains(point)) {
+        // More precise point-in-polygon check
+        if (layer.toGeoJSON) {
+          const poly = layer.toGeoJSON()
+          if (pointInPolygon(point, poly)) {
+            isInside = true
+          }
+        }
+      }
+    })
+
+    if (isInside) return true
+  }
+
+  return false
+}
+
+// Extract all coordinates from a GeoJSON geometry
+function extractCoordinates(geojson) {
+  const coords = []
+
+  function traverse(geometry) {
+    if (!geometry) return
+
+    if (geometry.type === 'Point') {
+      coords.push(geometry.coordinates)
+    } else if (geometry.type === 'LineString') {
+      coords.push(...geometry.coordinates)
+    } else if (geometry.type === 'Polygon') {
+      geometry.coordinates.forEach(ring => coords.push(...ring))
+    } else if (geometry.type === 'MultiLineString') {
+      geometry.coordinates.forEach(line => coords.push(...line))
+    } else if (geometry.type === 'MultiPolygon') {
+      geometry.coordinates.forEach(polygon => {
+        polygon.forEach(ring => coords.push(...ring))
+      })
+    } else if (geometry.type === 'GeometryCollection') {
+      geometry.geometries.forEach(traverse)
+    } else if (geometry.type === 'Feature') {
+      traverse(geometry.geometry)
+    } else if (geometry.type === 'FeatureCollection') {
+      geometry.features.forEach(feature => traverse(feature.geometry))
+    }
+  }
+
+  traverse(geojson.geometry || geojson)
+  return coords
+}
+
+// Point-in-polygon test using ray casting algorithm
+function pointInPolygon(point, polygon) {
+  const coords = polygon.geometry.coordinates[0] // First ring (outer boundary)
+  const x = point.lng
+  const y = point.lat
+  let inside = false
+
+  for (let i = 0, j = coords.length - 1; i < coords.length; j = i++) {
+    const xi = coords[i][0]
+    const yi = coords[i][1]
+    const xj = coords[j][0]
+    const yj = coords[j][1]
+
+    const intersect = ((yi > y) !== (yj > y)) &&
+      (x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+
+    if (intersect) inside = !inside
+  }
+
+  return inside
 }
 
 // Helper function to update a single marker icon only if state changed
