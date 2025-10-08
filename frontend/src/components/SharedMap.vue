@@ -34,12 +34,19 @@ const emit = defineEmits(['selection-changed'])
 const mapContainer = ref(null)
 let map = null
 let signalMarkers = new Map() // Map signal ID to marker
+let markerStates = new Map() // Map signal ID to { category, isSelected, iconSize } for change detection
 let xdLayers = new Map() // Map XD to layer
 let markersLayer = null
 let geometryLayer = null
 let tileLayer = null // Reference to current tile layer for theme switching
 let layerControl = null // Reference to layer control for base map switching
 let previousDisplayedXDs = new Set() // Track previous filter state for selective updates
+
+// SVG icon cache to avoid regenerating identical icons
+let svgIconCache = new Map() // Map "category_isSelected_iconSize" to data URI
+
+// Debouncing for rapid updates
+let updateSelectionStylesScheduled = false
 
 const geometryStore = useGeometryStore()
 const mapStateStore = useMapStateStore()
@@ -76,8 +83,15 @@ function getCategoryFromValue(value, dataType) {
   }
 }
 
-// Generate SVG traffic signal icon as data URI
+// Generate SVG traffic signal icon as data URI (with caching)
 function createTrafficSignalIcon(category, isSelected, iconSize) {
+  // Check cache first
+  const cacheKey = `${category}_${isSelected}_${iconSize}_${themeStore.currentTheme}`
+  const cached = svgIconCache.get(cacheKey)
+  if (cached) {
+    return cached
+  }
+
   const isDark = themeStore.currentTheme === 'dark'
   const selectionColor = isDark ? '#FFFFFF' : '#000000'
 
@@ -153,7 +167,12 @@ function createTrafficSignalIcon(category, isSelected, iconSize) {
     </svg>
   `.trim()
 
-  return `data:image/svg+xml;base64,${btoa(svg)}`
+  const dataUri = `data:image/svg+xml;base64,${btoa(svg)}`
+
+  // Cache the result
+  svgIconCache.set(cacheKey, dataUri)
+
+  return dataUri
 }
 
 onMounted(() => {
@@ -219,13 +238,15 @@ onUnmounted(() => {
     const center = map.getCenter()
     const zoom = map.getZoom()
     mapStateStore.updateMapState([center.lat, center.lng], zoom)
-    
+
     map.remove()
     map = null
   }
   geometryLayer = null
   markersLayer = null
   signalMarkers.clear()
+  markerStates.clear()
+  svgIconCache.clear()
   xdLayers.clear()
 })
 
@@ -298,13 +319,25 @@ watch(featureCollection, () => {
   updateGeometry()
 }, { deep: true })
 
-// Watch for selection changes to update styling
+// Watch for selection changes to update styling (with debouncing)
 watch([selectedSignalsList, selectedXdSegmentsList], () => {
-  updateSelectionStyles()
+  // Debounce rapid selection changes using requestAnimationFrame
+  if (!updateSelectionStylesScheduled) {
+    updateSelectionStylesScheduled = true
+    requestAnimationFrame(() => {
+      updateSelectionStyles()
+      updateSelectionStylesScheduled = false
+    })
+  }
 }, { deep: true })
 
 // Watch for theme changes to update map tiles and selection styles
 watch(() => themeStore.currentTheme, () => {
+  // Clear SVG cache since theme affects icon rendering
+  svgIconCache.clear()
+  // Clear marker states to force regeneration with new theme
+  markerStates.clear()
+
   updateTileLayer()
   updateSelectionStyles()
 })
@@ -674,10 +707,40 @@ function createXdTooltip(xd, dataValue) {
   }
 }
 
+// Helper function to update a single marker icon only if state changed
+function updateMarkerIcon(signalId, marker, category, isSelected, iconSize) {
+  const currentState = markerStates.get(signalId)
+
+  // Check if state actually changed
+  if (currentState &&
+      currentState.category === category &&
+      currentState.isSelected === isSelected &&
+      currentState.iconSize === iconSize) {
+    return false // No change needed
+  }
+
+  // State changed or new marker - update icon
+  const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+  const icon = L.divIcon({
+    html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
+    className: 'traffic-signal-icon',
+    iconSize: [iconSize, iconSize * 1.4],
+    iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
+  })
+
+  marker.setIcon(icon)
+
+  // Update tracked state
+  markerStates.set(signalId, { category, isSelected, iconSize })
+
+  return true // Icon was updated
+}
+
 function updateMarkerSizes() {
   if (!map || !markersLayer) return
 
   const iconSize = getMarkerSize()
+  let updatedCount = 0
 
   signalMarkers.forEach((marker, signalId) => {
     const isSelected = selectionStore.isSignalSelected(signalId)
@@ -699,17 +762,15 @@ function updateMarkerSizes() {
       }
     }
 
-    // Recreate icon with new size
-    const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
-    const icon = L.divIcon({
-      html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
-      className: 'traffic-signal-icon',
-      iconSize: [iconSize, iconSize * 1.4],
-      iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
-    })
-
-    marker.setIcon(icon)
+    // Only update if state changed
+    if (updateMarkerIcon(signalId, marker, category, isSelected, iconSize)) {
+      updatedCount++
+    }
   })
+
+  if (DEBUG_FRONTEND_LOGGING && updatedCount > 0) {
+    console.log(`🔄 updateMarkerSizes: Updated ${updatedCount}/${signalMarkers.size} markers`)
+  }
 }
 
 function updateMarkers() {
@@ -718,6 +779,7 @@ function updateMarkers() {
   if (props.signals.length === 0) {
     markersLayer.clearLayers()
     signalMarkers.clear()
+    markerStates.clear() // Clean up state tracking
     return
   }
 
@@ -771,6 +833,7 @@ function updateMarkers() {
       if (marker) {
         markersLayer.removeLayer(marker)
         signalMarkers.delete(signalId)
+        markerStates.delete(signalId) // Clean up state tracking
       }
     })
 
@@ -788,16 +851,9 @@ function updateMarkers() {
       const existingMarker = signalMarkers.get(signal.ID)
 
       if (existingMarker) {
-        // Update existing marker icon
+        // Update existing marker icon only if state changed
         const iconSize = getMarkerSize()
-        const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
-        const icon = L.divIcon({
-          html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
-          className: 'traffic-signal-icon',
-          iconSize: [iconSize, iconSize * 1.4],
-          iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
-        })
-        existingMarker.setIcon(icon)
+        updateMarkerIcon(signal.ID, existingMarker, category, isSelected, iconSize)
 
         // Update tooltip
         const tooltipContent = `
@@ -910,6 +966,7 @@ function updateMarkers() {
       if (marker) {
         markersLayer.removeLayer(marker)
         signalMarkers.delete(signalId)
+        markerStates.delete(signalId) // Clean up state tracking
       }
     })
 
@@ -928,16 +985,9 @@ function updateMarkers() {
       const existingMarker = signalMarkers.get(signal.ID)
 
       if (existingMarker) {
-        // Update existing marker icon
+        // Update existing marker icon only if state changed
         const iconSize = getMarkerSize()
-        const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
-        const icon = L.divIcon({
-          html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
-          className: 'traffic-signal-icon',
-          iconSize: [iconSize, iconSize * 1.4],
-          iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
-        })
-        existingMarker.setIcon(icon)
+        updateMarkerIcon(signal.ID, existingMarker, category, isSelected, iconSize)
 
         // Update tooltip
         const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
@@ -1086,6 +1136,7 @@ function autoZoomToSignals() {
 function updateSelectionStyles() {
   // Update signal marker icons with selection state
   const iconSize = getMarkerSize()
+  let updatedCount = 0
 
   signalMarkers.forEach((marker, signalId) => {
     const isSelected = selectionStore.isSignalSelected(signalId)
@@ -1107,17 +1158,15 @@ function updateSelectionStyles() {
       }
     }
 
-    // Recreate icon with updated selection state
-    const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
-    const icon = L.divIcon({
-      html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
-      className: 'traffic-signal-icon',
-      iconSize: [iconSize, iconSize * 1.4],
-      iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
-    })
-
-    marker.setIcon(icon)
+    // Only update if state changed
+    if (updateMarkerIcon(signalId, marker, category, isSelected, iconSize)) {
+      updatedCount++
+    }
   })
+
+  if (DEBUG_FRONTEND_LOGGING && updatedCount > 0) {
+    console.log(`🔄 updateSelectionStyles: Updated ${updatedCount}/${signalMarkers.size} markers`)
+  }
 
   // Build set of XD values from currently displayed signals
   const displayedXDs = new Set(props.signals.map(signal => signal.XD))
