@@ -221,6 +221,9 @@ onMounted(() => {
     autoZoomToSignals()
     const t6 = performance.now()
     console.log(`🗺️ SharedMap: autoZoomToSignals took ${(t6 - t5).toFixed(2)}ms`)
+
+    // Initialize previousSignalIds to prevent auto-zoom on first data update
+    previousSignalIds = new Set(props.signals.map(s => s.ID))
   }
 
   const mountEnd = performance.now()
@@ -952,7 +955,19 @@ function updateMarkers() {
         const iconSize = getMarkerSize()
         updateMarkerIcon(signal.ID, existingMarker, category, isSelected, iconSize)
 
-        // Tooltip will be updated lazily on mouseover
+        // Update tooltip content immediately so it reflects new data
+        const tooltipContent = `
+          <div>
+            <h4>Signal ${signal.ID}</h4>
+            <p><strong>Anomaly Percentage:</strong> ${percentage.toFixed(1)}%</p>
+            <p><strong>Total Anomalies:</strong> ${signal.ANOMALY_COUNT || 0}</p>
+            <p><strong>Point Source:</strong> ${signal.POINT_SOURCE_COUNT || 0}</p>
+            <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
+          </div>
+        `
+        if (existingMarker.getTooltip()) {
+          existingMarker.setTooltipContent(tooltipContent)
+        }
       } else {
         // Create new marker with traffic signal icon
         const iconSize = getMarkerSize()
@@ -1097,7 +1112,18 @@ function updateMarkers() {
         const iconSize = getMarkerSize()
         updateMarkerIcon(signal.ID, existingMarker, category, isSelected, iconSize)
 
-        // Tooltip will be updated lazily on mouseover
+        // Update tooltip content immediately so it reflects new data
+        const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
+        const tooltipContent = `
+          <div>
+            <h4>Signal ${signal.ID}</h4>
+            <p><strong>Travel Time Index:</strong> ${ttiDisplay}</p>
+            <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
+          </div>
+        `
+        if (existingMarker.getTooltip()) {
+          existingMarker.setTooltipContent(tooltipContent)
+        }
       } else {
         // Create new marker with traffic signal icon
         const iconSize = getMarkerSize()
