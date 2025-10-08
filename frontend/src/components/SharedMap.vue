@@ -855,17 +855,7 @@ function updateMarkers() {
         const iconSize = getMarkerSize()
         updateMarkerIcon(signal.ID, existingMarker, category, isSelected, iconSize)
 
-        // Update tooltip
-        const tooltipContent = `
-          <div>
-            <h4>Signal ${signal.ID}</h4>
-            <p><strong>Anomaly Percentage:</strong> ${percentage.toFixed(1)}%</p>
-            <p><strong>Total Anomalies:</strong> ${signal.ANOMALY_COUNT || 0}</p>
-            <p><strong>Point Source:</strong> ${signal.POINT_SOURCE_COUNT || 0}</p>
-            <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
-          </div>
-        `
-        existingMarker.setTooltipContent(tooltipContent)
+        // Tooltip will be updated lazily on mouseover
       } else {
         // Create new marker with traffic signal icon
         const iconSize = getMarkerSize()
@@ -895,6 +885,27 @@ function updateMarkers() {
         marker.bindTooltip(tooltipContent, {
           direction: 'top',
           offset: [0, -10]
+        })
+
+        // Lazy tooltip update on mouseover
+        marker.on('mouseover', () => {
+          const currentSignal = props.signals.find(s => s.ID === signal.ID)
+          if (currentSignal) {
+            const currentCount = currentSignal[countColumn] || 0
+            const currentTotal = currentSignal.RECORD_COUNT || 0
+            const currentPercentage = currentTotal > 0 ? (currentCount / currentTotal) * 100 : 0
+
+            const updatedTooltip = `
+              <div>
+                <h4>Signal ${currentSignal.ID}</h4>
+                <p><strong>Anomaly Percentage:</strong> ${currentPercentage.toFixed(1)}%</p>
+                <p><strong>Total Anomalies:</strong> ${currentSignal.ANOMALY_COUNT || 0}</p>
+                <p><strong>Point Source:</strong> ${currentSignal.POINT_SOURCE_COUNT || 0}</p>
+                <p><strong>Approach:</strong> ${currentSignal.APPROACH ? 'Yes' : 'No'}</p>
+              </div>
+            `
+            marker.setTooltipContent(updatedTooltip)
+          }
         })
 
         marker.on('click', (e) => {
@@ -989,17 +1000,7 @@ function updateMarkers() {
         const iconSize = getMarkerSize()
         updateMarkerIcon(signal.ID, existingMarker, category, isSelected, iconSize)
 
-        // Update tooltip
-        const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
-
-        const tooltipContent = `
-          <div>
-            <h4>Signal ${signal.ID}</h4>
-            <p><strong>Travel Time Index:</strong> ${ttiDisplay}</p>
-            <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
-          </div>
-        `
-        existingMarker.setTooltipContent(tooltipContent)
+        // Tooltip will be updated lazily on mouseover
       } else {
         // Create new marker with traffic signal icon
         const iconSize = getMarkerSize()
@@ -1029,6 +1030,38 @@ function updateMarkers() {
         marker.bindTooltip(tooltipContent, {
           direction: 'top',
           offset: [0, -10]
+        })
+
+        // Lazy tooltip update on mouseover
+        marker.on('mouseover', () => {
+          // Recalculate aggregated TTI from current signal data
+          const currentGroup = {
+            TRAVEL_TIME_INDEX: 0,
+            ttiCount: 0,
+            APPROACH: signal.APPROACH
+          }
+
+          props.signals.forEach(s => {
+            if (s.ID === signal.ID) {
+              const tti = Number(s.TRAVEL_TIME_INDEX ?? 0) || 0
+              currentGroup.TRAVEL_TIME_INDEX += tti
+              currentGroup.ttiCount += 1
+            }
+          })
+
+          const currentAvgTTI = currentGroup.ttiCount > 0
+            ? currentGroup.TRAVEL_TIME_INDEX / currentGroup.ttiCount
+            : 0
+          const currentTtiDisplay = Number.isFinite(currentAvgTTI) ? currentAvgTTI.toFixed(2) : 'N/A'
+
+          const updatedTooltip = `
+            <div>
+              <h4>Signal ${signal.ID}</h4>
+              <p><strong>Travel Time Index:</strong> ${currentTtiDisplay}</p>
+              <p><strong>Approach:</strong> ${currentGroup.APPROACH ? 'Yes' : 'No'}</p>
+            </div>
+          `
+          marker.setTooltipContent(updatedTooltip)
         })
 
         marker.on('click', (e) => {
