@@ -443,7 +443,14 @@ function initializeMap() {
 
   // Update marker sizes when zoom changes
   map.on('zoomend', () => {
+    const zoomStart = performance.now()
+    console.log('🔍 ZOOM EVENT: zoomend fired', {
+      newZoom: map.getZoom(),
+      markerCount: signalMarkers.size
+    })
     updateMarkerSizes()
+    const zoomEnd = performance.now()
+    console.log(`🔍 ZOOM EVENT: Complete in ${(zoomEnd - zoomStart).toFixed(2)}ms`)
   })
 
   updateGeometry()
@@ -720,15 +727,30 @@ function updateMarkerIcon(signalId, marker, category, isSelected, iconSize) {
   }
 
   // State changed or new marker - update icon
+  const iconStart = performance.now()
   const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+  const iconGenTime = performance.now() - iconStart
+
+  const divIconStart = performance.now()
   const icon = L.divIcon({
     html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
     className: 'traffic-signal-icon',
     iconSize: [iconSize, iconSize * 1.4],
     iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
   })
+  const divIconTime = performance.now() - divIconStart
 
+  const setIconStart = performance.now()
   marker.setIcon(icon)
+  const setIconTime = performance.now() - setIconStart
+
+  if (setIconTime > 10) {
+    console.log(`⚠️ SLOW setIcon for signal ${signalId}: ${setIconTime.toFixed(2)}ms`, {
+      iconGenTime: iconGenTime.toFixed(2) + 'ms',
+      divIconTime: divIconTime.toFixed(2) + 'ms',
+      setIconTime: setIconTime.toFixed(2) + 'ms'
+    })
+  }
 
   // Update tracked state
   markerStates.set(signalId, { category, isSelected, iconSize })
@@ -737,18 +759,33 @@ function updateMarkerIcon(signalId, marker, category, isSelected, iconSize) {
 }
 
 function updateMarkerSizes() {
+  const perfStart = performance.now()
+  console.log('⚙️ updateMarkerSizes: START', {
+    markerCount: signalMarkers.size,
+    hasMap: !!map,
+    hasMarkersLayer: !!markersLayer
+  })
+
   if (!map || !markersLayer) return
 
   const iconSize = getMarkerSize()
+  console.log(`⚙️ updateMarkerSizes: iconSize = ${iconSize}`)
   let updatedCount = 0
+  let findSignalTime = 0
+  let getCategoryTime = 0
+  let updateIconTime = 0
 
   signalMarkers.forEach((marker, signalId) => {
+    const loopStart = performance.now()
     const isSelected = selectionStore.isSignalSelected(signalId)
 
     // Get current marker data to determine category
     let category = 'green' // Default
+    const findStart = performance.now()
     const signal = props.signals.find(s => s.ID === signalId)
+    findSignalTime += (performance.now() - findStart)
 
+    const categoryStart = performance.now()
     if (signal) {
       if (props.dataType === 'anomaly') {
         const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
@@ -761,16 +798,26 @@ function updateMarkerSizes() {
         category = getCategoryFromValue(tti, 'travel-time')
       }
     }
+    getCategoryTime += (performance.now() - categoryStart)
 
     // Only update if state changed
+    const iconStart = performance.now()
     if (updateMarkerIcon(signalId, marker, category, isSelected, iconSize)) {
       updatedCount++
     }
+    updateIconTime += (performance.now() - iconStart)
   })
 
-  if (DEBUG_FRONTEND_LOGGING && updatedCount > 0) {
-    console.log(`🔄 updateMarkerSizes: Updated ${updatedCount}/${signalMarkers.size} markers`)
-  }
+  const perfEnd = performance.now()
+  console.log(`⚙️ updateMarkerSizes: COMPLETE in ${(perfEnd - perfStart).toFixed(2)}ms`, {
+    totalMarkers: signalMarkers.size,
+    updatedCount,
+    breakdown: {
+      findSignalTime: findSignalTime.toFixed(2) + 'ms',
+      getCategoryTime: getCategoryTime.toFixed(2) + 'ms',
+      updateIconTime: updateIconTime.toFixed(2) + 'ms'
+    }
+  })
 }
 
 function updateMarkers() {
