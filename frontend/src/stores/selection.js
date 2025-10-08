@@ -15,18 +15,9 @@ export const useSelectionStore = defineStore('selection', () => {
 
   // Computed - get all XD segments that should be highlighted (from selected signals + directly selected)
   const allSelectedXdSegments = computed(() => {
-    const xdSet = new Set()
-    
-    // Add XD segments from selected signals
-    selectedSignals.value.forEach(signalId => {
-      const xdSegments = signalToXdMap.value.get(signalId) || []
-      xdSegments.forEach(xd => xdSet.add(xd))
-    })
-    
-    // Add directly selected XD segments
-    selectedXdSegments.value.forEach(xd => xdSet.add(xd))
-    
-    return xdSet
+    // Return only the XD segments in selectedXdSegments
+    // This set is managed by toggleSignal and toggleXdSegment
+    return new Set(selectedXdSegments.value)
   })
 
   // Computed - get array versions for easier iteration
@@ -68,11 +59,20 @@ export const useSelectionStore = defineStore('selection', () => {
 
   function toggleSignal(signalId) {
     if (selectedSignals.value.has(signalId)) {
-      // Deselecting a signal - toggle off all its XD segments
+      // Deselecting a signal - only remove XD segments that aren't part of other selected signals
       selectedSignals.value.delete(signalId)
       const xdSegments = signalToXdMap.value.get(signalId) || []
       xdSegments.forEach(xd => {
-        selectedXdSegments.value.delete(xd)
+        // Check if this XD segment belongs to any other selected signal
+        const associatedSignals = xdToSignalsMap.value.get(xd) || []
+        const isPartOfOtherSelectedSignal = associatedSignals.some(sigId =>
+          sigId !== signalId && selectedSignals.value.has(sigId)
+        )
+
+        // Only remove if it's not part of another selected signal
+        if (!isPartOfOtherSelectedSignal) {
+          selectedXdSegments.value.delete(xd)
+        }
       })
     } else {
       // Selecting a signal - toggle on all its XD segments

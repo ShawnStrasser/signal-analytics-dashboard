@@ -232,13 +232,15 @@ describe('Selection Store', () => {
       expect(Array.from(store.allSelectedXdSegments).sort()).toEqual([100, 200, 999])
     })
 
-    it('should not duplicate XD segments in combined selection', () => {
+    it('should deselect XD segment when toggled if already selected', () => {
       store.toggleSignal(1) // Adds XD 100, 200
-      store.toggleXdSegment(100) // XD 100 already in selection from signal
+      store.toggleXdSegment(100) // XD 100 already in selection from signal, so toggle removes it
 
-      // Should still only have 100 once
+      // XD 100 should now be deselected (toggle behavior)
       const allXds = Array.from(store.allSelectedXdSegments)
-      expect(allXds.filter(xd => xd === 100).length).toBe(1)
+      expect(allXds.includes(100)).toBe(false)
+      expect(allXds.includes(200)).toBe(true)
+      expect(store.allSelectedXdSegments.size).toBe(1)
     })
   })
 
