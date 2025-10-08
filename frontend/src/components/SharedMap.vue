@@ -70,11 +70,36 @@ function getMarkerSize() {
   return MARKER_ICON_SIZE
 }
 
-// Check if we should use SVG icons based on number of visible signals
+// Check if we should use SVG icons based on number of signals visible in current viewport
 function shouldUseSvgIcons() {
-  // Use SVG icons when we have 200 or fewer signals (less cluttered)
-  // Use circle icons when we have more than 200 signals (performance)
-  return signalMarkers.size <= SIGNAL_COUNT_THRESHOLD
+  if (!map) {
+    console.log('🎨 shouldUseSvgIcons: no map yet, defaulting to circles')
+    return false
+  }
+
+  // Count how many signals are currently visible in the map viewport
+  const bounds = map.getBounds()
+  let visibleCount = 0
+
+  signalMarkers.forEach((marker, signalId) => {
+    const latLng = marker.getLatLng()
+    if (bounds.contains(latLng)) {
+      visibleCount++
+    }
+  })
+
+  const useSvg = visibleCount <= SIGNAL_COUNT_THRESHOLD
+
+  console.log('🎨 shouldUseSvgIcons:', {
+    totalSignals: signalMarkers.size,
+    visibleInViewport: visibleCount,
+    threshold: SIGNAL_COUNT_THRESHOLD,
+    useSvg,
+    decision: useSvg ? 'SVG traffic signals' : 'circles',
+    currentZoom: map.getZoom()
+  })
+
+  return useSvg
 }
 
 // Categorize values into green/yellow/red thresholds
