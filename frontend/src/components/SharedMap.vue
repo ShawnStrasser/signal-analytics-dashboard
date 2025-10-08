@@ -412,7 +412,11 @@ function initializeMap() {
   map = L.map(mapContainer.value, {
     // Remove focus outline on click
     keyboard: false,
-    attributionControl: false
+    attributionControl: false,
+    // Disable zoom animation for better performance with many markers
+    zoomAnimation: false,
+    fadeAnimation: false,
+    markerZoomAnimation: false
   }).setView(savedCenter, savedZoom)
 
   // Add tile layer based on current theme
@@ -436,16 +440,38 @@ function initializeMap() {
     mapStateStore.updateMapState([center.lat, center.lng], zoom)
   })
 
+  // Track zoom lifecycle
+  let zoomStartTime = null
+
+  map.on('zoomstart', () => {
+    zoomStartTime = performance.now()
+    console.log('🔍 ZOOM LIFECYCLE: zoomstart', {
+      currentZoom: map.getZoom(),
+      markerCount: signalMarkers.size
+    })
+  })
+
+  map.on('zoom', () => {
+    const elapsed = zoomStartTime ? (performance.now() - zoomStartTime).toFixed(2) : 'unknown'
+    console.log(`🔍 ZOOM LIFECYCLE: zoom event (${elapsed}ms since start)`, {
+      currentZoom: map.getZoom()
+    })
+  })
+
   // Update marker sizes when zoom changes
   map.on('zoomend', () => {
-    const zoomStart = performance.now()
-    console.log('🔍 ZOOM EVENT: zoomend fired', {
+    const timeSinceStart = zoomStartTime ? (performance.now() - zoomStartTime).toFixed(2) : 'unknown'
+    console.log(`🔍 ZOOM LIFECYCLE: zoomend fired (${timeSinceStart}ms since zoomstart)`, {
       newZoom: map.getZoom(),
       markerCount: signalMarkers.size
     })
+
+    const zoomEndHandlerStart = performance.now()
     updateMarkerSizes()
-    const zoomEnd = performance.now()
-    console.log(`🔍 ZOOM EVENT: Complete in ${(zoomEnd - zoomStart).toFixed(2)}ms`)
+    const zoomEndHandlerTime = performance.now() - zoomEndHandlerStart
+
+    const totalTime = zoomStartTime ? (performance.now() - zoomStartTime).toFixed(2) : 'unknown'
+    console.log(`🔍 ZOOM LIFECYCLE: Complete - handler: ${zoomEndHandlerTime.toFixed(2)}ms, total: ${totalTime}ms`)
   })
 
   updateGeometry()
