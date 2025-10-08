@@ -1383,6 +1383,9 @@ defineExpose({
   border: none !important;
   margin: 0 !important;
   padding: 0 !important;
+  /* Center the icon on the point */
+  margin-left: -15px !important; /* Half of MARKER_ICON_SIZE (30px / 2) */
+  margin-top: -21px !important; /* Half of icon height (30px * 1.4 / 2) */
 }
 
 :deep(.traffic-signal-icon img) {
