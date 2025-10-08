@@ -55,17 +55,12 @@ const themeStore = useThemeStore()
 const { featureCollection } = storeToRefs(geometryStore)
 const { selectedSignalsList, selectedXdSegmentsList } = storeToRefs(selectionStore)
 
-// Dynamic marker size based on zoom level
-const BASE_ICON_SIZE = 30 // Base size in pixels (width/height)
-const REFERENCE_ZOOM = 12 // Zoom level where base size looks good
-const SIZE_SCALE_FACTOR = 2 // How much size grows per zoom level
+// Fixed marker size (no dynamic scaling on zoom)
+const MARKER_ICON_SIZE = 30 // Fixed size in pixels (width/height)
 
-// Calculate marker icon size based on current zoom
+// Get marker icon size (fixed, not zoom-dependent)
 function getMarkerSize() {
-  if (!map) return BASE_ICON_SIZE
-  const currentZoom = map.getZoom()
-  const zoomDelta = currentZoom - REFERENCE_ZOOM
-  return BASE_ICON_SIZE + (zoomDelta * SIZE_SCALE_FACTOR)
+  return MARKER_ICON_SIZE
 }
 
 // Categorize values into green/yellow/red thresholds
@@ -775,6 +770,15 @@ function updateMarkerSizes() {
   let getCategoryTime = 0
   let updateIconTime = 0
 
+  // BUILD LOOKUP MAP ONCE - O(n) instead of O(n²)
+  const mapBuildStart = performance.now()
+  const signalMap = new Map()
+  props.signals.forEach(signal => {
+    signalMap.set(signal.ID, signal)
+  })
+  const mapBuildTime = performance.now() - mapBuildStart
+  console.log(`⚙️ Built signal lookup map in ${mapBuildTime.toFixed(2)}ms for ${props.signals.length} signals`)
+
   signalMarkers.forEach((marker, signalId) => {
     const loopStart = performance.now()
     const isSelected = selectionStore.isSignalSelected(signalId)
@@ -782,7 +786,7 @@ function updateMarkerSizes() {
     // Get current marker data to determine category
     let category = 'green' // Default
     const findStart = performance.now()
-    const signal = props.signals.find(s => s.ID === signalId)
+    const signal = signalMap.get(signalId) // O(1) lookup instead of O(n) find
     findSignalTime += (performance.now() - findStart)
 
     const categoryStart = performance.now()
