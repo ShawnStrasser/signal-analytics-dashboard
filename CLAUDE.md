@@ -8,7 +8,15 @@ This is a full-stack traffic signal analytics dashboard that visualizes travel t
 
 ## Claude Code Workflow
 
-IMPORTANT! At start of new chat, commit all previous changes! Do this before making any modifications. Use a simple, concise commit message (one sentence or less) that briefly describes the changes. Do not include Claude Code signatures or co-authorship attributions. Do not commit .md files that are just developer notes or instructions. Continue to make commits during the conversation as needed, and use git to revert changes if needed.
+IMPORTANT! At start of new chat, commit all previous changes! Do this before making any modifications. Use a simple, concise commit message (one sentence or less) that briefly describes the changes. Do not include Claude Code signatures or co-authorship attributions. Do not commit .md files that are just developer notes or instructions. After completing changes then commit them as needed, and use git to revert changes if needed. After making frontend changes run the tests before commiting:
+```bash
+# Navigate to frontend directory and run tests
+cd "S:/Data_Analysis/Python/signal-analytics-dashboard/frontend" && npm test
+```
+
+**Test Files:**
+- `frontend/src/stores/__tests__/selection.test.js` - Tests for the selection store logic
+- `frontend/src/components/__tests__/SharedMap.test.js` - Tests for the SharedMap component
 
 Do not try to run the server or frontend and do not try to npm install anything. Instead, instruct the user when to run npm install or pip install. The user is already running the server and frontend.
 

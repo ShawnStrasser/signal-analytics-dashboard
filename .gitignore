@@ -213,7 +213,7 @@ frontend/dist/
 *.log
 .DS_Store
 
-test*
+#test*
 
 .claude/
 .vscode/

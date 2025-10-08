@@ -198,7 +198,9 @@ watch(() => [
   filtersStore.startDate,
   filtersStore.endDate,
   filtersStore.startHour,
+  filtersStore.startMinute,
   filtersStore.endHour,
+  filtersStore.endMinute,
   filtersStore.timeFilterEnabled,
   filtersStore.dayOfWeek
 ], async () => {
@@ -274,7 +276,12 @@ async function loadMapData() {
     if (isAllSignals) {
       const cached = mapDataCacheStore.getTravelTimeCache(
         filtersStore.startDate,
-        filtersStore.endDate
+        filtersStore.endDate,
+        filtersStore.startHour,
+        filtersStore.startMinute,
+        filtersStore.endHour,
+        filtersStore.endMinute,
+        filtersStore.dayOfWeek
       )
 
       if (cached) {
@@ -300,6 +307,11 @@ async function loadMapData() {
       mapDataCacheStore.setTravelTimeCache(
         filtersStore.startDate,
         filtersStore.endDate,
+        filtersStore.startHour,
+        filtersStore.startMinute,
+        filtersStore.endHour,
+        filtersStore.endMinute,
+        filtersStore.dayOfWeek,
         objects
       )
     }

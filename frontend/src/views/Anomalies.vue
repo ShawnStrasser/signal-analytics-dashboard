@@ -184,8 +184,11 @@ watch(() => [
   filtersStore.startDate,
   filtersStore.endDate,
   filtersStore.startHour,
+  filtersStore.startMinute,
   filtersStore.endHour,
-  filtersStore.timeFilterEnabled
+  filtersStore.endMinute,
+  filtersStore.timeFilterEnabled,
+  filtersStore.dayOfWeek
 ], async () => {
   if (loading.value) {
     console.log('⏸️ Already loading - skipping filter change')
@@ -248,7 +251,12 @@ async function loadMapData() {
       const cached = mapDataCacheStore.getAnomalyCache(
         filtersStore.startDate,
         filtersStore.endDate,
-        filtersStore.anomalyType
+        filtersStore.anomalyType,
+        filtersStore.startHour,
+        filtersStore.startMinute,
+        filtersStore.endHour,
+        filtersStore.endMinute,
+        filtersStore.dayOfWeek
       )
 
       if (cached) {
@@ -269,6 +277,11 @@ async function loadMapData() {
         filtersStore.startDate,
         filtersStore.endDate,
         filtersStore.anomalyType,
+        filtersStore.startHour,
+        filtersStore.startMinute,
+        filtersStore.endHour,
+        filtersStore.endMinute,
+        filtersStore.dayOfWeek,
         objects
       )
     }

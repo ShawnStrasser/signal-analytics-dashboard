@@ -44,3 +44,10 @@ The legend feature implementation uses `SELECT DISTINCT` in subqueries to handle
 
 ### Priority
 Medium - Current workarounds prevent critical failures, but may cause confusion in map visualizations and data integrity concerns.
+
+
+# OTHER ISSUES
+### Some XD segments show 0 for TTI
+
+
+### Snowflake connection expires and then the app fails, needs to reconnect automatically

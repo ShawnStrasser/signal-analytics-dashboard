@@ -8,7 +8,7 @@ Controls debugging, caching, and performance logging
 # =============================================================================
 
 # Enable/disable performance timing logs in backend
-DEBUG_BACKEND_TIMING = True
+DEBUG_BACKEND_TIMING = False
 
 # Enable/disable Snowflake query result caching
 # When False, adds ALTER SESSION SET USE_CACHED_RESULT = FALSE

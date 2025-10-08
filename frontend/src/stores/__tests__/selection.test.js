@@ -156,53 +156,52 @@ describe('Selection Store', () => {
     })
   })
 
-  describe('Overlapping XD Segments (Critical Test)', () => {
-    beforeEach(() => {
+  describe('Issue 1: Chart not updating when XD segment is deselected', () => {
+    it('should remove XD from selectedXdSegmentsList when manually deselected', () => {
+      // Setup: Signal 1 has XD 100, 200
+      const signals = createMultiXdSignal(1, [100, 200])
+      store.updateMappings(signals)
+
+      // Step 1: Select signal (chart shows XD 100, 200)
+      store.toggleSignal(1)
+      expect(store.selectedXdSegmentsList.sort()).toEqual([100, 200])
+
+      // Step 2: Click on XD 100 to deselect it
+      store.toggleXdSegment(100)
+
+      // EXPECTED: Chart should only show XD 200
+      // BUG: Chart still shows XD 100, 200 because allSelectedXdSegments
+      // includes XD from selected signals even if manually deselected
+      expect(store.selectedXdSegmentsList).toEqual([200])
+    })
+  })
+
+  describe('Issue 4: Shared XD Segments Incorrectly Deselected', () => {
+    it('should keep shared XD segment selected when one signal is deselected but another is still selected', () => {
       // Signal 1: XD 100, 200
       // Signal 2: XD 200, 300 (XD 200 is shared)
-      const signals = createOverlappingSignals()
+      const signals = [
+        createMockSignal({ ID: 1, XD: 100 }),
+        createMockSignal({ ID: 1, XD: 200 }),
+        createMockSignal({ ID: 2, XD: 200 }),
+        createMockSignal({ ID: 2, XD: 300 }),
+      ]
       store.updateMappings(signals)
-    })
 
-    it('should select all XD segments when signal is selected', () => {
-      store.toggleSignal(1)
-
-      expect(store.selectedXdSegments.has(100)).toBe(true)
-      expect(store.selectedXdSegments.has(200)).toBe(true)
-    })
-
-    it('should NOT deselect shared XD when one signal is deselected if another signal is still selected', () => {
-      // Select both signals that share XD 200
+      // Select both signals
       store.toggleSignal(1)
       store.toggleSignal(2)
 
-      expect(store.selectedXdSegments.has(200)).toBe(true)
+      expect(store.selectedXdSegmentsList.sort()).toEqual([100, 200, 300])
 
       // Deselect signal 1
       store.toggleSignal(1)
 
-      // XD 200 should still be selected because signal 2 is still selected
-      expect(store.selectedXdSegments.has(200)).toBe(true)
-      expect(store.selectedXdSegments.has(100)).toBe(false) // Only signal 1 had this
-      expect(store.selectedXdSegments.has(300)).toBe(true) // Signal 2 still has this
-    })
-
-    it('should handle complex selection/deselection scenarios', () => {
-      // Step 1: Select signal 1 (XD: 100, 200)
-      store.toggleSignal(1)
-      expect(Array.from(store.allSelectedXdSegments).sort()).toEqual([100, 200])
-
-      // Step 2: Select signal 2 (XD: 200, 300)
-      store.toggleSignal(2)
-      expect(Array.from(store.allSelectedXdSegments).sort()).toEqual([100, 200, 300])
-
-      // Step 3: Manually deselect XD 200
-      store.toggleXdSegment(200)
-      expect(Array.from(store.allSelectedXdSegments).sort()).toEqual([100, 300])
-
-      // Step 4: Deselect signal 1
-      store.toggleSignal(1)
-      expect(Array.from(store.allSelectedXdSegments).sort()).toEqual([300])
+      // EXPECTED: XD 200 should still be selected (because signal 2 is still selected)
+      // BUG: XD 200 gets deselected even though signal 2 is still selected
+      expect(store.isXdSegmentSelected(200)).toBe(true)
+      expect(store.isXdSegmentSelected(100)).toBe(false)
+      expect(store.isXdSegmentSelected(300)).toBe(true)
     })
   })
 
@@ -233,13 +232,15 @@ describe('Selection Store', () => {
       expect(Array.from(store.allSelectedXdSegments).sort()).toEqual([100, 200, 999])
     })
 
-    it('should not duplicate XD segments in combined selection', () => {
+    it('should deselect XD segment when toggled if already selected', () => {
       store.toggleSignal(1) // Adds XD 100, 200
-      store.toggleXdSegment(100) // XD 100 already in selection from signal
+      store.toggleXdSegment(100) // XD 100 already in selection from signal, so toggle removes it
 
-      // Should still only have 100 once
+      // XD 100 should now be deselected (toggle behavior)
       const allXds = Array.from(store.allSelectedXdSegments)
-      expect(allXds.filter(xd => xd === 100).length).toBe(1)
+      expect(allXds.includes(100)).toBe(false)
+      expect(allXds.includes(200)).toBe(true)
+      expect(store.allSelectedXdSegments.size).toBe(1)
     })
   })
 

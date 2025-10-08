@@ -6,6 +6,8 @@
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import L from 'leaflet'
+import 'leaflet-draw'
+import 'leaflet-draw/dist/leaflet.draw.css'
 import { useGeometryStore } from '@/stores/geometry'
 import { useMapStateStore } from '@/stores/mapState'
 import { useSelectionStore } from '@/stores/selection'
@@ -34,12 +36,21 @@ const emit = defineEmits(['selection-changed'])
 const mapContainer = ref(null)
 let map = null
 let signalMarkers = new Map() // Map signal ID to marker
+let markerStates = new Map() // Map signal ID to { category, isSelected, iconSize, dataHash } for change detection
 let xdLayers = new Map() // Map XD to layer
 let markersLayer = null
 let geometryLayer = null
 let tileLayer = null // Reference to current tile layer for theme switching
 let layerControl = null // Reference to layer control for base map switching
 let previousDisplayedXDs = new Set() // Track previous filter state for selective updates
+let drawControl = null // Reference to draw control
+let drawnItems = null // Layer group for drawn items
+
+// SVG icon cache to avoid regenerating identical icons
+let svgIconCache = new Map() // Map "category_isSelected_iconSize" to data URI
+
+// Debouncing for rapid updates
+let updateSelectionStylesScheduled = false
 
 const geometryStore = useGeometryStore()
 const mapStateStore = useMapStateStore()
@@ -48,17 +59,119 @@ const themeStore = useThemeStore()
 const { featureCollection } = storeToRefs(geometryStore)
 const { selectedSignalsList, selectedXdSegmentsList } = storeToRefs(selectionStore)
 
-// Dynamic marker radius based on zoom level
-const BASE_RADIUS_PIXELS = 15
-const REFERENCE_ZOOM = 12 // Zoom level where base radius looks good
-const RADIUS_SCALE_FACTOR = 1 // How much radius grows per zoom level
+// Fixed marker size (no dynamic scaling on zoom)
+const MARKER_ICON_SIZE = 30 // Fixed size in pixels (width/height)
 
-// Calculate marker radius based on current zoom
-function getMarkerRadius() {
-  if (!map) return BASE_RADIUS_PIXELS
-  const currentZoom = map.getZoom()
-  const zoomDelta = currentZoom - REFERENCE_ZOOM
-  return BASE_RADIUS_PIXELS + (zoomDelta * RADIUS_SCALE_FACTOR)
+// Get marker icon size (fixed, not zoom-dependent)
+function getMarkerSize() {
+  return MARKER_ICON_SIZE
+}
+
+// Categorize values into green/yellow/red thresholds
+function getCategoryFromValue(value, dataType) {
+  if (dataType === 'anomaly') {
+    // Anomaly percentage thresholds
+    if (value < 3.3) return 'green'
+    if (value < 6.7) return 'yellow'
+    return 'red'
+  } else {
+    // Travel Time Index thresholds
+    if (value < 1.5) return 'green'
+    if (value < 2.25) return 'yellow'
+    return 'red'
+  }
+}
+
+// Generate SVG traffic signal icon as data URI (with caching)
+function createTrafficSignalIcon(category, isSelected, iconSize) {
+  // Check cache first
+  const cacheKey = `${category}_${isSelected}_${iconSize}_${themeStore.currentTheme}`
+  const cached = svgIconCache.get(cacheKey)
+  if (cached) {
+    return cached
+  }
+
+  const isDark = themeStore.currentTheme === 'dark'
+  const selectionColor = isDark ? '#FFFFFF' : '#000000'
+
+  // Traffic light colors
+  const activeColors = {
+    green: '#4caf50',
+    yellow: '#ffc107',
+    red: '#d32f2f'
+  }
+
+  const inactiveColor = '#2a2a2a'
+  const backplateColor = '#ffc107' // Yellow backplate (reflectorized)
+
+  // Calculate sizes
+  const width = iconSize
+  const height = iconSize * 1.4 // Taller to fit 3 lights
+  const lightRadius = iconSize * 0.12
+  const backplateStroke = iconSize * 0.08
+  const selectionStroke = isSelected ? iconSize * 0.15 : 0
+
+  // Light positions (centered horizontally, stacked vertically)
+  const centerX = width / 2
+  const topY = height * 0.25
+  const middleY = height * 0.5
+  const bottomY = height * 0.75
+
+  // Determine which light is active
+  const redActive = category === 'red'
+  const yellowActive = category === 'yellow'
+  const greenActive = category === 'green'
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      ${isSelected ? `
+        <!-- Selection border -->
+        <rect x="${selectionStroke/2}" y="${selectionStroke/2}"
+              width="${width - selectionStroke}" height="${height - selectionStroke}"
+              rx="${iconSize * 0.15}"
+              fill="none" stroke="${selectionColor}" stroke-width="${selectionStroke}"/>
+      ` : ''}
+
+      <!-- Backplate (yellow outline) -->
+      <rect x="${iconSize * 0.15}" y="${iconSize * 0.1}"
+            width="${width - iconSize * 0.3}" height="${height - iconSize * 0.2}"
+            rx="${iconSize * 0.1}"
+            fill="#1a1a1a" stroke="${backplateColor}" stroke-width="${backplateStroke}"/>
+
+      <!-- Red light (top) -->
+      <circle cx="${centerX}" cy="${topY}" r="${lightRadius}"
+              fill="${redActive ? activeColors.red : inactiveColor}"
+              ${redActive ? `filter="url(#glow)"` : ''}/>
+
+      <!-- Yellow light (middle) -->
+      <circle cx="${centerX}" cy="${middleY}" r="${lightRadius}"
+              fill="${yellowActive ? activeColors.yellow : inactiveColor}"
+              ${yellowActive ? `filter="url(#glow)"` : ''}/>
+
+      <!-- Green light (bottom) -->
+      <circle cx="${centerX}" cy="${bottomY}" r="${lightRadius}"
+              fill="${greenActive ? activeColors.green : inactiveColor}"
+              ${greenActive ? `filter="url(#glow)"` : ''}/>
+
+      <!-- Glow effect definition -->
+      <defs>
+        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="${lightRadius * 0.3}" result="coloredBlur"/>
+          <feMerge>
+            <feMergeNode in="coloredBlur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+    </svg>
+  `.trim()
+
+  const dataUri = `data:image/svg+xml;base64,${btoa(svg)}`
+
+  // Cache the result
+  svgIconCache.set(cacheKey, dataUri)
+
+  return dataUri
 }
 
 onMounted(() => {
@@ -112,6 +225,9 @@ onMounted(() => {
     autoZoomToSignals()
     const t6 = performance.now()
     console.log(`🗺️ SharedMap: autoZoomToSignals took ${(t6 - t5).toFixed(2)}ms`)
+
+    // Initialize previousSignalIds to prevent auto-zoom on first data update
+    previousSignalIds = new Set(props.signals.map(s => s.ID))
   }
 
   const mountEnd = performance.now()
@@ -124,13 +240,15 @@ onUnmounted(() => {
     const center = map.getCenter()
     const zoom = map.getZoom()
     mapStateStore.updateMapState([center.lat, center.lng], zoom)
-    
+
     map.remove()
     map = null
   }
   geometryLayer = null
   markersLayer = null
   signalMarkers.clear()
+  markerStates.clear()
+  svgIconCache.clear()
   xdLayers.clear()
 })
 
@@ -203,13 +321,25 @@ watch(featureCollection, () => {
   updateGeometry()
 }, { deep: true })
 
-// Watch for selection changes to update styling
+// Watch for selection changes to update styling (with debouncing)
 watch([selectedSignalsList, selectedXdSegmentsList], () => {
-  updateSelectionStyles()
+  // Debounce rapid selection changes using requestAnimationFrame
+  if (!updateSelectionStylesScheduled) {
+    updateSelectionStylesScheduled = true
+    requestAnimationFrame(() => {
+      updateSelectionStyles()
+      updateSelectionStylesScheduled = false
+    })
+  }
 }, { deep: true })
 
 // Watch for theme changes to update map tiles and selection styles
 watch(() => themeStore.currentTheme, () => {
+  // Clear SVG cache since theme affects icon rendering
+  svgIconCache.clear()
+  // Clear marker states to force regeneration with new theme
+  markerStates.clear()
+
   updateTileLayer()
   updateSelectionStyles()
 })
@@ -289,7 +419,13 @@ function initializeMap() {
   map = L.map(mapContainer.value, {
     // Remove focus outline on click
     keyboard: false,
-    attributionControl: false
+    attributionControl: false,
+    // Enable smooth zoom but disable marker zoom animation specifically
+    zoomAnimation: true,
+    fadeAnimation: true,
+    markerZoomAnimation: false, // Keep this disabled - marker repositioning happens instantly
+    // Use preferCanvas for better performance with many features
+    preferCanvas: true
   }).setView(savedCenter, savedZoom)
 
   // Add tile layer based on current theme
@@ -306,6 +442,53 @@ function initializeMap() {
     })
   }).addTo(map)
 
+  // Initialize drawing controls for lasso selection
+  drawnItems = L.featureGroup().addTo(map)
+
+  drawControl = new L.Control.Draw({
+    draw: {
+      polygon: {
+        allowIntersection: false,
+        drawError: {
+          color: '#e1e100',
+          message: '<strong>Error:</strong> Shape edges cannot cross!'
+        },
+        shapeOptions: {
+          color: '#97009c',
+          weight: 2,
+          opacity: 0.8,
+          fillOpacity: 0.1
+        }
+      },
+      polyline: false,
+      rectangle: false,
+      circle: false,
+      marker: false,
+      circlemarker: false
+    },
+    edit: false // Disable edit mode completely for simplicity
+  })
+
+  map.addControl(drawControl)
+
+  // Handle polygon creation
+  map.on(L.Draw.Event.CREATED, (event) => {
+    const layer = event.layer
+
+    // Clear any existing polygon (only allow one at a time)
+    drawnItems.clearLayers()
+
+    // Temporarily add the polygon to get its geometry
+    drawnItems.addLayer(layer)
+
+    // Get the polygon bounds and select XD segments
+    const polygon = layer.toGeoJSON()
+    selectXdSegmentsInPolygon(polygon)
+
+    // Hide the polygon immediately after selection is made
+    drawnItems.clearLayers()
+  })
+
   // Save map state when user moves/zooms
   map.on('moveend', () => {
     const center = map.getCenter()
@@ -313,9 +496,38 @@ function initializeMap() {
     mapStateStore.updateMapState([center.lat, center.lng], zoom)
   })
 
+  // Track zoom lifecycle
+  let zoomStartTime = null
+
+  map.on('zoomstart', () => {
+    zoomStartTime = performance.now()
+    console.log('🔍 ZOOM LIFECYCLE: zoomstart', {
+      currentZoom: map.getZoom(),
+      markerCount: signalMarkers.size
+    })
+  })
+
+  map.on('zoom', () => {
+    const elapsed = zoomStartTime ? (performance.now() - zoomStartTime).toFixed(2) : 'unknown'
+    console.log(`🔍 ZOOM LIFECYCLE: zoom event (${elapsed}ms since start)`, {
+      currentZoom: map.getZoom()
+    })
+  })
+
   // Update marker sizes when zoom changes
   map.on('zoomend', () => {
+    const timeSinceStart = zoomStartTime ? (performance.now() - zoomStartTime).toFixed(2) : 'unknown'
+    console.log(`🔍 ZOOM LIFECYCLE: zoomend fired (${timeSinceStart}ms since zoomstart)`, {
+      newZoom: map.getZoom(),
+      markerCount: signalMarkers.size
+    })
+
+    const zoomEndHandlerStart = performance.now()
     updateMarkerSizes()
+    const zoomEndHandlerTime = performance.now() - zoomEndHandlerStart
+
+    const totalTime = zoomStartTime ? (performance.now() - zoomStartTime).toFixed(2) : 'unknown'
+    console.log(`🔍 ZOOM LIFECYCLE: Complete - handler: ${zoomEndHandlerTime.toFixed(2)}ms, total: ${totalTime}ms`)
   })
 
   updateGeometry()
@@ -579,13 +791,289 @@ function createXdTooltip(xd, dataValue) {
   }
 }
 
+// Select XD segments and signals that intersect with a drawn polygon
+function selectXdSegmentsInPolygon(polygon) {
+  console.log('🎯 selectXdSegmentsInPolygon: START', {
+    polygonType: polygon.geometry.type,
+    xdLayersCount: xdLayers.size,
+    signalMarkersCount: signalMarkers.size
+  })
+
+  const displayedXDs = new Set(props.signals.map(signal => signal.XD))
+  const selectedXDs = []
+  const selectedSignalIds = []
+
+  // Check each XD layer to see if it intersects with the polygon
+  xdLayers.forEach((layer, xd) => {
+    // Only consider XD segments that are currently displayed (in filtered dataset)
+    if (!displayedXDs.has(xd)) return
+
+    // Get the GeoJSON of the XD layer
+    const xdGeoJSON = layer.toGeoJSON()
+
+    // Check if the XD geometry intersects with the polygon
+    if (geometriesIntersect(xdGeoJSON, polygon)) {
+      selectedXDs.push(xd)
+    }
+  })
+
+  // Check each signal marker to see if it's inside the polygon
+  signalMarkers.forEach((marker, signalId) => {
+    const latLng = marker.getLatLng()
+    if (pointInPolygon(latLng, polygon)) {
+      selectedSignalIds.push(signalId)
+    }
+  })
+
+  console.log('🎯 selectXdSegmentsInPolygon: COMPLETE', {
+    selectedXDsCount: selectedXDs.length,
+    selectedSignalsCount: selectedSignalIds.length,
+    selectedXDs,
+    selectedSignalIds
+  })
+
+  // Update selection store with selected XD segments and signals
+  if (selectedXDs.length > 0 || selectedSignalIds.length > 0) {
+    // Clear existing selections first
+    selectionStore.clearAllSelections()
+
+    // Add XD segments
+    if (selectedXDs.length > 0) {
+      selectionStore.setXdSegmentSelection(selectedXDs)
+    }
+
+    // Add signals (which will also add their associated XD segments)
+    selectedSignalIds.forEach(signalId => {
+      if (!selectionStore.isSignalSelected(signalId)) {
+        selectionStore.toggleSignal(signalId)
+      }
+    })
+
+    emit('selection-changed')
+  }
+}
+
+// Helper function to check if two GeoJSON geometries intersect
+function geometriesIntersect(geojson1, geojson2) {
+  // Simple bounding box intersection check first (fast)
+  const bounds1 = L.geoJSON(geojson1).getBounds()
+  const bounds2 = L.geoJSON(geojson2).getBounds()
+
+  if (!bounds1.intersects(bounds2)) {
+    return false
+  }
+
+  // More detailed check: see if any coordinates of geojson1 are inside geojson2
+  const polygon2Layer = L.geoJSON(geojson2)
+  const coords1 = extractCoordinates(geojson1)
+
+  // Check if any point from the XD segment is inside the polygon
+  for (const coord of coords1) {
+    const point = L.latLng(coord[1], coord[0])
+    let isInside = false
+
+    polygon2Layer.eachLayer(layer => {
+      if (layer.getBounds && layer.getBounds().contains(point)) {
+        // More precise point-in-polygon check
+        if (layer.toGeoJSON) {
+          const poly = layer.toGeoJSON()
+          if (pointInPolygon(point, poly)) {
+            isInside = true
+          }
+        }
+      }
+    })
+
+    if (isInside) return true
+  }
+
+  return false
+}
+
+// Extract all coordinates from a GeoJSON geometry
+function extractCoordinates(geojson) {
+  const coords = []
+
+  function traverse(geometry) {
+    if (!geometry) return
+
+    if (geometry.type === 'Point') {
+      coords.push(geometry.coordinates)
+    } else if (geometry.type === 'LineString') {
+      coords.push(...geometry.coordinates)
+    } else if (geometry.type === 'Polygon') {
+      geometry.coordinates.forEach(ring => coords.push(...ring))
+    } else if (geometry.type === 'MultiLineString') {
+      geometry.coordinates.forEach(line => coords.push(...line))
+    } else if (geometry.type === 'MultiPolygon') {
+      geometry.coordinates.forEach(polygon => {
+        polygon.forEach(ring => coords.push(...ring))
+      })
+    } else if (geometry.type === 'GeometryCollection') {
+      geometry.geometries.forEach(traverse)
+    } else if (geometry.type === 'Feature') {
+      traverse(geometry.geometry)
+    } else if (geometry.type === 'FeatureCollection') {
+      geometry.features.forEach(feature => traverse(feature.geometry))
+    }
+  }
+
+  traverse(geojson.geometry || geojson)
+  return coords
+}
+
+// Point-in-polygon test using ray casting algorithm
+function pointInPolygon(point, polygon) {
+  const coords = polygon.geometry.coordinates[0] // First ring (outer boundary)
+  const x = point.lng
+  const y = point.lat
+  let inside = false
+
+  for (let i = 0, j = coords.length - 1; i < coords.length; j = i++) {
+    const xi = coords[i][0]
+    const yi = coords[i][1]
+    const xj = coords[j][0]
+    const yj = coords[j][1]
+
+    const intersect = ((yi > y) !== (yj > y)) &&
+      (x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+
+    if (intersect) inside = !inside
+  }
+
+  return inside
+}
+
+// Helper function to update a single marker icon only if state changed
+function updateMarkerIcon(signalId, marker, category, isSelected, iconSize, dataHash = null) {
+  const currentState = markerStates.get(signalId)
+
+  // Check if state actually changed (including data hash if provided)
+  if (currentState &&
+      currentState.category === category &&
+      currentState.isSelected === isSelected &&
+      currentState.iconSize === iconSize &&
+      (dataHash === null || currentState.dataHash === dataHash)) {
+    return false // No change needed
+  }
+
+  // State changed or new marker - update icon
+  const iconStart = performance.now()
+  const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+  const iconGenTime = performance.now() - iconStart
+
+  const divIconStart = performance.now()
+  const icon = L.divIcon({
+    html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
+    className: 'traffic-signal-icon',
+    iconSize: [iconSize, iconSize * 1.4],
+    iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
+  })
+  const divIconTime = performance.now() - divIconStart
+
+  const setIconStart = performance.now()
+  marker.setIcon(icon)
+  const setIconTime = performance.now() - setIconStart
+
+  if (setIconTime > 10) {
+    console.log(`⚠️ SLOW setIcon for signal ${signalId}: ${setIconTime.toFixed(2)}ms`, {
+      iconGenTime: iconGenTime.toFixed(2) + 'ms',
+      divIconTime: divIconTime.toFixed(2) + 'ms',
+      setIconTime: setIconTime.toFixed(2) + 'ms'
+    })
+  }
+
+  // Update tracked state
+  markerStates.set(signalId, { category, isSelected, iconSize, dataHash })
+
+  return true // Icon was updated
+}
+
 function updateMarkerSizes() {
+  const perfStart = performance.now()
+  console.log('⚙️ updateMarkerSizes: START', {
+    markerCount: signalMarkers.size,
+    hasMap: !!map,
+    hasMarkersLayer: !!markersLayer
+  })
+
   if (!map || !markersLayer) return
 
-  const newRadius = getMarkerRadius()
+  const iconSize = getMarkerSize()
+  console.log(`⚙️ updateMarkerSizes: iconSize = ${iconSize}`)
+  let updatedCount = 0
+  let findSignalTime = 0
+  let getCategoryTime = 0
+  let updateIconTime = 0
 
-  signalMarkers.forEach((marker) => {
-    marker.setRadius(newRadius)
+  // Build signal data map with aggregated values - O(n)
+  const mapBuildStart = performance.now()
+  const signalDataMap = new Map()
+  props.signals.forEach(signal => {
+    if (!signalDataMap.has(signal.ID)) {
+      signalDataMap.set(signal.ID, {
+        ANOMALY_COUNT: 0,
+        POINT_SOURCE_COUNT: 0,
+        TRAVEL_TIME_INDEX: 0,
+        RECORD_COUNT: 0,
+        ttiCount: 0
+      })
+    }
+    const data = signalDataMap.get(signal.ID)
+    data.ANOMALY_COUNT += (signal.ANOMALY_COUNT || 0)
+    data.POINT_SOURCE_COUNT += (signal.POINT_SOURCE_COUNT || 0)
+    data.TRAVEL_TIME_INDEX += (signal.TRAVEL_TIME_INDEX || 0)
+    data.RECORD_COUNT += (signal.RECORD_COUNT || 0)
+    data.ttiCount += 1
+  })
+  const mapBuildTime = performance.now() - mapBuildStart
+  console.log(`⚙️ Built signal data map in ${mapBuildTime.toFixed(2)}ms for ${props.signals.length} signals`)
+
+  signalMarkers.forEach((marker, signalId) => {
+    const loopStart = performance.now()
+    const isSelected = selectionStore.isSignalSelected(signalId)
+
+    // Get current marker data to determine category
+    let category = 'green' // Default
+    let dataHash = null
+    const findStart = performance.now()
+    const signalData = signalDataMap.get(signalId) // O(1) lookup
+    findSignalTime += (performance.now() - findStart)
+
+    const categoryStart = performance.now()
+    if (signalData) {
+      if (props.dataType === 'anomaly') {
+        const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
+        const count = signalData[countColumn] || 0
+        const totalRecords = signalData.RECORD_COUNT || 0
+        const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
+        category = getCategoryFromValue(percentage, 'anomaly')
+        dataHash = `${count}_${totalRecords}` // Simple hash for data values
+      } else {
+        const avgTTI = signalData.ttiCount > 0 ? signalData.TRAVEL_TIME_INDEX / signalData.ttiCount : 0
+        category = getCategoryFromValue(avgTTI, 'travel-time')
+        dataHash = `${signalData.TRAVEL_TIME_INDEX}_${signalData.ttiCount}` // Simple hash for data values
+      }
+    }
+    getCategoryTime += (performance.now() - categoryStart)
+
+    // Only update if state changed (including data values)
+    const iconStart = performance.now()
+    if (updateMarkerIcon(signalId, marker, category, isSelected, iconSize, dataHash)) {
+      updatedCount++
+    }
+    updateIconTime += (performance.now() - iconStart)
+  })
+
+  const perfEnd = performance.now()
+  console.log(`⚙️ updateMarkerSizes: COMPLETE in ${(perfEnd - perfStart).toFixed(2)}ms`, {
+    totalMarkers: signalMarkers.size,
+    updatedCount,
+    breakdown: {
+      findSignalTime: findSignalTime.toFixed(2) + 'ms',
+      getCategoryTime: getCategoryTime.toFixed(2) + 'ms',
+      updateIconTime: updateIconTime.toFixed(2) + 'ms'
+    }
   })
 }
 
@@ -595,6 +1083,7 @@ function updateMarkers() {
   if (props.signals.length === 0) {
     markersLayer.clearLayers()
     signalMarkers.clear()
+    markerStates.clear() // Clean up state tracking
     return
   }
 
@@ -648,6 +1137,7 @@ function updateMarkers() {
       if (marker) {
         markersLayer.removeLayer(marker)
         signalMarkers.delete(signalId)
+        markerStates.delete(signalId) // Clean up state tracking
       }
     })
 
@@ -659,22 +1149,17 @@ function updateMarkers() {
       const totalRecords = signal.RECORD_COUNT || 0
       const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
 
-      const color = anomalyColorScale(percentage)
+      const category = getCategoryFromValue(percentage, 'anomaly')
       const isSelected = selectionStore.isSignalSelected(signal.ID)
 
       const existingMarker = signalMarkers.get(signal.ID)
 
       if (existingMarker) {
-        // Update existing marker style
-        existingMarker.setStyle({
-          fillColor: color,
-          color: isSelected ? '#000000' : '#FFFFFF',
-          weight: isSelected ? 3 : 1,
-          opacity: isSelected ? 1 : 0.5,
-          fillOpacity: 0.8
-        })
+        // Update existing marker icon only if state changed
+        const iconSize = getMarkerSize()
+        updateMarkerIcon(signal.ID, existingMarker, category, isSelected, iconSize)
 
-        // Update tooltip
+        // Update tooltip content immediately so it reflects new data
         const tooltipContent = `
           <div>
             <h4>Signal ${signal.ID}</h4>
@@ -684,18 +1169,23 @@ function updateMarkers() {
             <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
           </div>
         `
-        existingMarker.setTooltipContent(tooltipContent)
+        if (existingMarker.getTooltip()) {
+          existingMarker.setTooltipContent(tooltipContent)
+        }
       } else {
-        // Create new marker
-        const marker = L.circleMarker([signal.LATITUDE, signal.LONGITUDE], {
-          radius: getMarkerRadius(),
-          fillColor: color,
-          color: isSelected ? '#000000' : '#FFFFFF',
-          weight: isSelected ? 3 : 1,
-          opacity: isSelected ? 1 : 0.5,
-          fillOpacity: 0.8,
-          interactive: true,
-          bubblingMouseEvents: false
+        // Create new marker with traffic signal icon
+        const iconSize = getMarkerSize()
+        const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+        const icon = L.divIcon({
+          html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
+          className: 'traffic-signal-icon',
+          iconSize: [iconSize, iconSize * 1.4],
+          iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
+        })
+
+        const marker = L.marker([signal.LATITUDE, signal.LONGITUDE], {
+          icon: icon,
+          interactive: true
         })
 
         const tooltipContent = `
@@ -711,6 +1201,27 @@ function updateMarkers() {
         marker.bindTooltip(tooltipContent, {
           direction: 'top',
           offset: [0, -10]
+        })
+
+        // Lazy tooltip update on mouseover
+        marker.on('mouseover', () => {
+          const currentSignal = props.signals.find(s => s.ID === signal.ID)
+          if (currentSignal) {
+            const currentCount = currentSignal[countColumn] || 0
+            const currentTotal = currentSignal.RECORD_COUNT || 0
+            const currentPercentage = currentTotal > 0 ? (currentCount / currentTotal) * 100 : 0
+
+            const updatedTooltip = `
+              <div>
+                <h4>Signal ${currentSignal.ID}</h4>
+                <p><strong>Anomaly Percentage:</strong> ${currentPercentage.toFixed(1)}%</p>
+                <p><strong>Total Anomalies:</strong> ${currentSignal.ANOMALY_COUNT || 0}</p>
+                <p><strong>Point Source:</strong> ${currentSignal.POINT_SOURCE_COUNT || 0}</p>
+                <p><strong>Approach:</strong> ${currentSignal.APPROACH ? 'Yes' : 'No'}</p>
+              </div>
+            `
+            marker.setTooltipContent(updatedTooltip)
+          }
         })
 
         marker.on('click', (e) => {
@@ -782,6 +1293,7 @@ function updateMarkers() {
       if (marker) {
         markersLayer.removeLayer(marker)
         signalMarkers.delete(signalId)
+        markerStates.delete(signalId) // Clean up state tracking
       }
     })
 
@@ -794,24 +1306,18 @@ function updateMarkers() {
         ? signal.TRAVEL_TIME_INDEX / signal.ttiCount
         : 0
 
-      const color = travelTimeColorScale(avgTTI)
+      const category = getCategoryFromValue(avgTTI, 'travel-time')
       const isSelected = selectionStore.isSignalSelected(signal.ID)
 
       const existingMarker = signalMarkers.get(signal.ID)
 
       if (existingMarker) {
-        // Update existing marker style
-        existingMarker.setStyle({
-          fillColor: color,
-          color: isSelected ? '#000000' : '#FFFFFF',
-          weight: isSelected ? 3 : 1,
-          opacity: isSelected ? 1 : 0.5,
-          fillOpacity: 0.8
-        })
+        // Update existing marker icon only if state changed
+        const iconSize = getMarkerSize()
+        updateMarkerIcon(signal.ID, existingMarker, category, isSelected, iconSize)
 
-        // Update tooltip
+        // Update tooltip content immediately so it reflects new data
         const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
-
         const tooltipContent = `
           <div>
             <h4>Signal ${signal.ID}</h4>
@@ -819,18 +1325,23 @@ function updateMarkers() {
             <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
           </div>
         `
-        existingMarker.setTooltipContent(tooltipContent)
+        if (existingMarker.getTooltip()) {
+          existingMarker.setTooltipContent(tooltipContent)
+        }
       } else {
-        // Create new marker
-        const marker = L.circleMarker([signal.LATITUDE, signal.LONGITUDE], {
-          radius: getMarkerRadius(),
-          fillColor: color,
-          color: isSelected ? '#000000' : '#FFFFFF',
-          weight: isSelected ? 3 : 1,
-          opacity: isSelected ? 1 : 0.5,
-          fillOpacity: 0.8,
-          interactive: true,
-          bubblingMouseEvents: false
+        // Create new marker with traffic signal icon
+        const iconSize = getMarkerSize()
+        const iconUrl = createTrafficSignalIcon(category, isSelected, iconSize)
+        const icon = L.divIcon({
+          html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconSize * 1.4}px;">`,
+          className: 'traffic-signal-icon',
+          iconSize: [iconSize, iconSize * 1.4],
+          iconAnchor: [iconSize / 2, iconSize * 1.4 / 2]
+        })
+
+        const marker = L.marker([signal.LATITUDE, signal.LONGITUDE], {
+          icon: icon,
+          interactive: true
         })
 
         const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
@@ -846,6 +1357,38 @@ function updateMarkers() {
         marker.bindTooltip(tooltipContent, {
           direction: 'top',
           offset: [0, -10]
+        })
+
+        // Lazy tooltip update on mouseover
+        marker.on('mouseover', () => {
+          // Recalculate aggregated TTI from current signal data
+          const currentGroup = {
+            TRAVEL_TIME_INDEX: 0,
+            ttiCount: 0,
+            APPROACH: signal.APPROACH
+          }
+
+          props.signals.forEach(s => {
+            if (s.ID === signal.ID) {
+              const tti = Number(s.TRAVEL_TIME_INDEX ?? 0) || 0
+              currentGroup.TRAVEL_TIME_INDEX += tti
+              currentGroup.ttiCount += 1
+            }
+          })
+
+          const currentAvgTTI = currentGroup.ttiCount > 0
+            ? currentGroup.TRAVEL_TIME_INDEX / currentGroup.ttiCount
+            : 0
+          const currentTtiDisplay = Number.isFinite(currentAvgTTI) ? currentAvgTTI.toFixed(2) : 'N/A'
+
+          const updatedTooltip = `
+            <div>
+              <h4>Signal ${signal.ID}</h4>
+              <p><strong>Travel Time Index:</strong> ${currentTtiDisplay}</p>
+              <p><strong>Approach:</strong> ${currentGroup.APPROACH ? 'Yes' : 'No'}</p>
+            </div>
+          `
+          marker.setTooltipContent(updatedTooltip)
         })
 
         marker.on('click', (e) => {
@@ -954,19 +1497,60 @@ function updateSelectionStyles() {
   // Theme-aware selection colors
   const isDark = themeStore.currentTheme === 'dark'
   const selectionColor = isDark ? '#FFFFFF' : '#000000'
-  const unselectedMarkerColor = isDark ? '#CCCCCC' : '#FFFFFF'
 
-  // Update signal marker styles
+  // Update signal marker icons with selection state
+  const iconSize = getMarkerSize()
+  let updatedCount = 0
+
+  // Build signal map with aggregated data (since signals may have multiple XD segments)
+  const signalDataMap = new Map()
+  props.signals.forEach(signal => {
+    if (!signalDataMap.has(signal.ID)) {
+      signalDataMap.set(signal.ID, {
+        ANOMALY_COUNT: 0,
+        POINT_SOURCE_COUNT: 0,
+        TRAVEL_TIME_INDEX: 0,
+        RECORD_COUNT: 0,
+        ttiCount: 0
+      })
+    }
+    const data = signalDataMap.get(signal.ID)
+    data.ANOMALY_COUNT += (signal.ANOMALY_COUNT || 0)
+    data.POINT_SOURCE_COUNT += (signal.POINT_SOURCE_COUNT || 0)
+    data.TRAVEL_TIME_INDEX += (signal.TRAVEL_TIME_INDEX || 0)
+    data.RECORD_COUNT += (signal.RECORD_COUNT || 0)
+    data.ttiCount += 1
+  })
+
   signalMarkers.forEach((marker, signalId) => {
     const isSelected = selectionStore.isSignalSelected(signalId)
-    const currentOptions = marker.options
 
-    marker.setStyle({
-      color: isSelected ? selectionColor : unselectedMarkerColor,
-      weight: isSelected ? 3 : 1,
-      opacity: isSelected ? 1 : 0.5
-    })
+    // Get current marker data to determine category
+    let category = 'green' // Default
+    const signalData = signalDataMap.get(signalId)
+
+    if (signalData) {
+      if (props.dataType === 'anomaly') {
+        const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
+        const count = signalData[countColumn] || 0
+        const totalRecords = signalData.RECORD_COUNT || 0
+        const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
+        category = getCategoryFromValue(percentage, 'anomaly')
+      } else {
+        const avgTTI = signalData.ttiCount > 0 ? signalData.TRAVEL_TIME_INDEX / signalData.ttiCount : 0
+        category = getCategoryFromValue(avgTTI, 'travel-time')
+      }
+    }
+
+    // Only update if state changed
+    if (updateMarkerIcon(signalId, marker, category, isSelected, iconSize)) {
+      updatedCount++
+    }
   })
+
+  if (DEBUG_FRONTEND_LOGGING && updatedCount > 0) {
+    console.log(`🔄 updateSelectionStyles: Updated ${updatedCount}/${signalMarkers.size} markers`)
+  }
 
   // Build set of XD values from currently displayed signals
   const displayedXDs = new Set(props.signals.map(signal => signal.XD))
@@ -1063,5 +1647,21 @@ defineExpose({
 
 :deep(path:focus) {
   outline: none !important;
+}
+
+/* Custom traffic signal icon styling */
+:deep(.traffic-signal-icon) {
+  background: none !important;
+  border: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  /* Center the icon on the point */
+  margin-left: -15px !important; /* Half of MARKER_ICON_SIZE (30px / 2) */
+  margin-top: -21px !important; /* Half of icon height (30px * 1.4 / 2) */
+}
+
+:deep(.traffic-signal-icon img) {
+  display: block;
+  pointer-events: none;
 }
 </style>

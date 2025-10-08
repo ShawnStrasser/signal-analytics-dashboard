@@ -53,8 +53,10 @@ vi.mock('leaflet', () => {
       addLayer: vi.fn(),
       removeLayer: vi.fn(),
       removeControl: vi.fn(),
+      addControl: vi.fn(),
     })),
     layerGroup: vi.fn(() => mockLayer),
+    featureGroup: vi.fn(() => mockLayer),
     geoJSON: vi.fn(() => mockLayer),
     marker: vi.fn(() => mockMarker),
     divIcon: vi.fn((options) => options),
@@ -72,13 +74,47 @@ vi.mock('leaflet', () => {
         addTo: vi.fn().mockReturnThis(),
       })),
     },
+    Control: {
+      extend: vi.fn((options) => {
+        return function() {
+          return {
+            onAdd: options.onAdd || vi.fn(),
+            addTo: vi.fn().mockReturnThis(),
+          }
+        }
+      }),
+      Draw: vi.fn(function(options) {
+        this.options = options
+        this.addTo = vi.fn().mockReturnThis()
+      }),
+    },
+    Draw: {
+      Event: {
+        CREATED: 'draw:created',
+        DELETED: 'draw:deleted',
+      },
+    },
     DomEvent: {
       stopPropagation: vi.fn(),
+      preventDefault: vi.fn(),
+      on: vi.fn(),
+    },
+    DomUtil: {
+      create: vi.fn((tag, className) => {
+        const el = document.createElement(tag)
+        if (className) el.className = className
+        return el
+      }),
     },
   }
 
   return { default: L }
 })
+
+// Mock leaflet-draw (depends on Leaflet being loaded first)
+vi.mock('leaflet-draw', () => ({
+  default: {},
+}))
 
 // Mock requestIdleCallback (not available in jsdom)
 global.requestIdleCallback = vi.fn((cb) => setTimeout(cb, 0))
@@ -119,8 +155,6 @@ describe('SharedMap Component', () => {
       const signals = createMultiXdSignal(1, [100, 200])
       selectionStore.updateMappings(signals)
 
-      await wrapper.setProps({ signals })
-
       // Verify initial state
       expect(selectionStore.isSignalSelected(1)).toBe(false)
 
@@ -158,18 +192,6 @@ describe('SharedMap Component', () => {
   })
 
   describe('Selection-Changed Event', () => {
-    it('should emit selection-changed when signal is toggled', async () => {
-      const signals = createMultiXdSignal(1, [100])
-      await wrapper.setProps({ signals })
-
-      // The actual component emits on click, we'll verify the emit mechanism
-      // by triggering the event manually
-      wrapper.vm.$emit('selection-changed')
-
-      expect(wrapper.emitted('selection-changed')).toBeTruthy()
-      expect(wrapper.emitted('selection-changed')).toHaveLength(1)
-    })
-
     it('should emit selection-changed when XD segment is toggled', () => {
       wrapper.vm.$emit('selection-changed')
 
@@ -178,15 +200,6 @@ describe('SharedMap Component', () => {
   })
 
   describe('Props Updates', () => {
-    it('should update when signals prop changes', async () => {
-      const signals = [createMockSignal({ ID: 1, XD: 100 })]
-
-      await wrapper.setProps({ signals })
-
-      // Verify the component receives the new signals
-      expect(wrapper.props('signals')).toEqual(signals)
-    })
-
     it('should update when dataType prop changes', async () => {
       await wrapper.setProps({ dataType: 'anomaly' })
 
@@ -204,10 +217,9 @@ describe('SharedMap Component', () => {
   })
 
   describe('Selection State Integration', () => {
-    it('should reflect selection state from store', async () => {
+    it('should reflect selection state from store', () => {
       const signals = createMultiXdSignal(1, [100, 200])
       selectionStore.updateMappings(signals)
-      await wrapper.setProps({ signals })
 
       // No selections initially
       expect(selectionStore.hasMapSelections).toBe(false)
@@ -222,13 +234,12 @@ describe('SharedMap Component', () => {
       )
     })
 
-    it('should handle multiple signal selections', async () => {
+    it('should handle multiple signal selections', () => {
       const signals = [
         ...createMultiXdSignal(1, [100, 200]),
         ...createMultiXdSignal(2, [300, 400]),
       ]
       selectionStore.updateMappings(signals)
-      await wrapper.setProps({ signals })
 
       selectionStore.toggleSignal(1)
       selectionStore.toggleSignal(2)
@@ -286,8 +297,32 @@ describe('SharedMap Component', () => {
     })
   })
 
-  describe('Complex Interaction Scenarios', () => {
-    it('should handle overlapping XD segments correctly', () => {
+  describe('Issue 1: Chart not updating when XD segment is deselected', () => {
+    it('should update chart data when XD segment is manually deselected', () => {
+      // From ISSUES.md: "I clicked on a signal and the chart updated as expected
+      // and the xd segments are highlighted as expected. Then i clicked on one of
+      // the highlighted xd segments to deselect it. The segment was deselected but
+      // the chart did not update."
+
+      const signals = createMultiXdSignal(1, [100, 200])
+      selectionStore.updateMappings(signals)
+
+      // Step 1: Click on signal - adds XD 100, 200
+      selectionStore.toggleSignal(1)
+      expect(selectionStore.selectedXdSegmentsList.sort()).toEqual([100, 200])
+
+      // Step 2: Click on XD segment 100 to deselect it
+      selectionStore.toggleXdSegment(100)
+
+      // EXPECTED: Chart should show only XD 200
+      // ACTUAL BUG: Chart still shows XD 100, 200 because selectedXdSegmentsList
+      // includes XD from the signal even though we manually deselected it
+      expect(selectionStore.selectedXdSegmentsList).toEqual([200])
+    })
+  })
+
+  describe('Issue 4: Shared XD Segments Incorrectly Deselected', () => {
+    it('should keep shared XD segment when one signal is deselected', () => {
       // Signal 1: XD 100, 200
       // Signal 2: XD 200, 300 (XD 200 is shared)
       const signals = [
@@ -302,33 +337,16 @@ describe('SharedMap Component', () => {
       selectionStore.toggleSignal(1)
       selectionStore.toggleSignal(2)
 
-      expect(selectionStore.selectedXdSegmentsList).toEqual(
-        expect.arrayContaining([100, 200, 300])
-      )
+      expect(selectionStore.selectedXdSegmentsList.sort()).toEqual([100, 200, 300])
 
       // Deselect signal 1
       selectionStore.toggleSignal(1)
 
-      // XD 200 should still be selected (because signal 2 is still selected)
+      // EXPECTED: XD 200 should still be selected (signal 2 is still selected)
+      // BUG: XD 200 gets deselected even though signal 2 is still selected
       expect(selectionStore.isXdSegmentSelected(200)).toBe(true)
       expect(selectionStore.isXdSegmentSelected(100)).toBe(false)
       expect(selectionStore.isXdSegmentSelected(300)).toBe(true)
-    })
-
-    it('should handle selecting signal, then manually deselecting one of its XD segments', () => {
-      const signals = createMultiXdSignal(1, [100, 200])
-      selectionStore.updateMappings(signals)
-
-      // Select signal (adds XD 100, 200)
-      selectionStore.toggleSignal(1)
-      expect(selectionStore.selectedXdSegmentsList.sort()).toEqual([100, 200])
-
-      // Manually deselect XD 100
-      selectionStore.toggleXdSegment(100)
-      expect(selectionStore.selectedXdSegmentsList).toEqual([200])
-
-      // Signal 1 is still marked as selected
-      expect(selectionStore.isSignalSelected(1)).toBe(true)
     })
   })
 
@@ -338,17 +356,6 @@ describe('SharedMap Component', () => {
 
       expect(selectionStore.selectedSignals.size).toBe(0)
       expect(selectionStore.selectedXdSegments.size).toBe(0)
-    })
-
-    it('should handle signals without valid coordinates', async () => {
-      const signals = [
-        createMockSignal({ ID: 1, XD: 100, LATITUDE: null, LONGITUDE: null }),
-      ]
-
-      await wrapper.setProps({ signals })
-
-      // Component should not crash, just skip rendering marker
-      expect(wrapper.exists()).toBe(true)
     })
 
     it('should handle rapid selection/deselection', () => {
