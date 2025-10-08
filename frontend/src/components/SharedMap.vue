@@ -413,10 +413,12 @@ function initializeMap() {
     // Remove focus outline on click
     keyboard: false,
     attributionControl: false,
-    // Disable zoom animation for better performance with many markers
-    zoomAnimation: false,
-    fadeAnimation: false,
-    markerZoomAnimation: false
+    // Enable smooth zoom but disable marker zoom animation specifically
+    zoomAnimation: true,
+    fadeAnimation: true,
+    markerZoomAnimation: false, // Keep this disabled - marker repositioning happens instantly
+    // Use preferCanvas for better performance with many features
+    preferCanvas: true
   }).setView(savedCenter, savedZoom)
 
   // Add tile layer based on current theme
