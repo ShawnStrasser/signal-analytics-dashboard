@@ -34,7 +34,7 @@ const emit = defineEmits(['selection-changed'])
 const mapContainer = ref(null)
 let map = null
 let signalMarkers = new Map() // Map signal ID to marker
-let markerStates = new Map() // Map signal ID to { category, isSelected, iconSize } for change detection
+let markerStates = new Map() // Map signal ID to { category, isSelected, iconSize, dataHash } for change detection
 let xdLayers = new Map() // Map XD to layer
 let markersLayer = null
 let geometryLayer = null
@@ -271,18 +271,9 @@ watch(() => props.signals, (newSignals, oldSignals) => {
   const signalSetChanged = currentSignalIds.size !== previousSignalIds.size ||
     ![...currentSignalIds].every(id => previousSignalIds.has(id))
 
-  // Clear marker state cache to force icon regeneration with new data values
-  // This ensures icons update when TTI or anomaly values change
-  markerStates.clear()
-
   updateMarkers()
   const t2 = performance.now()
   console.log(`⏱️ updateMarkers: ${(t2 - t1).toFixed(2)}ms`)
-
-  // Update marker sizes/icons to reflect new data values (TTI, anomaly counts)
-  updateMarkerSizes()
-  const t2b = performance.now()
-  console.log(`⏱️ updateMarkerSizes: ${(t2b - t2).toFixed(2)}ms`)
 
   // Defer geometry updates for large datasets to avoid blocking
   const shouldDeferGeometry = newSignals.length > 5000
@@ -296,7 +287,7 @@ watch(() => props.signals, (newSignals, oldSignals) => {
   }
 
   const t3 = performance.now()
-  console.log(`⏱️ updateGeometry: ${shouldDeferGeometry ? '0.00 (deferred)' : (t3 - t2b).toFixed(2)}ms`)
+  console.log(`⏱️ updateGeometry: ${shouldDeferGeometry ? '0.00 (deferred)' : (t3 - t2).toFixed(2)}ms`)
 
   // Only auto-zoom if the signal set actually changed
   if (signalSetChanged) {
@@ -747,14 +738,15 @@ function createXdTooltip(xd, dataValue) {
 }
 
 // Helper function to update a single marker icon only if state changed
-function updateMarkerIcon(signalId, marker, category, isSelected, iconSize) {
+function updateMarkerIcon(signalId, marker, category, isSelected, iconSize, dataHash = null) {
   const currentState = markerStates.get(signalId)
 
-  // Check if state actually changed
+  // Check if state actually changed (including data hash if provided)
   if (currentState &&
       currentState.category === category &&
       currentState.isSelected === isSelected &&
-      currentState.iconSize === iconSize) {
+      currentState.iconSize === iconSize &&
+      (dataHash === null || currentState.dataHash === dataHash)) {
     return false // No change needed
   }
 
@@ -785,7 +777,7 @@ function updateMarkerIcon(signalId, marker, category, isSelected, iconSize) {
   }
 
   // Update tracked state
-  markerStates.set(signalId, { category, isSelected, iconSize })
+  markerStates.set(signalId, { category, isSelected, iconSize, dataHash })
 
   return true // Icon was updated
 }
@@ -807,14 +799,28 @@ function updateMarkerSizes() {
   let getCategoryTime = 0
   let updateIconTime = 0
 
-  // BUILD LOOKUP MAP ONCE - O(n) instead of O(n²)
+  // Build signal data map with aggregated values - O(n)
   const mapBuildStart = performance.now()
-  const signalMap = new Map()
+  const signalDataMap = new Map()
   props.signals.forEach(signal => {
-    signalMap.set(signal.ID, signal)
+    if (!signalDataMap.has(signal.ID)) {
+      signalDataMap.set(signal.ID, {
+        ANOMALY_COUNT: 0,
+        POINT_SOURCE_COUNT: 0,
+        TRAVEL_TIME_INDEX: 0,
+        RECORD_COUNT: 0,
+        ttiCount: 0
+      })
+    }
+    const data = signalDataMap.get(signal.ID)
+    data.ANOMALY_COUNT += (signal.ANOMALY_COUNT || 0)
+    data.POINT_SOURCE_COUNT += (signal.POINT_SOURCE_COUNT || 0)
+    data.TRAVEL_TIME_INDEX += (signal.TRAVEL_TIME_INDEX || 0)
+    data.RECORD_COUNT += (signal.RECORD_COUNT || 0)
+    data.ttiCount += 1
   })
   const mapBuildTime = performance.now() - mapBuildStart
-  console.log(`⚙️ Built signal lookup map in ${mapBuildTime.toFixed(2)}ms for ${props.signals.length} signals`)
+  console.log(`⚙️ Built signal data map in ${mapBuildTime.toFixed(2)}ms for ${props.signals.length} signals`)
 
   signalMarkers.forEach((marker, signalId) => {
     const loopStart = performance.now()
@@ -822,28 +828,31 @@ function updateMarkerSizes() {
 
     // Get current marker data to determine category
     let category = 'green' // Default
+    let dataHash = null
     const findStart = performance.now()
-    const signal = signalMap.get(signalId) // O(1) lookup instead of O(n) find
+    const signalData = signalDataMap.get(signalId) // O(1) lookup
     findSignalTime += (performance.now() - findStart)
 
     const categoryStart = performance.now()
-    if (signal) {
+    if (signalData) {
       if (props.dataType === 'anomaly') {
         const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
-        const count = signal[countColumn] || 0
-        const totalRecords = signal.RECORD_COUNT || 0
+        const count = signalData[countColumn] || 0
+        const totalRecords = signalData.RECORD_COUNT || 0
         const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
         category = getCategoryFromValue(percentage, 'anomaly')
+        dataHash = `${count}_${totalRecords}` // Simple hash for data values
       } else {
-        const tti = signal.TRAVEL_TIME_INDEX || 0
-        category = getCategoryFromValue(tti, 'travel-time')
+        const avgTTI = signalData.ttiCount > 0 ? signalData.TRAVEL_TIME_INDEX / signalData.ttiCount : 0
+        category = getCategoryFromValue(avgTTI, 'travel-time')
+        dataHash = `${signalData.TRAVEL_TIME_INDEX}_${signalData.ttiCount}` // Simple hash for data values
       }
     }
     getCategoryTime += (performance.now() - categoryStart)
 
-    // Only update if state changed
+    // Only update if state changed (including data values)
     const iconStart = performance.now()
-    if (updateMarkerIcon(signalId, marker, category, isSelected, iconSize)) {
+    if (updateMarkerIcon(signalId, marker, category, isSelected, iconSize, dataHash)) {
       updatedCount++
     }
     updateIconTime += (performance.now() - iconStart)
@@ -1263,23 +1272,43 @@ function updateSelectionStyles() {
   const iconSize = getMarkerSize()
   let updatedCount = 0
 
+  // Build signal map with aggregated data (since signals may have multiple XD segments)
+  const signalDataMap = new Map()
+  props.signals.forEach(signal => {
+    if (!signalDataMap.has(signal.ID)) {
+      signalDataMap.set(signal.ID, {
+        ANOMALY_COUNT: 0,
+        POINT_SOURCE_COUNT: 0,
+        TRAVEL_TIME_INDEX: 0,
+        RECORD_COUNT: 0,
+        ttiCount: 0
+      })
+    }
+    const data = signalDataMap.get(signal.ID)
+    data.ANOMALY_COUNT += (signal.ANOMALY_COUNT || 0)
+    data.POINT_SOURCE_COUNT += (signal.POINT_SOURCE_COUNT || 0)
+    data.TRAVEL_TIME_INDEX += (signal.TRAVEL_TIME_INDEX || 0)
+    data.RECORD_COUNT += (signal.RECORD_COUNT || 0)
+    data.ttiCount += 1
+  })
+
   signalMarkers.forEach((marker, signalId) => {
     const isSelected = selectionStore.isSignalSelected(signalId)
 
     // Get current marker data to determine category
     let category = 'green' // Default
-    const signal = props.signals.find(s => s.ID === signalId)
+    const signalData = signalDataMap.get(signalId)
 
-    if (signal) {
+    if (signalData) {
       if (props.dataType === 'anomaly') {
         const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
-        const count = signal[countColumn] || 0
-        const totalRecords = signal.RECORD_COUNT || 0
+        const count = signalData[countColumn] || 0
+        const totalRecords = signalData.RECORD_COUNT || 0
         const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
         category = getCategoryFromValue(percentage, 'anomaly')
       } else {
-        const tti = signal.TRAVEL_TIME_INDEX || 0
-        category = getCategoryFromValue(tti, 'travel-time')
+        const avgTTI = signalData.ttiCount > 0 ? signalData.TRAVEL_TIME_INDEX / signalData.ttiCount : 0
+        category = getCategoryFromValue(avgTTI, 'travel-time')
       }
     }
 
