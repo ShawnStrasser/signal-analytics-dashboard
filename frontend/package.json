@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "vue": "*",
@@ -23,6 +27,12 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "*",
     "vite": "*",
-    "vite-plugin-vuetify": "*"
+    "vite-plugin-vuetify": "*",
+    "vitest": "*",
+    "@vue/test-utils": "*",
+    "@vitest/ui": "*",
+    "@vitest/coverage-v8": "*",
+    "jsdom": "*",
+    "happy-dom": "*"
   }
 }
