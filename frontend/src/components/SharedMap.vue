@@ -62,17 +62,19 @@ const { selectedSignalsList, selectedXdSegmentsList } = storeToRefs(selectionSto
 // Fixed marker size (no dynamic scaling on zoom)
 const MARKER_ICON_SIZE = 30 // Fixed size in pixels (width/height)
 
-// Zoom threshold for switching between circle and SVG icons
-const ZOOM_THRESHOLD = 13 // Switch to SVG icons at zoom level 13 and above
+// Signal count threshold for switching between circle and SVG icons
+const SIGNAL_COUNT_THRESHOLD = 200 // Switch to SVG icons when 200 or fewer signals are visible
 
 // Get marker icon size (fixed, not zoom-dependent)
 function getMarkerSize() {
   return MARKER_ICON_SIZE
 }
 
-// Check if we should use SVG icons based on current zoom level
+// Check if we should use SVG icons based on number of visible signals
 function shouldUseSvgIcons() {
-  return map && map.getZoom() >= ZOOM_THRESHOLD
+  // Use SVG icons when we have 200 or fewer signals (less cluttered)
+  // Use circle icons when we have more than 200 signals (performance)
+  return signalMarkers.size <= SIGNAL_COUNT_THRESHOLD
 }
 
 // Categorize values into green/yellow/red thresholds
@@ -571,13 +573,13 @@ function initializeMap() {
   map.on('zoomend', () => {
     const timeSinceStart = zoomStartTime ? (performance.now() - zoomStartTime).toFixed(2) : 'unknown'
     const currentZoom = map.getZoom()
-    const usingSvgIcons = currentZoom >= ZOOM_THRESHOLD
+    const usingSvgIcons = shouldUseSvgIcons()
 
     console.log(`🔍 ZOOM LIFECYCLE: zoomend fired (${timeSinceStart}ms since zoomstart)`, {
       newZoom: currentZoom,
       markerCount: signalMarkers.size,
       iconType: usingSvgIcons ? 'SVG traffic signals' : 'circles',
-      threshold: ZOOM_THRESHOLD
+      signalCountThreshold: SIGNAL_COUNT_THRESHOLD
     })
 
     const zoomEndHandlerStart = performance.now()
