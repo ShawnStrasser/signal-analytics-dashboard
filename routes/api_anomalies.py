@@ -18,6 +18,7 @@ from utils.query_utils import (
     build_xd_dimension_query,
     extract_xd_values,
     build_xd_filter,
+    build_xd_filter_with_joins,
     create_xd_lookup_dict,
     get_aggregation_table,
     build_time_of_day_filter
@@ -37,6 +38,7 @@ def get_anomaly_summary():
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     signal_ids = request.args.getlist('signal_ids')
+    maintained_by = request.args.get('maintained_by', 'all')
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
     anomaly_type = request.args.get('anomaly_type', default='All')
@@ -56,7 +58,23 @@ def get_anomaly_summary():
     time_filter = build_time_of_day_filter(start_hour, start_minute, end_hour, end_minute)
 
     try:
-        # Step 1: Query DIM_SIGNALS_XD to get XD segments and signal info
+        # Step 1: Determine whether to use join-based or direct filtering
+        use_join_based = signal_ids or maintained_by != 'all'
+
+        if use_join_based:
+            # Efficient join-based query for large signal selections
+            xd_values = build_xd_filter_with_joins(
+                session, signal_ids, maintained_by, approach, valid_geometry
+            )
+
+            if not xd_values:
+                arrow_bytes = create_empty_arrow_response('anomaly_summary')
+                return create_arrow_response(arrow_bytes)
+        else:
+            # No filters - will query all XDs
+            xd_values = None
+
+        # Step 1b: Get dimension data for map display (still need lat/lon/approach/etc)
         dim_query = build_xd_dimension_query(signal_ids, approach, valid_geometry)
         dim_result = session.sql(dim_query).collect()
 
@@ -64,15 +82,8 @@ def get_anomaly_summary():
             arrow_bytes = create_empty_arrow_response('anomaly_summary')
             return create_arrow_response(arrow_bytes)
 
-        # Extract XD values
-        xd_values = extract_xd_values(dim_result)
-
-        if not xd_values:
-            arrow_bytes = create_empty_arrow_response('anomaly_summary')
-            return create_arrow_response(arrow_bytes)
-
         # Step 2: Query aggregated table using XD values
-        xd_filter = build_xd_filter(xd_values)
+        xd_filter = build_xd_filter(xd_values) if xd_values else ""
 
         # Build query based on aggregation table
         if agg_table == "TRAVEL_TIME_ANALYTICS":
@@ -170,6 +181,7 @@ def get_anomaly_aggregated():
     end_date = request.args.get('end_date')
     signal_ids = request.args.getlist('signal_ids')
     xd_segments = request.args.getlist('xd_segments')
+    maintained_by = request.args.get('maintained_by', 'all')
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
     start_hour = request.args.get('start_hour')
@@ -191,19 +203,13 @@ def get_anomaly_aggregated():
         # Resolve XD segments if signal_ids provided
         xd_values = None
         if xd_segments:
+            # Map interaction - use direct XD list (small, efficient)
             xd_values = [int(xd) for xd in xd_segments]
-        elif signal_ids:
-            # Lookup XD values from dimension table
-            dim_query = build_xd_dimension_query(
-                signal_ids, approach, valid_geometry, include_xd_only=True
+        elif signal_ids or maintained_by != 'all':
+            # Filter panel - use join-based filtering (efficient for large selections)
+            xd_values = build_xd_filter_with_joins(
+                session, signal_ids, maintained_by, approach, valid_geometry
             )
-            dim_result = session.sql(dim_query).collect()
-
-            if not dim_result:
-                arrow_bytes = create_empty_arrow_response('anomaly_aggregated')
-                return create_arrow_response(arrow_bytes)
-
-            xd_values = extract_xd_values(dim_result)
 
             if not xd_values:
                 arrow_bytes = create_empty_arrow_response('anomaly_aggregated')
@@ -268,6 +274,7 @@ def get_travel_time_data():
     end_date = request.args.get('end_date')
     xd_segments = request.args.getlist('xd_segments')
     signal_ids = request.args.getlist('signal_ids')
+    maintained_by = request.args.get('maintained_by', 'all')
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
 
@@ -276,12 +283,27 @@ def get_travel_time_data():
     end_date_str = normalize_date(end_date)
 
     try:
-        # Step 1: Query DIM_SIGNALS_XD to get XD segments and signal info
+        # Resolve XD segments
+        if xd_segments:
+            # Map interaction - use direct XD list
+            xd_values = [int(xd) for xd in xd_segments]
+        elif signal_ids or maintained_by != 'all':
+            # Filter panel - use join-based filtering
+            xd_values = build_xd_filter_with_joins(
+                session, signal_ids, maintained_by, approach, valid_geometry
+            )
+            if not xd_values:
+                arrow_bytes = create_empty_arrow_response('travel_time_detail')
+                return create_arrow_response(arrow_bytes)
+        else:
+            xd_values = None
+
+        # Step 1: Query DIM_SIGNALS_XD to get signal info for the XD values
         dim_query = build_xd_dimension_query(signal_ids, approach, valid_geometry)
 
-        # Prefer xd_segments if provided
-        if xd_segments:
-            xd_str = ', '.join(map(str, xd_segments))
+        # Add XD filter if we have specific XDs
+        if xd_values:
+            xd_str = ', '.join(map(str, xd_values))
             dim_query += f" AND XD IN ({xd_str})"
 
         dim_result = session.sql(dim_query).collect()

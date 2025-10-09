@@ -115,6 +115,85 @@ def build_xd_filter(xd_values: List[int]) -> str:
     return f" AND XD IN ({xd_str})"
 
 
+def build_xd_filter_with_joins(
+    session,
+    signal_ids: Optional[List[str]] = None,
+    maintained_by: str = 'all',
+    approach: Optional[str] = None,
+    valid_geometry: Optional[str] = None
+) -> Optional[List[int]]:
+    """
+    Build XD filter using efficient JOIN-based query.
+    This is more efficient than the two-stage query pattern for large signal selections.
+
+    Uses MAX aggregation to handle duplicate XD entries in DIM_SIGNALS_XD where the same
+    XD can appear multiple times with different signal IDs.
+
+    Args:
+        session: Snowflake session object
+        signal_ids: List of signal IDs to filter (DIM_SIGNALS.ID)
+        maintained_by: One of 'all', 'odot', 'others'
+        approach: 'true'/'false' string for approach filter
+        valid_geometry: 'valid'/'invalid'/'all' for geometry filter
+
+    Returns:
+        List of XD integers, or None if no filters applied (query all XDs)
+    """
+    # If no filters, return None to indicate "query all"
+    if not signal_ids and maintained_by == 'all' and not approach and (not valid_geometry or valid_geometry == 'all'):
+        return None
+
+    # Build the filtered XD query with joins
+    query = """
+    SELECT
+        XD_TABLE.XD,
+        MAX(XD_TABLE.APPROACH) AS APPROACH,
+        MAX(XD_TABLE.VALID_GEOMETRY) AS VALID_GEOMETRY
+    FROM DIM_SIGNALS_XD AS XD_TABLE
+    """
+
+    # Add join to DIM_SIGNALS if needed
+    needs_signal_join = signal_ids or maintained_by != 'all'
+    if needs_signal_join:
+        query += " INNER JOIN DIM_SIGNALS AS SIG_TABLE ON XD_TABLE.ID = SIG_TABLE.ID"
+
+    # Build WHERE clause
+    where_parts = []
+
+    if signal_ids:
+        ids_str = "', '".join(map(str, signal_ids))
+        where_parts.append(f"SIG_TABLE.ID IN ('{ids_str}')")
+
+    if maintained_by == 'odot':
+        where_parts.append("SIG_TABLE.ODOT_MAINTAINED = TRUE")
+    elif maintained_by == 'others':
+        where_parts.append("SIG_TABLE.ODOT_MAINTAINED = FALSE")
+
+    if approach is not None and approach != '':
+        approach_bool = 'TRUE' if approach.lower() == 'true' else 'FALSE'
+        where_parts.append(f"XD_TABLE.APPROACH = {approach_bool}")
+
+    if valid_geometry is not None and valid_geometry != '' and valid_geometry != 'all':
+        if valid_geometry == 'valid':
+            where_parts.append("XD_TABLE.VALID_GEOMETRY = TRUE")
+        elif valid_geometry == 'invalid':
+            where_parts.append("XD_TABLE.VALID_GEOMETRY = FALSE")
+
+    if where_parts:
+        query += " WHERE " + " AND ".join(where_parts)
+
+    query += " GROUP BY XD_TABLE.XD"
+
+    # Execute query and extract XD values
+    try:
+        result = session.sql(query).collect()
+        xd_values = [row['XD'] for row in result]
+        return xd_values if xd_values else []
+    except Exception as e:
+        print(f"[ERROR] build_xd_filter_with_joins: {e}")
+        return []
+
+
 def create_xd_lookup_dict(dim_result) -> Dict[int, Dict[str, Any]]:
     """
     Create XD -> signal info mapping from dimension query result.

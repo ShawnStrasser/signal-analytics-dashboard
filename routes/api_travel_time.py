@@ -21,6 +21,7 @@ from utils.query_utils import (
     build_xd_dimension_query,
     extract_xd_values,
     build_xd_filter,
+    build_xd_filter_with_joins,
     create_xd_lookup_dict,
     build_time_of_day_filter,
     build_day_of_week_filter,
@@ -135,6 +136,7 @@ def get_travel_time_summary():
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     signal_ids = request.args.getlist('signal_ids')
+    maintained_by = request.args.get('maintained_by', 'all')
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
     start_hour = request.args.get('start_hour')
@@ -158,14 +160,40 @@ def get_travel_time_summary():
         print(f"  Params: date={start_date_str} to {end_date_str}, signals={len(signal_ids) if signal_ids else 'all'}")
 
     try:
-        # Step 1: Query DIM_SIGNALS_XD to get XD segments and signal info
+        # Step 1: Determine whether to use join-based or direct filtering
+        # Use join-based filtering when signal_ids or maintained_by filter is active
+        use_join_based = signal_ids or maintained_by != 'all'
+
+        if use_join_based:
+            # Efficient join-based query for large signal selections
+            dim_query_start = time.time()
+            xd_values = build_xd_filter_with_joins(
+                session, signal_ids, maintained_by, approach, valid_geometry
+            )
+            dim_query_time = (time.time() - dim_query_start) * 1000
+
+            if DEBUG_BACKEND_TIMING:
+                print(f"  [1] Join-based XD filter: {dim_query_time:.2f}ms ({len(xd_values) if xd_values else 0} unique XDs)")
+
+            if not xd_values:
+                if DEBUG_BACKEND_TIMING:
+                    print(f"  [EARLY EXIT] No XD values from join filter")
+                arrow_bytes = create_empty_arrow_response('travel_time_summary')
+                return create_arrow_response(arrow_bytes)
+        else:
+            # No filters - will query all XDs
+            xd_values = None
+            if DEBUG_BACKEND_TIMING:
+                print(f"  [INFO] No filters applied - querying all XDs")
+
+        # Step 1b: Get dimension data for map display (still need lat/lon/approach/etc)
         dim_query_start = time.time()
         dim_query = build_xd_dimension_query(signal_ids, approach, valid_geometry)
         dim_result = session.sql(dim_query).collect()
         dim_query_time = (time.time() - dim_query_start) * 1000
 
         if DEBUG_BACKEND_TIMING:
-            print(f"  [1] DIM_SIGNALS_XD query: {dim_query_time:.2f}ms ({len(dim_result)} rows)")
+            print(f"  [1b] DIM_SIGNALS_XD query for display data: {dim_query_time:.2f}ms ({len(dim_result)} rows)")
 
         if not dim_result:
             if DEBUG_BACKEND_TIMING:
@@ -173,26 +201,12 @@ def get_travel_time_summary():
             arrow_bytes = create_empty_arrow_response('travel_time_summary')
             return create_arrow_response(arrow_bytes)
 
-        # Extract XD values for analytics query
-        extract_start = time.time()
-        xd_values = extract_xd_values(dim_result)
-        extract_time = (time.time() - extract_start) * 1000
-
-        if DEBUG_BACKEND_TIMING:
-            print(f"  [2] Extract XD values: {extract_time:.2f}ms ({len(xd_values)} unique XDs)")
-
-        if not xd_values:
-            if DEBUG_BACKEND_TIMING:
-                print(f"  [EARLY EXIT] No XD values extracted")
-            arrow_bytes = create_empty_arrow_response('travel_time_summary')
-            return create_arrow_response(arrow_bytes)
-
         # Step 2: Query TRAVEL_TIME_ANALYTICS using XD values, join with FREEFLOW to calculate TTI
         # Build the map query - always groups by XD regardless of date range
-        xd_filter = build_xd_filter(xd_values) if signal_ids else ""
+        xd_filter = build_xd_filter(xd_values) if xd_values else ""
 
         if DEBUG_BACKEND_TIMING:
-            if signal_ids:
+            if xd_values:
                 print(f"  [INFO] XD filter applied: {len(xd_values)} XDs")
             else:
                 print(f"  [INFO] NO XD filter (querying all signals)")
@@ -305,6 +319,7 @@ def get_travel_time_aggregated():
     end_date = request.args.get('end_date')
     signal_ids = request.args.getlist('signal_ids')
     xd_segments = request.args.getlist('xd_segments')
+    maintained_by = request.args.get('maintained_by', 'all')
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
     start_hour = request.args.get('start_hour')
@@ -335,26 +350,20 @@ def get_travel_time_aggregated():
         # Resolve XD segments if signal_ids provided
         xd_values = None
         if xd_segments:
+            # Map interaction - use direct XD list (small, efficient)
             xd_values = [int(xd) for xd in xd_segments]
             if DEBUG_BACKEND_TIMING:
                 print(f"  [INFO] Using provided XD segments: {len(xd_values)} XDs")
-        elif signal_ids:
-            # Lookup XD values from dimension table
+        elif signal_ids or maintained_by != 'all':
+            # Filter panel - use join-based filtering (efficient for large selections)
             dim_query_start = time.time()
-            dim_query = build_xd_dimension_query(
-                signal_ids, approach, valid_geometry, include_xd_only=True
+            xd_values = build_xd_filter_with_joins(
+                session, signal_ids, maintained_by, approach, valid_geometry
             )
-            dim_result = session.sql(dim_query).collect()
             dim_query_time = (time.time() - dim_query_start) * 1000
 
             if DEBUG_BACKEND_TIMING:
-                print(f"  [1] DIM_SIGNALS_XD query: {dim_query_time:.2f}ms ({len(dim_result)} rows)")
-
-            if not dim_result:
-                arrow_bytes = create_empty_arrow_response('travel_time_aggregated')
-                return create_arrow_response(arrow_bytes)
-
-            xd_values = extract_xd_values(dim_result)
+                print(f"  [1] Join-based XD filter: {dim_query_time:.2f}ms ({len(xd_values) if xd_values else 0} unique XDs)")
 
             if not xd_values:
                 arrow_bytes = create_empty_arrow_response('travel_time_aggregated')
@@ -476,6 +485,7 @@ def get_travel_time_by_time_of_day():
     end_date = request.args.get('end_date')
     signal_ids = request.args.getlist('signal_ids')
     xd_segments = request.args.getlist('xd_segments')
+    maintained_by = request.args.get('maintained_by', 'all')
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
     day_of_week = request.args.getlist('day_of_week')
@@ -503,26 +513,20 @@ def get_travel_time_by_time_of_day():
         # Resolve XD segments if signal_ids provided
         xd_values = None
         if xd_segments:
+            # Map interaction - use direct XD list (small, efficient)
             xd_values = [int(xd) for xd in xd_segments]
             if DEBUG_BACKEND_TIMING:
                 print(f"  [INFO] Using provided XD segments: {len(xd_values)} XDs")
-        elif signal_ids:
-            # Lookup XD values from dimension table
+        elif signal_ids or maintained_by != 'all':
+            # Filter panel - use join-based filtering (efficient for large selections)
             dim_query_start = time.time()
-            dim_query = build_xd_dimension_query(
-                signal_ids, approach, valid_geometry, include_xd_only=True
+            xd_values = build_xd_filter_with_joins(
+                session, signal_ids, maintained_by, approach, valid_geometry
             )
-            dim_result = session.sql(dim_query).collect()
             dim_query_time = (time.time() - dim_query_start) * 1000
 
             if DEBUG_BACKEND_TIMING:
-                print(f"  [1] DIM_SIGNALS_XD query: {dim_query_time:.2f}ms ({len(dim_result)} rows)")
-
-            if not dim_result:
-                arrow_bytes = create_empty_arrow_response('travel_time_by_time_of_day')
-                return create_arrow_response(arrow_bytes)
-
-            xd_values = extract_xd_values(dim_result)
+                print(f"  [1] Join-based XD filter: {dim_query_time:.2f}ms ({len(xd_values) if xd_values else 0} unique XDs)")
 
             if not xd_values:
                 arrow_bytes = create_empty_arrow_response('travel_time_by_time_of_day')

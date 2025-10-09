@@ -14,7 +14,7 @@ Implement these steps **one at a time** to ensure each piece works before moving
 **Dependencies:** None
 **Status:** All 5 tests passing (32/38 total tests passing)
 
-### Step 2: Backend API Efficiency Improvements
+### Step 2: Backend API Efficiency Improvements ✅ COMPLETED
 **Goal:** Add join-based filtering support to backend APIs
 **Files:** `routes/api_travel_time.py`, `routes/api_anomalies.py`
 **Tests to pass:** 1 test in "API Efficiency"
