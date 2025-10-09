@@ -41,22 +41,81 @@
         </v-col>
       </v-row>
 
-      <!-- Signal Selection -->
+      <!-- Hierarchical District & Signal Selection -->
       <v-row>
         <v-col cols="12">
-          <v-autocomplete
-            v-model="filtersStore.selectedSignalIds"
-            :items="signalOptions"
-            item-title="text"
-            item-value="value"
-            label="Select Signals"
-            multiple
-            chips
-            density="compact"
-            variant="outlined"
-            :loading="loadingSignals"
-            clearable
-          />
+          <v-card variant="outlined">
+            <v-card-subtitle class="py-2 text-caption">
+              Select Signals (by District)
+            </v-card-subtitle>
+            <v-card-text class="py-2">
+              <!-- Search bar -->
+              <v-text-field
+                v-model="searchQuery"
+                prepend-inner-icon="mdi-magnify"
+                label="Search signals..."
+                density="compact"
+                variant="outlined"
+                clearable
+                hide-details
+                class="mb-2"
+              />
+
+              <!-- District groups -->
+              <div v-if="signalsStore.loading" class="text-center py-4">
+                <v-progress-circular indeterminate size="32"></v-progress-circular>
+              </div>
+              <div v-else-if="Object.keys(filteredDistrictGroups).length === 0" class="text-caption text-grey py-2">
+                No signals found
+              </div>
+              <v-expansion-panels v-else multiple variant="accordion" class="district-panels">
+                <v-expansion-panel
+                  v-for="(districtSignals, district) in filteredDistrictGroups"
+                  :key="district"
+                  :title="`${district} (${districtSignals.length} signals)`"
+                >
+                  <template v-slot:title>
+                    <div class="d-flex align-center">
+                      <v-checkbox
+                        :model-value="isDistrictSelected(district)"
+                        :indeterminate="isDistrictIndeterminate(district)"
+                        @click.stop="toggleDistrict(district)"
+                        hide-details
+                        density="compact"
+                        class="mr-2"
+                      />
+                      <span>{{ district }}</span>
+                    </div>
+                  </template>
+                  <v-expansion-panel-text>
+                    <v-checkbox
+                      v-for="signal in districtSignals"
+                      :key="signal.ID"
+                      :model-value="filtersStore.selectedSignalIds.includes(signal.ID)"
+                      @update:model-value="toggleSignal(signal.ID)"
+                      :label="`${signal.ID} - ${signal.NAME || 'Unknown'}`"
+                      hide-details
+                      density="compact"
+                      class="mb-1"
+                    />
+                  </v-expansion-panel-text>
+                </v-expansion-panel>
+              </v-expansion-panels>
+
+              <!-- Clear all button -->
+              <v-btn
+                v-if="filtersStore.selectedSignalIds.length > 0"
+                block
+                size="small"
+                variant="outlined"
+                color="error"
+                class="mt-2"
+                @click="clearAllSignals"
+              >
+                Clear All ({{ filtersStore.selectedSignalIds.length }} selected)
+              </v-btn>
+            </v-card-text>
+          </v-card>
         </v-col>
       </v-row>
 
@@ -165,11 +224,14 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import { useFiltersStore } from '@/stores/filters'
+import { useSignalsStore } from '@/stores/signals'
 import ApiService from '@/services/api'
 
 const filtersStore = useFiltersStore()
+const signalsStore = useSignalsStore()
 const loadingSignals = ref(false)
-const signals = ref([])
+const signals = ref([]) // Keep for backward compat with old DIM_SIGNALS_XD endpoint
+const searchQuery = ref('')
 
 // Local date state with debouncing
 const localStartDate = ref(filtersStore.startDate)
@@ -244,52 +306,93 @@ function formatTime(hour) {
   return `${String(hour).padStart(2, '0')}:00`
 }
 
-// Group signals by district (when district data becomes available)
-const signalsByDistrict = computed(() => {
-  // Filter signals by maintainedBy if not 'all'
-  let filteredSignals = signals.value
+// Filter district groups by search query
+const filteredDistrictGroups = computed(() => {
+  const groups = signalsStore.signalsByDistrict
 
-  // Note: When backend is updated to use DIM_SIGNALS with ODOT_MAINTAINED column,
-  // uncomment this filtering logic:
-  // if (filtersStore.maintainedBy === 'odot') {
-  //   filteredSignals = filteredSignals.filter(s => s.ODOT_MAINTAINED === true)
-  // } else if (filtersStore.maintainedBy === 'others') {
-  //   filteredSignals = filteredSignals.filter(s => s.ODOT_MAINTAINED === false)
-  // }
+  if (!searchQuery.value) {
+    return groups
+  }
 
-  // Deduplicate signal IDs - DIM_SIGNALS_XD has multiple rows per signal
-  const uniqueSignalIds = [...new Set(filteredSignals.map(signal => signal.ID))]
+  const query = searchQuery.value.toLowerCase()
+  const filtered = {}
 
-  // Group by district when DISTRICT column is available
-  // For now, return a flat structure until backend provides district data
-  const grouped = {}
-  uniqueSignalIds.forEach(id => {
-    const district = 'Unknown' // Replace with s.DISTRICT when available
-    if (!grouped[district]) {
-      grouped[district] = []
-    }
-    grouped[district].push(id)
-  })
-
-  return grouped
-})
-
-const signalOptions = computed(() => {
-  // Flat list for autocomplete - will be enhanced for hierarchical selection later
-  const allDistricts = signalsByDistrict.value
-  const flatList = []
-
-  Object.entries(allDistricts).forEach(([district, signalIds]) => {
-    signalIds.forEach(id => {
-      flatList.push({
-        text: `Signal ${id}`,
-        value: id
-      })
+  Object.entries(groups).forEach(([district, signalList]) => {
+    const matchingSignals = signalList.filter(signal => {
+      const idMatch = signal.ID.toLowerCase().includes(query)
+      const nameMatch = signal.NAME?.toLowerCase().includes(query)
+      const districtMatch = district.toLowerCase().includes(query)
+      return idMatch || nameMatch || districtMatch
     })
+
+    if (matchingSignals.length > 0) {
+      filtered[district] = matchingSignals
+    }
   })
 
-  return flatList
+  return filtered
 })
+
+// Check if all signals in a district are selected
+function isDistrictSelected(district) {
+  const districtSignals = signalsStore.signalsByDistrict[district]
+  if (!districtSignals || districtSignals.length === 0) return false
+
+  return districtSignals.every(signal =>
+    filtersStore.selectedSignalIds.includes(signal.ID)
+  )
+}
+
+// Check if some (but not all) signals in a district are selected
+function isDistrictIndeterminate(district) {
+  const districtSignals = signalsStore.signalsByDistrict[district]
+  if (!districtSignals || districtSignals.length === 0) return false
+
+  const selectedCount = districtSignals.filter(signal =>
+    filtersStore.selectedSignalIds.includes(signal.ID)
+  ).length
+
+  return selectedCount > 0 && selectedCount < districtSignals.length
+}
+
+// Toggle all signals in a district
+function toggleDistrict(district) {
+  const districtSignals = signalsStore.signalsByDistrict[district]
+  if (!districtSignals) return
+
+  const allSelected = isDistrictSelected(district)
+
+  if (allSelected) {
+    // Deselect all signals in this district
+    const districtSignalIds = districtSignals.map(s => s.ID)
+    filtersStore.selectedSignalIds = filtersStore.selectedSignalIds.filter(
+      id => !districtSignalIds.includes(id)
+    )
+  } else {
+    // Select all signals in this district
+    const districtSignalIds = districtSignals.map(s => s.ID)
+    const newIds = [...new Set([...filtersStore.selectedSignalIds, ...districtSignalIds])]
+    filtersStore.selectedSignalIds = newIds
+  }
+}
+
+// Toggle individual signal selection
+function toggleSignal(signalId) {
+  const index = filtersStore.selectedSignalIds.indexOf(signalId)
+
+  if (index > -1) {
+    // Deselect
+    filtersStore.selectedSignalIds = filtersStore.selectedSignalIds.filter(id => id !== signalId)
+  } else {
+    // Select
+    filtersStore.selectedSignalIds = [...filtersStore.selectedSignalIds, signalId]
+  }
+}
+
+// Clear all signal selections
+function clearAllSignals() {
+  filtersStore.selectedSignalIds = []
+}
 
 const validGeometryDisplayText = computed(() => {
   if (filtersStore.validGeometry === 'valid') return 'Valid Only'
@@ -346,6 +449,15 @@ const dayOfWeekDisplayText = computed(() => {
 
 onMounted(async () => {
   await filtersStore.initializeConfig()
+
+  // Load DIM_SIGNALS data for hierarchical UI
+  try {
+    await signalsStore.loadDimSignals()
+  } catch (error) {
+    console.error('Failed to load DIM_SIGNALS data:', error)
+  }
+
+  // Keep loading old endpoint for backward compat (if needed elsewhere)
   await loadSignals()
 })
 
@@ -361,3 +473,10 @@ async function loadSignals() {
   }
 }
 </script>
+
+<style scoped>
+.district-panels {
+  max-height: 400px;
+  overflow-y: auto;
+}
+</style>

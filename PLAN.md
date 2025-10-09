@@ -203,39 +203,14 @@ export const useSignalsStore = defineStore('signals', () => {
 })
 ```
 
-### Step 4c: Filter Map Display by maintainedBy ⏳ NOT STARTED
+### Step 4c: Filter Map Display by maintainedBy ✅ COMPLETED
 **Goal:** Map should only show signals/XDs that match the maintainedBy filter
-**Problem:** Currently maintainedBy filter updates chart but NOT the map
+**Status:** Already implemented - backend filters by maintainedBy parameter, so map receives filtered data
 
-**Files:**
-- `frontend/src/views/TravelTime.vue` - Filter mapData before passing to SharedMap
-- `frontend/src/views/Anomalies.vue` - Same
-- `frontend/src/components/SharedMap.vue` - May need updates if XD filtering needed
-
-**Implementation:**
-```javascript
-// In TravelTime.vue
-const displayedMapData = computed(() => {
-  // Use cached signal data to filter map display
-  const signalsStore = useSignalsStore()
-  const allowedSignalIds = new Set(signalsStore.filteredSignals.map(s => s.ID))
-
-  return mapData.value.filter(item => allowedSignalIds.has(item.ID))
-})
-
-// Pass displayedMapData to SharedMap instead of mapData
-<SharedMap :signals="displayedMapData" ... />
-```
-
-**Options for XD segments:**
-1. **Filter out completely** - Don't show XDs for filtered-out signals
-2. **Grey out** - Show XDs but with reduced opacity (easier for user to understand)
-
-**Decision:** Start with filtering out completely (simpler), can add greying later if needed.
-
-### Step 5: Hierarchical District Filter UI ⏳ NOT STARTED
+### Step 5: Hierarchical District Filter UI ✅ COMPLETED
 **Goal:** Replace flat signal dropdown with hierarchical district-grouped selector
 **Dependencies:** Step 4b (needs DIM_SIGNALS data cached)
+**Status:** Fully implemented with search, district-level selection, and individual signal checkboxes
 
 **Files:**
 - `frontend/src/components/FilterPanel.vue`
@@ -313,11 +288,11 @@ const displayedMapData = computed(() => {
 - ✅ Step 4: Maintained By dropdown UI + watchers
 - ✅ Step 4a: Backend query efficiency (travel time endpoints only)
 - ✅ Step 4b: Fetch and cache DIM_SIGNALS data
+- ✅ Step 4c: Filter map display (already working via backend)
+- ✅ Step 5: Hierarchical district UI
 
 **Not Started:**
-- ⏳ Step 4c: Filter map display (NEXT TASK)
-- ⏳ Step 5: Hierarchical district UI
-- ⏳ Step 6: Verify approach/validGeometry
+- ⏳ Step 6: Verify approach/validGeometry (NEXT TASK)
 - ⏳ Step 7: Update tooltips
 - ⏳ Step 8: Fix anomaly endpoint inefficiency (do last)
 
