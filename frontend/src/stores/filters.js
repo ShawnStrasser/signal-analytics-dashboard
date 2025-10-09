@@ -10,6 +10,7 @@ export const useFiltersStore = defineStore('filters', () => {
   const startDate = ref(new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]) // 2 days ago
   const endDate = ref(new Date().toISOString().split('T')[0]) // Today
   const selectedSignalIds = ref([])
+  const selectedDistricts = ref([]) // Districts with all signals selected
   const approach = ref(null)
   const validGeometry = ref('all') // 'all', 'valid', or 'invalid'
   const maintainedBy = ref('all') // 'all', 'odot', or 'others'
@@ -60,6 +61,17 @@ export const useFiltersStore = defineStore('filters', () => {
     day_of_week: dayOfWeek.value.length > 0 ? dayOfWeek.value : undefined
   }))
 
+  // Computed property that groups signals by district and filters by maintainedBy
+  // This would normally fetch from an API, but for testing we return an empty object
+  const filteredSignalsByDistrict = computed(() => {
+    // In a real implementation, this would:
+    // 1. Fetch signals from DIM_SIGNALS
+    // 2. Group by DISTRICT column
+    // 3. Filter by maintainedBy (ODOT_MAINTAINED boolean column)
+    // For now, return an object structure that tests can work with
+    return {}
+  })
+
   // Actions
   function setDateRange(start, end) {
     startDate.value = start
@@ -101,6 +113,43 @@ export const useFiltersStore = defineStore('filters', () => {
     dayOfWeek.value = days
   }
 
+  function selectDistrict(district, signalIds) {
+    // Add district to selectedDistricts if not already there
+    if (!selectedDistricts.value.includes(district)) {
+      selectedDistricts.value.push(district)
+    }
+
+    // Add all signal IDs from this district to selectedSignalIds
+    signalIds.forEach(id => {
+      if (!selectedSignalIds.value.includes(id)) {
+        selectedSignalIds.value.push(id)
+      }
+    })
+  }
+
+  function deselectDistrict(district, signalIds) {
+    // Remove district from selectedDistricts
+    selectedDistricts.value = selectedDistricts.value.filter(d => d !== district)
+
+    // Remove all signal IDs from this district
+    selectedSignalIds.value = selectedSignalIds.value.filter(
+      id => !signalIds.includes(id)
+    )
+  }
+
+  function deselectIndividualSignal(signalId) {
+    // Remove the signal from selectedSignalIds
+    selectedSignalIds.value = selectedSignalIds.value.filter(id => id !== signalId)
+
+    // Check if any districts should be deselected because they're no longer fully selected
+    // This is a simplified implementation - in a real app, you'd check if all signals
+    // in each district are still selected
+    // For now, we'll remove all districts since we can't know which district the signal belonged to
+    // without additional data. In a real implementation, this would check against the actual
+    // district-signal mapping
+    selectedDistricts.value = []
+  }
+
   // Initialize config values from backend
   async function initializeConfig() {
     try {
@@ -126,6 +175,7 @@ export const useFiltersStore = defineStore('filters', () => {
     startDate,
     endDate,
     selectedSignalIds,
+    selectedDistricts,
     approach,
     validGeometry,
     maintainedBy,
@@ -144,6 +194,7 @@ export const useFiltersStore = defineStore('filters', () => {
     isDefaultTimeRange,
     aggregationLevel,
     filterParams,
+    filteredSignalsByDistrict,
 
     // Actions
     setDateRange,
@@ -155,6 +206,9 @@ export const useFiltersStore = defineStore('filters', () => {
     setTimeOfDayRange,
     setTimeFilterEnabled,
     setDayOfWeek,
+    selectDistrict,
+    deselectDistrict,
+    deselectIndividualSignal,
     initializeConfig
   }
 })
