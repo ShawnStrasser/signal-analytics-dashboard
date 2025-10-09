@@ -2,6 +2,12 @@
 
 This document outlines the changes needed to implement hierarchical signal filtering with district grouping and improved API efficiency.
 
+**IMPORTANT:** All column names and schemas strictly follow `README.md`. Key points:
+- `DIM_SIGNALS.ODOT_MAINTAINED` is a **BOOLEAN** (not a string like 'ODOT', 'City', etc.)
+- `DIM_SIGNALS_XD.ROADNAME` (not 'ROAD')
+- `DIM_SIGNALS.ID` and `DIM_SIGNALS_XD.ID` are **VARCHAR** (not INT)
+- All Snowflake column names are **UPPERCASE**
+
 ## Test Coverage
 
 Unit tests have been created to validate implementation. Tests are in:
@@ -55,21 +61,25 @@ Update the frontend (filters, maps and charts etc) to handle the above database 
 **File:** `frontend/src/components/SharedMap.vue`
 
 #### Signal Markers
+**Data source:** `DIM_SIGNALS` table
+
 Current tooltip shows: `ID`, `Approach`, `Travel Time Index`
-- [ ] Replace `ID` with `NAME` (from DIM_SIGNALS)
-- [ ] Remove `Approach` field
+- [ ] Replace `ID` with `NAME` (VARCHAR from DIM_SIGNALS)
+- [ ] Remove `Approach` field (signals don't have approach, XD segments do)
 - [ ] Keep `Travel Time Index`
-- **New format:** `Name, Travel Time Index`
+- **New format:** `<NAME>, Travel Time Index`
 
 #### XD Segments
+**Data source:** `DIM_SIGNALS_XD` table
+
 Current tooltip shows: minimal info
-- [ ] Add `XD Segment` (the XD ID)
-- [ ] Add `Bearing` (from DIM_SIGNALS_XD)
-- [ ] Add `Road` (from DIM_SIGNALS_XD)
-- [ ] Add `Miles` (from DIM_SIGNALS_XD)
-- [ ] Add `Approach` (from DIM_SIGNALS_XD)
-- [ ] Add `Travel Time Index`
-- **New format:** `XD Segment, Bearing, Road, Miles, Approach, Travel Time Index`
+- [ ] Add `XD` (INT - the XD segment ID)
+- [ ] Add `BEARING` (VARCHAR from DIM_SIGNALS_XD)
+- [ ] Add `ROADNAME` (VARCHAR from DIM_SIGNALS_XD)
+- [ ] Add `MILES` (DOUBLE from DIM_SIGNALS_XD)
+- [ ] Add `APPROACH` (BOOLEAN from DIM_SIGNALS_XD)
+- [ ] Add `Travel Time Index` (calculated/aggregated)
+- **New format:** `XD: <XD>, Bearing: <BEARING>, Road: <ROADNAME>, Miles: <MILES>, Approach: <APPROACH>, TTI: <index>`
 
 **Tests:** Manual testing required (visual/UI)
 
@@ -78,8 +88,11 @@ Current tooltip shows: minimal info
 **Implementation Checklist:**
 
 #### 1. Maintained By Filter
+**Database Column:** `DIM_SIGNALS.ODOT_MAINTAINED` (BOOLEAN)
+
 **File:** `frontend/src/stores/filters.js`
 - [ ] Add state: `const maintainedBy = ref('all')`
+  - Values: `'all'` (no filter), `'odot'` (ODOT_MAINTAINED = TRUE), `'others'` (ODOT_MAINTAINED = FALSE)
 - [ ] Add action: `function setMaintainedBy(value) { maintainedBy.value = value }`
 - [ ] Update `filterParams` computed to include `maintained_by: maintainedBy.value !== 'all' ? maintainedBy.value : undefined`
 - [ ] Export `maintainedBy` and `setMaintainedBy` in return statement
@@ -132,45 +145,122 @@ Approach and Valid Geometry filters are making an api call but nothing is actual
 # Backend filters: WHERE XD IN (100, 200, 300, ..., 9999)
 ```
 
-**New (Efficient):**
-```python
-# Frontend sends: signal_ids=[1,2,3], maintained_by='odot', approach=True, valid_geometry='valid'
-# Backend uses joins:
-WITH filtered_xds AS (
-  SELECT xd.XD
-  FROM DIM_SIGNALS_XD xd
-  JOIN DIM_SIGNALS sig ON xd.ID = sig.ID
-  WHERE sig.ID IN (1,2,3)  -- OR sig.MAINTAINED_BY = 'ODOT'
-    AND xd.APPROACH = CASE WHEN ? IS NOT NULL THEN ? ELSE xd.APPROACH END
-    AND (? = 'all' OR (? = 'valid' AND xd.VALID_GEOMETRY = TRUE) OR (? = 'invalid' AND xd.VALID_GEOMETRY = FALSE))
+**New (Efficient) - Using Correct Schema:**
+```sql
+-- Schema Reference:
+-- DIM_SIGNALS: ID (VARCHAR), DISTRICT (VARCHAR), LATITUDE (DOUBLE), LONGITUDE (DOUBLE),
+--              ODOT_MAINTAINED (BOOLEAN), NAME (VARCHAR)
+-- DIM_SIGNALS_XD: ID (VARCHAR), VALID_GEOMETRY (BOOLEAN), XD (INT), BEARING (VARCHAR),
+--                 COUNTY (VARCHAR), ROADNAME (VARCHAR), MILES (DOUBLE),
+--                 APPROACH (BOOLEAN), EXTENDED (BOOLEAN)
+
+-- Frontend sends: signal_ids=['1','2','3'], maintained_by='odot', approach=true, valid_geometry='valid'
+
+-- Backend builds query with joins:
+WITH FILTERED_XDS AS (
+  SELECT
+    XD_TABLE.XD,
+    MAX(XD_TABLE.APPROACH) AS APPROACH,           -- Take MAX for duplicate XDs
+    MAX(XD_TABLE.VALID_GEOMETRY) AS VALID_GEOMETRY -- Take MAX for duplicate XDs
+  FROM DIM_SIGNALS_XD AS XD_TABLE
+  JOIN DIM_SIGNALS AS SIG_TABLE ON XD_TABLE.ID = SIG_TABLE.ID
+  WHERE
+    -- Filter by signal IDs (if provided)
+    (SIG_TABLE.ID IN ('1', '2', '3'))
+    -- Filter by ODOT_MAINTAINED (if not 'all')
+    AND (
+      :maintained_by = 'all'
+      OR (:maintained_by = 'odot' AND SIG_TABLE.ODOT_MAINTAINED = TRUE)
+      OR (:maintained_by = 'others' AND SIG_TABLE.ODOT_MAINTAINED = FALSE)
+    )
+    -- Filter by approach (if specified)
+    AND (:approach IS NULL OR XD_TABLE.APPROACH = :approach)
+    -- Filter by valid_geometry (if not 'all')
+    AND (
+      :valid_geometry = 'all'
+      OR (:valid_geometry = 'valid' AND XD_TABLE.VALID_GEOMETRY = TRUE)
+      OR (:valid_geometry = 'invalid' AND XD_TABLE.VALID_GEOMETRY = FALSE)
+    )
+  GROUP BY XD_TABLE.XD  -- Group to handle duplicate XDs with MAX aggregation
 )
-SELECT * FROM TRAVEL_TIME_ANALYTICS tta
-WHERE tta.XD IN (SELECT XD FROM filtered_xds)
+SELECT TTA.*
+FROM TRAVEL_TIME_ANALYTICS AS TTA
+WHERE TTA.XD IN (SELECT XD FROM FILTERED_XDS)
 ```
 
 #### Implementation Steps
 
 **File:** `routes/api_travel_time.py`
-- [ ] Accept new params: `signal_ids`, `maintained_by`
-- [ ] Build dynamic join query when `signal_ids` or `maintained_by` provided
-- [ ] Use `MAX(APPROACH)` and `MAX(VALID_GEOMETRY)` for duplicate XDs
-- [ ] Keep `xd_segments` param for map-based queries (small lists)
+- [ ] Accept new params from frontend:
+  - `signal_ids` (List[str]) - List of signal IDs (DIM_SIGNALS.ID)
+  - `maintained_by` (str) - One of: 'all', 'odot', 'others'
+- [ ] Build dynamic join query when `signal_ids` or `maintained_by != 'all'`
+- [ ] Use `MAX(APPROACH)` and `MAX(VALID_GEOMETRY)` with GROUP BY XD to handle duplicate XDs
+- [ ] Keep `xd_segments` param for map-based queries (small lists, direct XD filtering)
 - [ ] Add logic to choose between join-based or direct XD filtering
 
 **File:** `routes/api_anomalies.py`
 - [ ] Same changes as above
 
 **File:** `database.py` (optional helper)
-- [ ] Add helper function: `build_xd_filter_query(signal_ids, maintained_by, approach, valid_geometry)`
+- [ ] Add helper function: `build_xd_filter_query(session, signal_ids, maintained_by, approach, valid_geometry)`
+- [ ] Returns CTE or subquery for filtered XD list
 
-#### Query Decision Logic
+#### Query Decision Logic (Python/Snowpark)
 ```python
+from snowflake.snowpark.functions import col, max as max_
+
+# Get params from request
+xd_segments = request.args.get('xd_segments')  # List[int] from map clicks
+signal_ids = request.args.get('signal_ids')     # List[str] from filter panel
+maintained_by = request.args.get('maintained_by', 'all')
+approach = request.args.get('approach')         # True/False/None
+valid_geometry = request.args.get('valid_geometry', 'all')
+
 if xd_segments:
-    # Map interaction - use direct XD list (small)
-    query = query.filter(XD.in_(xd_segments))
-elif signal_ids or maintained_by:
-    # Filter panel - use joins (efficient)
-    query = build_join_filtered_query(signal_ids, maintained_by, approach, valid_geometry)
+    # Map interaction - use direct XD list (small, efficient)
+    xd_list = [int(xd) for xd in xd_segments.split(',')]
+    tta_data = session.table('TRAVEL_TIME_ANALYTICS').filter(col('XD').isin(xd_list))
+
+elif signal_ids or maintained_by != 'all':
+    # Filter panel - use joins (efficient for large selections)
+
+    # Build filtered XD CTE
+    xd_table = session.table('DIM_SIGNALS_XD').alias('XD_TABLE')
+    sig_table = session.table('DIM_SIGNALS').alias('SIG_TABLE')
+
+    # Join tables
+    joined = xd_table.join(sig_table, xd_table['ID'] == sig_table['ID'])
+
+    # Apply filters
+    if signal_ids:
+        signal_id_list = signal_ids.split(',')
+        joined = joined.filter(col('SIG_TABLE.ID').isin(signal_id_list))
+
+    if maintained_by == 'odot':
+        joined = joined.filter(col('SIG_TABLE.ODOT_MAINTAINED') == True)
+    elif maintained_by == 'others':
+        joined = joined.filter(col('SIG_TABLE.ODOT_MAINTAINED') == False)
+
+    if approach is not None:
+        joined = joined.filter(col('XD_TABLE.APPROACH') == approach)
+
+    if valid_geometry == 'valid':
+        joined = joined.filter(col('XD_TABLE.VALID_GEOMETRY') == True)
+    elif valid_geometry == 'invalid':
+        joined = joined.filter(col('XD_TABLE.VALID_GEOMETRY') == False)
+
+    # Aggregate with MAX to handle duplicate XDs
+    filtered_xds = joined.group_by('XD_TABLE.XD').agg(
+        max_(col('XD_TABLE.APPROACH')).alias('APPROACH'),
+        max_(col('XD_TABLE.VALID_GEOMETRY')).alias('VALID_GEOMETRY')
+    ).select('XD')
+
+    # Get XD list
+    xd_list = [row['XD'] for row in filtered_xds.collect()]
+
+    # Filter TRAVEL_TIME_ANALYTICS
+    tta_data = session.table('TRAVEL_TIME_ANALYTICS').filter(col('XD').isin(xd_list))
 ```
 
 **Tests to pass:** 1 test in "PLAN.md Feature: API Efficiency with Filter-Based Queries"

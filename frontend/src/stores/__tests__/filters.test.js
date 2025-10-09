@@ -44,12 +44,15 @@ describe('Filters Store', () => {
   describe('PLAN.md Feature: Maintained By Filter', () => {
     it('should have maintainedBy filter with default value "all"', () => {
       // EXPECTED: New maintainedBy state in store
+      // Maps to ODOT_MAINTAINED BOOLEAN column in DIM_SIGNALS
+      // "all" = no filter, "odot" = true, "others" = false
       // STATUS: Will FAIL - feature not implemented yet
       expect(store.maintainedBy).toBe('all')
     })
 
     it('should allow setting maintainedBy to "odot"', () => {
       // EXPECTED: setMaintainedBy action exists
+      // "odot" means filter WHERE ODOT_MAINTAINED = TRUE
       // STATUS: Will FAIL - feature not implemented yet
       store.setMaintainedBy('odot')
       expect(store.maintainedBy).toBe('odot')
@@ -57,6 +60,7 @@ describe('Filters Store', () => {
 
     it('should allow setting maintainedBy to "others"', () => {
       // EXPECTED: setMaintainedBy action exists
+      // "others" means filter WHERE ODOT_MAINTAINED = FALSE
       // STATUS: Will FAIL - feature not implemented yet
       store.setMaintainedBy('others')
       expect(store.maintainedBy).toBe('others')
@@ -64,6 +68,7 @@ describe('Filters Store', () => {
 
     it('should include maintainedBy in filterParams when not "all"', () => {
       // EXPECTED: filterParams includes maintained_by when filter is active
+      // Backend will use this to filter DIM_SIGNALS.ODOT_MAINTAINED
       // STATUS: Will FAIL - feature not implemented yet
       store.setMaintainedBy('odot')
 

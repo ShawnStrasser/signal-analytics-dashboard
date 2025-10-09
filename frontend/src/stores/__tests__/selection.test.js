@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest'
 import { useSelectionStore } from '../selection'
-import { setupTestPinia, createMockSignal, createMultiXdSignal, createOverlappingSignals } from '@/test-utils'
+import { setupTestPinia, createMockSignal, createMockXdSegment, createMultiXdSignal, createOverlappingSignals } from '@/test-utils'
 
 describe('Selection Store', () => {
   let store
@@ -30,55 +30,56 @@ describe('Selection Store', () => {
 
   describe('updateMappings', () => {
     it('should build signal-to-XD mappings', () => {
+      // Note: Using XD segments with string IDs per VARCHAR schema
       const signals = [
-        createMockSignal({ ID: 1, XD: 100 }),
-        createMockSignal({ ID: 1, XD: 200 }),
-        createMockSignal({ ID: 2, XD: 300 }),
+        createMockXdSegment({ ID: '1', XD: 100 }),
+        createMockXdSegment({ ID: '1', XD: 200 }),
+        createMockXdSegment({ ID: '2', XD: 300 }),
       ]
 
       store.updateMappings(signals)
 
-      expect(store.signalToXdMap.get(1)).toEqual([100, 200])
-      expect(store.signalToXdMap.get(2)).toEqual([300])
+      expect(store.signalToXdMap.get('1')).toEqual([100, 200])
+      expect(store.signalToXdMap.get('2')).toEqual([300])
     })
 
     it('should build XD-to-signals mappings', () => {
       const signals = [
-        createMockSignal({ ID: 1, XD: 100 }),
-        createMockSignal({ ID: 2, XD: 100 }), // Multiple signals share XD 100
-        createMockSignal({ ID: 2, XD: 200 }),
+        createMockXdSegment({ ID: '1', XD: 100 }),
+        createMockXdSegment({ ID: '2', XD: 100 }), // Multiple signals share XD 100
+        createMockXdSegment({ ID: '2', XD: 200 }),
       ]
 
       store.updateMappings(signals)
 
-      expect(store.xdToSignalsMap.get(100)).toEqual([1, 2])
-      expect(store.xdToSignalsMap.get(200)).toEqual([2])
+      expect(store.xdToSignalsMap.get(100)).toEqual(['1', '2'])
+      expect(store.xdToSignalsMap.get(200)).toEqual(['2'])
     })
 
     it('should handle signals with null/undefined XD', () => {
       const signals = [
-        createMockSignal({ ID: 1, XD: 100 }),
-        createMockSignal({ ID: 2, XD: null }),
-        createMockSignal({ ID: 3, XD: undefined }),
+        createMockXdSegment({ ID: '1', XD: 100 }),
+        createMockXdSegment({ ID: '2', XD: null }),
+        createMockXdSegment({ ID: '3', XD: undefined }),
       ]
 
       store.updateMappings(signals)
 
       expect(store.signalToXdMap.size).toBe(1)
-      expect(store.signalToXdMap.get(1)).toEqual([100])
-      expect(store.signalToXdMap.has(2)).toBe(false)
-      expect(store.signalToXdMap.has(3)).toBe(false)
+      expect(store.signalToXdMap.get('1')).toEqual([100])
+      expect(store.signalToXdMap.has('2')).toBe(false)
+      expect(store.signalToXdMap.has('3')).toBe(false)
     })
 
     it('should not duplicate XD segments for the same signal', () => {
       const signals = [
-        createMockSignal({ ID: 1, XD: 100 }),
-        createMockSignal({ ID: 1, XD: 100 }), // Duplicate
+        createMockXdSegment({ ID: '1', XD: 100 }),
+        createMockXdSegment({ ID: '1', XD: 100 }), // Duplicate
       ]
 
       store.updateMappings(signals)
 
-      expect(store.signalToXdMap.get(1)).toEqual([100])
+      expect(store.signalToXdMap.get('1')).toEqual([100])
     })
   })
 
@@ -181,21 +182,21 @@ describe('Selection Store', () => {
       // Signal 1: XD 100, 200
       // Signal 2: XD 200, 300 (XD 200 is shared)
       const signals = [
-        createMockSignal({ ID: 1, XD: 100 }),
-        createMockSignal({ ID: 1, XD: 200 }),
-        createMockSignal({ ID: 2, XD: 200 }),
-        createMockSignal({ ID: 2, XD: 300 }),
+        createMockXdSegment({ ID: '1', XD: 100 }),
+        createMockXdSegment({ ID: '1', XD: 200 }),
+        createMockXdSegment({ ID: '2', XD: 200 }),
+        createMockXdSegment({ ID: '2', XD: 300 }),
       ]
       store.updateMappings(signals)
 
       // Select both signals
-      store.toggleSignal(1)
-      store.toggleSignal(2)
+      store.toggleSignal('1')
+      store.toggleSignal('2')
 
       expect(store.selectedXdSegmentsList.sort()).toEqual([100, 200, 300])
 
       // Deselect signal 1
-      store.toggleSignal(1)
+      store.toggleSignal('1')
 
       // EXPECTED: XD 200 should still be selected (because signal 2 is still selected)
       // BUG: XD 200 gets deselected even though signal 2 is still selected
@@ -307,15 +308,17 @@ describe('Selection Store', () => {
     })
 
     it('getSignalsForXdSegment should return associated signals', () => {
-      expect(store.getSignalsForXdSegment(200)).toEqual([1, 2]) // Shared by signals 1 and 2
-      expect(store.getSignalsForXdSegment(100)).toEqual([1])
-      expect(store.getSignalsForXdSegment(400)).toEqual([3])
+      // Note: IDs are now VARCHAR strings per README.md schema
+      expect(store.getSignalsForXdSegment(200)).toEqual(['1', '2']) // Shared by signals 1 and 2
+      expect(store.getSignalsForXdSegment(100)).toEqual(['1'])
+      expect(store.getSignalsForXdSegment(400)).toEqual(['3'])
     })
 
     it('getXdSegmentsForSignal should return associated XD segments', () => {
-      expect(store.getXdSegmentsForSignal(1)).toEqual([100, 200])
-      expect(store.getXdSegmentsForSignal(2)).toEqual([200, 300])
-      expect(store.getXdSegmentsForSignal(3)).toEqual([400])
+      // Note: IDs are now VARCHAR strings per README.md schema
+      expect(store.getXdSegmentsForSignal('1')).toEqual([100, 200])
+      expect(store.getXdSegmentsForSignal('2')).toEqual([200, 300])
+      expect(store.getXdSegmentsForSignal('3')).toEqual([400])
     })
   })
 

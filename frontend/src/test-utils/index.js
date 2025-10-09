@@ -18,14 +18,14 @@ export function setupTestPinia() {
 /**
  * Mock signal data factory (DIM_SIGNALS)
  * Creates test signal data with customizable properties
- * Per PLAN.md: DIM_SIGNALS now has lat/long, District, Name, MAINTAINED_BY
+ * Per README.md schema: ID, DISTRICT, LATITUDE, LONGITUDE, ODOT_MAINTAINED, NAME
  */
 export function createMockSignal(overrides = {}) {
   return {
-    ID: 1,
+    ID: '1',
     NAME: 'Signal 1',
     DISTRICT: 'District 1',
-    MAINTAINED_BY: 'ODOT',
+    ODOT_MAINTAINED: true,
     LATITUDE: 39.7392,
     LONGITUDE: -104.9903,
     TRAVEL_TIME_INDEX: 1.2,
@@ -39,17 +39,19 @@ export function createMockSignal(overrides = {}) {
 
 /**
  * Mock XD segment data factory (DIM_SIGNALS_XD)
- * Per PLAN.md: DIM_SIGNALS_XD no longer has lat/long, only XD relationships
+ * Per README.md schema: ID, VALID_GEOMETRY, XD, BEARING, COUNTY, ROADNAME, MILES, APPROACH, EXTENDED
  */
 export function createMockXdSegment(overrides = {}) {
   return {
-    ID: 1, // Signal ID
+    ID: '1', // Signal ID (VARCHAR)
     XD: 100,
     APPROACH: true,
     VALID_GEOMETRY: true,
-    BEARING: 90,
-    ROAD: 'Main St',
+    BEARING: '90',
+    COUNTY: 'Test County',
+    ROADNAME: 'Main St',
     MILES: 0.5,
+    EXTENDED: false,
     ...overrides
   }
 }
@@ -57,10 +59,11 @@ export function createMockXdSegment(overrides = {}) {
 /**
  * Creates multiple XD segments for the same signal ID
  * Simulates a signal with multiple XD segments (approach/extended)
+ * Note: Ensures ID is a string per VARCHAR schema
  */
 export function createMultiXdSignal(signalId, xdSegments = [100, 200]) {
   return xdSegments.map((xd, index) => createMockXdSegment({
-    ID: signalId,
+    ID: String(signalId), // Ensure ID is string per VARCHAR schema
     XD: xd,
     APPROACH: index === 0, // First is approach, rest are extended
   }))
@@ -73,34 +76,35 @@ export function createMultiXdSignal(signalId, xdSegments = [100, 200]) {
 export function createOverlappingSignals() {
   return [
     // Signal 1 has XD 100, 200
-    createMockXdSegment({ ID: 1, XD: 100 }),
-    createMockXdSegment({ ID: 1, XD: 200 }),
+    createMockXdSegment({ ID: '1', XD: 100 }),
+    createMockXdSegment({ ID: '1', XD: 200 }),
     // Signal 2 has XD 200, 300 (200 is shared with Signal 1)
-    createMockXdSegment({ ID: 2, XD: 200 }),
-    createMockXdSegment({ ID: 2, XD: 300 }),
+    createMockXdSegment({ ID: '2', XD: 200 }),
+    createMockXdSegment({ ID: '2', XD: 300 }),
     // Signal 3 has XD 400 (no overlap)
-    createMockXdSegment({ ID: 3, XD: 400 }),
+    createMockXdSegment({ ID: '3', XD: 400 }),
   ]
 }
 
 /**
  * Creates mock signals grouped by district
  * Useful for testing hierarchical district filter
+ * ODOT_MAINTAINED is a BOOLEAN per README.md schema
  */
 export function createSignalsByDistrict() {
   return [
     // District 1 - ODOT maintained
-    createMockSignal({ ID: 101, NAME: 'Signal 101', DISTRICT: 'District 1', MAINTAINED_BY: 'ODOT' }),
-    createMockSignal({ ID: 102, NAME: 'Signal 102', DISTRICT: 'District 1', MAINTAINED_BY: 'ODOT' }),
-    createMockSignal({ ID: 103, NAME: 'Signal 103', DISTRICT: 'District 1', MAINTAINED_BY: 'ODOT' }),
+    createMockSignal({ ID: '101', NAME: 'Signal 101', DISTRICT: 'District 1', ODOT_MAINTAINED: true }),
+    createMockSignal({ ID: '102', NAME: 'Signal 102', DISTRICT: 'District 1', ODOT_MAINTAINED: true }),
+    createMockSignal({ ID: '103', NAME: 'Signal 103', DISTRICT: 'District 1', ODOT_MAINTAINED: true }),
 
     // District 2 - Mixed maintenance
-    createMockSignal({ ID: 201, NAME: 'Signal 201', DISTRICT: 'District 2', MAINTAINED_BY: 'ODOT' }),
-    createMockSignal({ ID: 202, NAME: 'Signal 202', DISTRICT: 'District 2', MAINTAINED_BY: 'City' }),
+    createMockSignal({ ID: '201', NAME: 'Signal 201', DISTRICT: 'District 2', ODOT_MAINTAINED: true }),
+    createMockSignal({ ID: '202', NAME: 'Signal 202', DISTRICT: 'District 2', ODOT_MAINTAINED: false }),
 
-    // District 3 - Others maintained
-    createMockSignal({ ID: 301, NAME: 'Signal 301', DISTRICT: 'District 3', MAINTAINED_BY: 'City' }),
-    createMockSignal({ ID: 302, NAME: 'Signal 302', DISTRICT: 'District 3', MAINTAINED_BY: 'County' }),
+    // District 3 - Others maintained (not ODOT)
+    createMockSignal({ ID: '301', NAME: 'Signal 301', DISTRICT: 'District 3', ODOT_MAINTAINED: false }),
+    createMockSignal({ ID: '302', NAME: 'Signal 302', DISTRICT: 'District 3', ODOT_MAINTAINED: false }),
   ]
 }
 
@@ -111,12 +115,12 @@ export function createSignalsByDistrict() {
 export function createDuplicateXdSegments() {
   return [
     // XD 100 appears twice: once as approach, once as extended
-    createMockXdSegment({ ID: 1, XD: 100, APPROACH: true, VALID_GEOMETRY: true }),
-    createMockXdSegment({ ID: 2, XD: 100, APPROACH: false, VALID_GEOMETRY: false }),
+    createMockXdSegment({ ID: '1', XD: 100, APPROACH: true, VALID_GEOMETRY: true, EXTENDED: false }),
+    createMockXdSegment({ ID: '2', XD: 100, APPROACH: false, VALID_GEOMETRY: false, EXTENDED: true }),
 
     // XD 200 appears twice: both as approach
-    createMockXdSegment({ ID: 1, XD: 200, APPROACH: true, VALID_GEOMETRY: true }),
-    createMockXdSegment({ ID: 3, XD: 200, APPROACH: true, VALID_GEOMETRY: false }),
+    createMockXdSegment({ ID: '1', XD: 200, APPROACH: true, VALID_GEOMETRY: true, EXTENDED: false }),
+    createMockXdSegment({ ID: '3', XD: 200, APPROACH: true, VALID_GEOMETRY: false, EXTENDED: false }),
   ]
 }
 
