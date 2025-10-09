@@ -40,7 +40,7 @@ Implement these steps **one at a time** to ensure each piece works before moving
 
 ### Step 4a: Fix Backend Query Inefficiency ✅ COMPLETED (Travel Time endpoints only)
 **Goal:** Eliminate XD collection and resubmission - do ALL filtering at database level
-**Status:** Travel time endpoints updated, anomaly endpoints TODO
+**Status:** Travel time endpoints updated (backend + frontend caching fixed), anomaly endpoints TODO
 **Problem:** Current implementation:
 1. Queries DIM_SIGNALS/DIM_SIGNALS_XD to get XD list (e.g., 5000 XDs)
 2. Collects XDs in Python: `xd_list = [row['XD'] for row in filtered_xds.collect()]`
