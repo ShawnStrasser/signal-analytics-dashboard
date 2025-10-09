@@ -14,16 +14,28 @@ Two connection methods are supported:
 ```sql
 CREATE TABLE DIM_SIGNALS_XD (
     ID VARCHAR,
-    latitude DOUBLE,
-    longitude DOUBLE,
-    valid_geometry BOOLEAN,
+    --LAT/LONG WERE REMOVED!
+    --LATITUDE DOUBLE,
+    --LONGITUDE DOUBLE,
+    VALID_GEOMETRY BOOLEAN,
     XD INT,
-    bearing VARCHAR,
-    county VARCHAR,
-    roadName VARCHAR,
-    miles DOUBLE,
-    approach BOOLEAN,
-    extended BOOLEAN
+    BEARING VARCHAR,
+    COUNTY VARCHAR,
+    ROADNAME VARCHAR,
+    MILES DOUBLE,
+    APPROACH BOOLEAN,
+    EXTENDED BOOLEAN
+);
+```
+NEW TABLE ADDED:
+```sql
+CREATE TABLE DIM_SIGNALS (
+    ID VARCHAR,
+    DISTRICT VARCHAR,
+    LATITUDE DOUBLE,
+    LONGITUDE DOUBLE,
+    ODOT_MAINTAINED BOOLEAN,
+    NAME VARCHAR
 );
 ```
 
