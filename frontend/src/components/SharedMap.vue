@@ -91,7 +91,8 @@ function getZIndexOffset(category) {
 }
 
 // Check if we should use SVG icons based on number of signals visible in current viewport
-function shouldUseSvgIcons() {
+// signalData parameter is optional - used during updateMarkers to get accurate count during transition
+function shouldUseSvgIcons(signalData = null) {
   if (!map) {
     console.log('🎨 shouldUseSvgIcons: no map yet, defaulting to circles')
     return false
@@ -101,12 +102,22 @@ function shouldUseSvgIcons() {
   const bounds = map.getBounds()
   let visibleCount = 0
 
-  signalMarkers.forEach((marker, signalId) => {
-    const latLng = marker.getLatLng()
-    if (bounds.contains(latLng)) {
-      visibleCount++
-    }
-  })
+  if (signalData && Array.isArray(signalData)) {
+    // Use provided signal data (during updateMarkers when signalMarkers may be stale)
+    signalData.forEach(signal => {
+      if (signal.LATITUDE && signal.LONGITUDE && bounds.contains([signal.LATITUDE, signal.LONGITUDE])) {
+        visibleCount++
+      }
+    })
+  } else {
+    // Use existing markers (for other cases like zoom events)
+    signalMarkers.forEach((marker, signalId) => {
+      const latLng = marker.getLatLng()
+      if (bounds.contains(latLng)) {
+        visibleCount++
+      }
+    })
+  }
 
   const useSvg = visibleCount <= SIGNAL_COUNT_THRESHOLD
   return useSvg
@@ -1255,6 +1266,9 @@ function updateMarkers() {
       }
     })
 
+    // Determine icon type based on NEW signal data (not stale markers)
+    const useSvgForAll = shouldUseSvgIcons(aggregatedSignals)
+
     // Update existing markers or create new ones
     aggregatedSignals.forEach(signal => {
       bounds.push([signal.LATITUDE, signal.LONGITUDE])
@@ -1287,12 +1301,11 @@ function updateMarkers() {
         }
       } else {
         // Create new marker with appropriate icon based on viewport signal count
-        const useSvg = shouldUseSvgIcons()
-        const iconSize = getMarkerSize(category, useSvg)
-        const iconUrl = useSvg
+        const iconSize = getMarkerSize(category, useSvgForAll)
+        const iconUrl = useSvgForAll
           ? createTrafficSignalIcon(category, isSelected, iconSize)
           : createCircleIcon(category, isSelected, iconSize)
-        const iconHeight = useSvg ? iconSize * 1.4 : iconSize
+        const iconHeight = useSvgForAll ? iconSize * 1.4 : iconSize
         const icon = L.divIcon({
           html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconHeight}px;">`,
           className: 'traffic-signal-icon',
@@ -1416,6 +1429,9 @@ function updateMarkers() {
       }
     })
 
+    // Determine icon type based on NEW signal data (not stale markers)
+    const useSvgForAll = shouldUseSvgIcons(aggregatedSignals)
+
     // Update existing markers or create new ones
     aggregatedSignals.forEach(signal => {
       bounds.push([signal.LATITUDE, signal.LONGITUDE])
@@ -1448,12 +1464,11 @@ function updateMarkers() {
         }
       } else {
         // Create new marker with appropriate icon based on viewport signal count
-        const useSvg = shouldUseSvgIcons()
-        const iconSize = getMarkerSize(category, useSvg)
-        const iconUrl = useSvg
+        const iconSize = getMarkerSize(category, useSvgForAll)
+        const iconUrl = useSvgForAll
           ? createTrafficSignalIcon(category, isSelected, iconSize)
           : createCircleIcon(category, isSelected, iconSize)
-        const iconHeight = useSvg ? iconSize * 1.4 : iconSize
+        const iconHeight = useSvgForAll ? iconSize * 1.4 : iconSize
         const icon = L.divIcon({
           html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconHeight}px;">`,
           className: 'traffic-signal-icon',
