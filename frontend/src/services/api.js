@@ -93,6 +93,10 @@ class ApiService {
     return this.fetchArrowData('/signals')
   }
 
+  async getDimSignals() {
+    return this.fetchArrowData('/dim-signals')
+  }
+
   async getTravelTimeSummary(filters) {
     return this.fetchArrowData('/travel-time-summary', filters)
   }

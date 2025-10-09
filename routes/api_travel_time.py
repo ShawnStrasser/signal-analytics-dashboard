@@ -39,7 +39,7 @@ _xd_geometry_cache = None
 
 @travel_time_bp.route('/signals')
 def get_signals():
-    """Get signals dimension data as Arrow"""
+    """Get signals dimension data as Arrow (DIM_SIGNALS_XD)"""
     session = get_snowflake_session(retry=True, max_retries=2)
     if not session:
         return "Connecting to Database - please wait", 503
@@ -67,6 +67,34 @@ def get_signals():
     except Exception as e:
         print(f"[ERROR] /signals: {e}")
         return f"Error fetching signals data: {e}", 500
+
+
+@travel_time_bp.route('/dim-signals')
+def get_dim_signals():
+    """Get DIM_SIGNALS dimension data (for hierarchical filtering, cached on client)"""
+    session = get_snowflake_session(retry=True, max_retries=2)
+    if not session:
+        return "Connecting to Database - please wait", 503
+
+    query = """
+    SELECT
+        ID,
+        DISTRICT,
+        LATITUDE,
+        LONGITUDE,
+        ODOT_MAINTAINED,
+        NAME
+    FROM DIM_SIGNALS
+    ORDER BY DISTRICT, ID
+    """
+
+    try:
+        arrow_data = session.sql(query).to_arrow()
+        arrow_bytes = snowflake_result_to_arrow(arrow_data)
+        return create_arrow_response(arrow_bytes)
+    except Exception as e:
+        print(f"[ERROR] /dim-signals: {e}")
+        return f"Error fetching DIM_SIGNALS data: {e}", 500
 
 
 @travel_time_bp.route('/xd-geometry')

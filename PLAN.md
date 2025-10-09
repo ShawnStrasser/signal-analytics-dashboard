@@ -40,7 +40,8 @@ Implement these steps **one at a time** to ensure each piece works before moving
 
 ### Step 4a: Fix Backend Query Inefficiency ✅ COMPLETED (Travel Time endpoints only)
 **Goal:** Eliminate XD collection and resubmission - do ALL filtering at database level
-**Status:** Travel time endpoints updated (backend + frontend caching fixed), anomaly endpoints TODO
+**Status:** Travel time endpoints updated (backend + frontend caching fixed)
+**NOTE:** Anomaly endpoints still use old pattern - will update AFTER all other steps are complete
 **Problem:** Current implementation:
 1. Queries DIM_SIGNALS/DIM_SIGNALS_XD to get XD list (e.g., 5000 XDs)
 2. Collects XDs in Python: `xd_list = [row['XD'] for row in filtered_xds.collect()]`
@@ -129,14 +130,15 @@ ORDER BY t.TIMESTAMP;
 - Check console for single SQL query (not two separate queries)
 - Ensure performance improves for large signal selections
 
-### Step 4b: Fetch and Cache DIM_SIGNALS Data ⏳ NOT STARTED
+### Step 4b: Fetch and Cache DIM_SIGNALS Data ✅ COMPLETED
 **Goal:** Fetch complete signal dimension data once and cache in frontend
 **Why:** Need DISTRICT and ODOT_MAINTAINED columns for hierarchical filtering and maintainedBy client-side filtering
+**Status:** Backend endpoint and frontend store complete
 
 **Files:**
-- Add new endpoint: `routes/api_travel_time.py` - `/api/dim-signals`
-- Add new store: `frontend/src/stores/signals.js` - Cache DIM_SIGNALS data
-- Update: `frontend/src/components/FilterPanel.vue` - Use cached signal data
+- ✅ Add new endpoint: `routes/api_travel_time.py` - `/api/dim-signals`
+- ✅ Add new store: `frontend/src/stores/signals.js` - Cache DIM_SIGNALS data
+- ⏳ Update: `frontend/src/components/FilterPanel.vue` - Use cached signal data (will be done in later steps)
 
 **Backend Implementation:**
 ```python
@@ -287,6 +289,19 @@ const displayedMapData = computed(() => {
 - Current: Minimal info
 - New: `XD: <XD>, Bearing: <BEARING>, Road: <ROADNAME>, Miles: <MILES>, Approach: <APPROACH>, TTI: <index>`
 
+### Step 8: Fix Anomaly Endpoint Query Inefficiency ⏳ NOT STARTED
+**Goal:** Apply same efficient join-based pattern to anomaly endpoints (same as Step 4a for travel time)
+**Files:** `routes/api_anomalies.py`
+**Why last:** Lower priority than getting hierarchical filtering working on Travel Time page
+**Dependencies:** Step 4a pattern established
+
+**Endpoints to update:**
+- `/anomaly-summary` - Apply join-based filtering
+- `/anomaly-aggregated` - Apply join-based filtering
+- `/travel-time-data` - Apply join-based filtering
+
+**Pattern:** Use `build_filter_joins_and_where()` instead of `build_xd_filter_with_joins()` + `collect()` + XD list
+
 ---
 
 ## Current Status
@@ -296,16 +311,15 @@ const displayedMapData = computed(() => {
 - ✅ Step 2: Backend accepts parameters (but inefficient)
 - ✅ Step 3: District selection store functions
 - ✅ Step 4: Maintained By dropdown UI + watchers
-
-**In Progress:**
-- ⚠️ Step 4a: Fix backend query inefficiency (CURRENT TASK)
+- ✅ Step 4a: Backend query efficiency (travel time endpoints only)
+- ✅ Step 4b: Fetch and cache DIM_SIGNALS data
 
 **Not Started:**
-- ⏳ Step 4b: Fetch and cache DIM_SIGNALS
-- ⏳ Step 4c: Filter map display
+- ⏳ Step 4c: Filter map display (NEXT TASK)
 - ⏳ Step 5: Hierarchical district UI
 - ⏳ Step 6: Verify approach/validGeometry
 - ⏳ Step 7: Update tooltips
+- ⏳ Step 8: Fix anomaly endpoint inefficiency (do last)
 
 ---
 
