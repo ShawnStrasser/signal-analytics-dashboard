@@ -22,6 +22,7 @@ from utils.query_utils import (
     extract_xd_values,
     build_xd_filter,
     build_xd_filter_with_joins,
+    build_filter_joins_and_where,
     create_xd_lookup_dict,
     build_time_of_day_filter,
     build_day_of_week_filter,
@@ -160,142 +161,67 @@ def get_travel_time_summary():
         print(f"  Params: date={start_date_str} to {end_date_str}, signals={len(signal_ids) if signal_ids else 'all'}")
 
     try:
-        # Step 1: Determine whether to use join-based or direct filtering
-        # Use join-based filtering when signal_ids or maintained_by filter is active
-        use_join_based = signal_ids or maintained_by != 'all'
-
-        if use_join_based:
-            # Efficient join-based query for large signal selections
-            dim_query_start = time.time()
-            xd_values = build_xd_filter_with_joins(
-                session, signal_ids, maintained_by, approach, valid_geometry
-            )
-            dim_query_time = (time.time() - dim_query_start) * 1000
-
-            if DEBUG_BACKEND_TIMING:
-                print(f"  [1] Join-based XD filter: {dim_query_time:.2f}ms ({len(xd_values) if xd_values else 0} unique XDs)")
-
-            if not xd_values:
-                if DEBUG_BACKEND_TIMING:
-                    print(f"  [EARLY EXIT] No XD values from join filter")
-                arrow_bytes = create_empty_arrow_response('travel_time_summary')
-                return create_arrow_response(arrow_bytes)
-        else:
-            # No filters - will query all XDs
-            xd_values = None
-            if DEBUG_BACKEND_TIMING:
-                print(f"  [INFO] No filters applied - querying all XDs")
-
-        # Step 1b: Get dimension data for map display (still need lat/lon/approach/etc)
-        dim_query_start = time.time()
-        dim_query = build_xd_dimension_query(signal_ids, approach, valid_geometry)
-        dim_result = session.sql(dim_query).collect()
-        dim_query_time = (time.time() - dim_query_start) * 1000
-
-        if DEBUG_BACKEND_TIMING:
-            print(f"  [1b] DIM_SIGNALS_XD query for display data: {dim_query_time:.2f}ms ({len(dim_result)} rows)")
-
-        if not dim_result:
-            if DEBUG_BACKEND_TIMING:
-                print(f"  [EARLY EXIT] No dimension results")
-            arrow_bytes = create_empty_arrow_response('travel_time_summary')
-            return create_arrow_response(arrow_bytes)
-
-        # Step 2: Query TRAVEL_TIME_ANALYTICS using XD values, join with FREEFLOW to calculate TTI
-        # Build the map query - always groups by XD regardless of date range
-        xd_filter = build_xd_filter(xd_values) if xd_values else ""
-
-        if DEBUG_BACKEND_TIMING:
-            if xd_values:
-                print(f"  [INFO] XD filter applied: {len(xd_values)} XDs")
-            else:
-                print(f"  [INFO] NO XD filter (querying all signals)")
-
-        analytics_query_start = time.time()
-
-        # Map query pattern: Calculate average travel time, then divide by freeflow
-        analytics_query = f"""
-        WITH t1 AS (
-            SELECT
-                t.XD,
-                AVG(t.TRAVEL_TIME_SECONDS) as AVG_TRAVEL_TIME
-            FROM TRAVEL_TIME_ANALYTICS t
-            {dow_filter}
-            WHERE t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'
-            {xd_filter.replace('XD', 't.XD')}
-            {time_filter.replace('TIME_15MIN', 't.TIME_15MIN')}
-            GROUP BY t.XD
+        # Build filter joins for efficient SQL filtering
+        filter_join, filter_where = build_filter_joins_and_where(
+            signal_ids, maintained_by, approach, valid_geometry
         )
+
+        # Build single efficient query with all joins and filters
+        query_start = time.time()
+
+        # Build WHERE clause parts
+        where_parts = [f"t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'"]
+
+        if filter_where:
+            where_parts.append(filter_where)
+
+        if time_filter:
+            clean_time = time_filter.strip()
+            if clean_time.startswith('AND '):
+                clean_time = clean_time[4:]
+            clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
+            where_parts.append(clean_time)
+
+        where_clause = " AND ".join(where_parts)
+
+        # Build FROM clause
+        # Always join DIM_SIGNALS_XD and DIM_SIGNALS for map data (need lat/lon from DIM_SIGNALS)
+        from_clause = f"""FROM TRAVEL_TIME_ANALYTICS t
+        {dow_filter}
+        INNER JOIN FREEFLOW f ON t.XD = f.XD
+        INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD
+        INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID"""
+
+        # Single query that does all filtering in SQL
+        # Note: LATITUDE and LONGITUDE come from DIM_SIGNALS (s), not DIM_SIGNALS_XD
+        analytics_query = f"""
         SELECT
-            t1.XD,
-            t1.AVG_TRAVEL_TIME / f.TRAVEL_TIME_SECONDS as TRAVEL_TIME_INDEX,
-            t1.AVG_TRAVEL_TIME,
-            0 as RECORD_COUNT
-        FROM t1
-        INNER JOIN FREEFLOW f ON t1.XD = f.XD
-        ORDER BY t1.XD
+            s.ID,
+            s.LATITUDE,
+            s.LONGITUDE,
+            xd.APPROACH,
+            xd.VALID_GEOMETRY,
+            xd.XD,
+            AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) AS TRAVEL_TIME_INDEX,
+            AVG(t.TRAVEL_TIME_SECONDS) AS AVG_TRAVEL_TIME,
+            0 AS RECORD_COUNT
+        {from_clause}
+        WHERE {where_clause}
+        GROUP BY s.ID, s.LATITUDE, s.LONGITUDE, xd.APPROACH, xd.VALID_GEOMETRY, xd.XD
+        ORDER BY xd.XD
         """
 
-        analytics_result = session.sql(analytics_query).collect()
-        analytics_query_time = (time.time() - analytics_query_start) * 1000
-
         if DEBUG_BACKEND_TIMING:
-            print(f"  [3] Analytics query: {analytics_query_time:.2f}ms ({len(analytics_result)} rows)")
+            print(f"  [QUERY]:\n{analytics_query}\n")
 
-        # Step 3: Join results - create XD -> analytics lookup
-        join_start = time.time()
-        analytics_dict = create_xd_lookup_dict(analytics_result)
-        join_time = (time.time() - join_start) * 1000
+        arrow_data = session.sql(analytics_query).to_arrow()
+        query_time = (time.time() - query_start) * 1000
 
-        if DEBUG_BACKEND_TIMING:
-            print(f"  [4] Create XD lookup dict: {join_time:.2f}ms")
-
-        # Build final Arrow table
-        serialize_start = time.time()
-        ids = []
-        latitudes = []
-        longitudes = []
-        approaches = []
-        valid_geometries = []
-        xds = []
-        travel_time_indexes = []
-        avg_travel_times = []
-        record_counts = []
-
-        for row in dim_result:
-            dim_dict = row.as_dict()
-            xd = dim_dict['XD']
-            analytics = analytics_dict.get(xd, {})
-
-            ids.append(dim_dict['ID'])
-            latitudes.append(dim_dict['LATITUDE'])
-            longitudes.append(dim_dict['LONGITUDE'])
-            approaches.append(dim_dict.get('APPROACH'))
-            valid_geometries.append(dim_dict.get('VALID_GEOMETRY'))
-            xds.append(xd)
-            travel_time_indexes.append(analytics.get('TRAVEL_TIME_INDEX', 0))
-            avg_travel_times.append(analytics.get('AVG_TRAVEL_TIME', 0))
-            record_counts.append(analytics.get('RECORD_COUNT', 0))
-
-        result_table = pa.table({
-            'ID': ids,
-            'LATITUDE': latitudes,
-            'LONGITUDE': longitudes,
-            'APPROACH': approaches,
-            'VALID_GEOMETRY': valid_geometries,
-            'XD': xds,
-            'TRAVEL_TIME_INDEX': travel_time_indexes,
-            'AVG_TRAVEL_TIME': avg_travel_times,
-            'RECORD_COUNT': record_counts
-        })
-
-        arrow_bytes = serialize_arrow_to_ipc(result_table)
-        serialize_time = (time.time() - serialize_start) * 1000
-
+        arrow_bytes = snowflake_result_to_arrow(arrow_data)
         total_time = (time.time() - request_start) * 1000
 
         if DEBUG_BACKEND_TIMING:
-            print(f"  [5] Build Arrow table & serialize: {serialize_time:.2f}ms")
+            print(f"  [1] Single efficient query: {query_time:.2f}ms ({arrow_data.num_rows} rows)")
             print(f"  [TOTAL] /travel-time-summary: {total_time:.2f}ms\n")
 
         return create_arrow_response(arrow_bytes)
@@ -347,34 +273,30 @@ def get_travel_time_aggregated():
         print(f"  Params: date={start_date_str} to {end_date_str}, xd_segments={len(xd_segments) if xd_segments else 0}, signals={len(signal_ids) if signal_ids else 0}, agg_level={agg_level}, legend_by={legend_by}")
 
     try:
-        # Resolve XD segments if signal_ids provided
-        xd_values = None
+        # Determine filtering strategy
         if xd_segments:
             # Map interaction - use direct XD list (small, efficient)
             xd_values = [int(xd) for xd in xd_segments]
+            xd_filter = build_xd_filter(xd_values)
+            filter_join = ""
+            filter_where = ""
             if DEBUG_BACKEND_TIMING:
                 print(f"  [INFO] Using provided XD segments: {len(xd_values)} XDs")
-        elif signal_ids or maintained_by != 'all':
-            # Filter panel - use join-based filtering (efficient for large selections)
-            dim_query_start = time.time()
-            xd_values = build_xd_filter_with_joins(
-                session, signal_ids, maintained_by, approach, valid_geometry
-            )
-            dim_query_time = (time.time() - dim_query_start) * 1000
-
+        elif signal_ids or maintained_by != 'all' or approach or (valid_geometry and valid_geometry != 'all'):
+            # Filter panel - use efficient join-based filtering (ALL filtering in SQL)
             if DEBUG_BACKEND_TIMING:
-                print(f"  [1] Join-based XD filter: {dim_query_time:.2f}ms ({len(xd_values) if xd_values else 0} unique XDs)")
-
-            if not xd_values:
-                arrow_bytes = create_empty_arrow_response('travel_time_aggregated')
-                return create_arrow_response(arrow_bytes)
+                print(f"  [INFO] Using join-based filtering (efficient)")
+            filter_join, filter_where = build_filter_joins_and_where(
+                signal_ids, maintained_by, approach, valid_geometry
+            )
+            xd_filter = ""  # No XD list needed - filtering via joins
         else:
-            # NO signal_ids and NO xd_segments = query all
+            # NO filters - query all
             if DEBUG_BACKEND_TIMING:
                 print(f"  [INFO] NO filters - querying ALL XDs")
-
-        # Build XD filter - only if we have specific XDs to filter
-        xd_filter = build_xd_filter(xd_values) if xd_values else ""
+            xd_filter = ""
+            filter_join = ""
+            filter_where = ""
 
         # Build legend join if legend_by is specified
         legend_join, legend_field = build_legend_join(legend_by, MAX_LEGEND_ENTITIES)
@@ -400,16 +322,20 @@ def get_travel_time_aggregated():
             select_clause = f"{timestamp_expr}, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX"
             group_by_clause = "GROUP BY 1\nORDER BY 1"
 
-        # Build WHERE clause parts - SAME AS BEFORE, just building on top
+        # Build WHERE clause parts
         where_parts = [f"t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'"]
 
-        # Add XD filter if present
+        # Add XD filter if present (for map interactions with xd_segments)
         if xd_filter:
             clean_xd = xd_filter.strip()
             if clean_xd.startswith('AND '):
                 clean_xd = clean_xd[4:]  # Remove only leading "AND "
             clean_xd = clean_xd.replace('XD', 't.XD')
             where_parts.append(clean_xd)
+
+        # Add filter WHERE conditions (for maintainedBy, approach, validGeometry)
+        if filter_where:
+            where_parts.append(filter_where)
 
         # Add time filter if present
         if time_filter:
@@ -425,6 +351,10 @@ def get_travel_time_aggregated():
         from_clause = f"""FROM TRAVEL_TIME_ANALYTICS t
         {dow_filter}
         INNER JOIN FREEFLOW f ON t.XD = f.XD"""
+
+        # Add filter joins (for maintainedBy, approach, validGeometry)
+        if filter_join:
+            from_clause += f"\n{filter_join}"
 
         # Add legend join if specified
         if legend_join:
@@ -510,34 +440,30 @@ def get_travel_time_by_time_of_day():
         print(f"  Params: date={start_date_str} to {end_date_str}, xd_segments={len(xd_segments) if xd_segments else 0}, signals={len(signal_ids) if signal_ids else 0}, legend_by={legend_by}")
 
     try:
-        # Resolve XD segments if signal_ids provided
-        xd_values = None
+        # Determine filtering strategy
         if xd_segments:
             # Map interaction - use direct XD list (small, efficient)
             xd_values = [int(xd) for xd in xd_segments]
+            xd_filter = build_xd_filter(xd_values)
+            filter_join = ""
+            filter_where = ""
             if DEBUG_BACKEND_TIMING:
                 print(f"  [INFO] Using provided XD segments: {len(xd_values)} XDs")
-        elif signal_ids or maintained_by != 'all':
-            # Filter panel - use join-based filtering (efficient for large selections)
-            dim_query_start = time.time()
-            xd_values = build_xd_filter_with_joins(
-                session, signal_ids, maintained_by, approach, valid_geometry
-            )
-            dim_query_time = (time.time() - dim_query_start) * 1000
-
+        elif signal_ids or maintained_by != 'all' or approach or (valid_geometry and valid_geometry != 'all'):
+            # Filter panel - use efficient join-based filtering (ALL filtering in SQL)
             if DEBUG_BACKEND_TIMING:
-                print(f"  [1] Join-based XD filter: {dim_query_time:.2f}ms ({len(xd_values) if xd_values else 0} unique XDs)")
-
-            if not xd_values:
-                arrow_bytes = create_empty_arrow_response('travel_time_by_time_of_day')
-                return create_arrow_response(arrow_bytes)
+                print(f"  [INFO] Using join-based filtering (efficient)")
+            filter_join, filter_where = build_filter_joins_and_where(
+                signal_ids, maintained_by, approach, valid_geometry
+            )
+            xd_filter = ""  # No XD list needed - filtering via joins
         else:
-            # NO signal_ids and NO xd_segments = query all
+            # NO filters - query all
             if DEBUG_BACKEND_TIMING:
                 print(f"  [INFO] NO filters - querying ALL XDs")
-
-        # Build XD filter - only if we have specific XDs to filter
-        xd_filter = build_xd_filter(xd_values) if xd_values else ""
+            xd_filter = ""
+            filter_join = ""
+            filter_where = ""
 
         # Build legend join if legend_by is specified
         legend_join, legend_field = build_legend_join(legend_by, MAX_LEGEND_ENTITIES)
@@ -553,16 +479,20 @@ def get_travel_time_by_time_of_day():
             select_clause = f"t.TIME_15MIN AS TIME_OF_DAY, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX"
             group_by_clause = "GROUP BY 1\nORDER BY 1"
 
-        # Build WHERE clause parts - SAME AS BEFORE
+        # Build WHERE clause parts
         where_parts = [f"t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'"]
 
-        # Add XD filter if present
+        # Add XD filter if present (for map interactions with xd_segments)
         if xd_filter:
             clean_xd = xd_filter.strip()
             if clean_xd.startswith('AND '):
                 clean_xd = clean_xd[4:]  # Remove only leading "AND "
             clean_xd = clean_xd.replace('XD', 't.XD')
             where_parts.append(clean_xd)
+
+        # Add filter WHERE conditions (for maintainedBy, approach, validGeometry)
+        if filter_where:
+            where_parts.append(filter_where)
 
         # Add time filter if present
         if time_filter:
@@ -578,6 +508,10 @@ def get_travel_time_by_time_of_day():
         from_clause = f"""FROM TRAVEL_TIME_ANALYTICS t
         {dow_filter}
         INNER JOIN FREEFLOW f ON t.XD = f.XD"""
+
+        # Add filter joins (for maintainedBy, approach, validGeometry)
+        if filter_join:
+            from_clause += f"\n{filter_join}"
 
         # Add legend join if specified
         if legend_join:

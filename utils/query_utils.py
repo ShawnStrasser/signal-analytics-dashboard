@@ -123,6 +123,11 @@ def build_xd_filter_with_joins(
     valid_geometry: Optional[str] = None
 ) -> Optional[List[int]]:
     """
+    DEPRECATED: Use build_filter_joins_and_where() instead.
+
+    This function collects XDs in Python and returns them to be sent back to the database,
+    which is inefficient. Kept for backward compatibility only.
+
     Build XD filter using efficient JOIN-based query.
     This is more efficient than the two-stage query pattern for large signal selections.
 
@@ -192,6 +197,72 @@ def build_xd_filter_with_joins(
     except Exception as e:
         print(f"[ERROR] build_xd_filter_with_joins: {e}")
         return []
+
+
+def build_filter_joins_and_where(
+    signal_ids: Optional[List[str]] = None,
+    maintained_by: str = 'all',
+    approach: Optional[str] = None,
+    valid_geometry: Optional[str] = None
+) -> tuple[str, str]:
+    """
+    Build SQL JOIN and WHERE clauses for filtering at the database level.
+    This is the EFFICIENT way - all filtering happens in SQL, no XD collection in Python.
+
+    Use this function instead of build_xd_filter_with_joins() to avoid collecting XDs
+    and sending them back to the database.
+
+    Args:
+        signal_ids: List of signal IDs to filter (DIM_SIGNALS.ID)
+        maintained_by: One of 'all', 'odot', 'others'
+        approach: 'true'/'false' string for approach filter
+        valid_geometry: 'valid'/'invalid'/'all' for geometry filter
+
+    Returns:
+        Tuple of (join_clause, where_clause):
+        - join_clause: SQL JOIN fragment (e.g., "INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD ...")
+        - where_clause: SQL WHERE conditions (e.g., "s.ODOT_MAINTAINED = TRUE AND xd.APPROACH = TRUE")
+    """
+    # If no filters, return empty strings (no filtering needed)
+    if not signal_ids and maintained_by == 'all' and not approach and (not valid_geometry or valid_geometry == 'all'):
+        return ("", "")
+
+    # Determine if we need to join DIM_SIGNALS
+    needs_signal_join = signal_ids or maintained_by != 'all'
+
+    # Build JOIN clause
+    join_parts = []
+    join_parts.append("INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD")
+    if needs_signal_join:
+        join_parts.append("INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID")
+
+    join_clause = " ".join(join_parts)
+
+    # Build WHERE clause
+    where_parts = []
+
+    if signal_ids:
+        ids_str = "', '".join(map(str, signal_ids))
+        where_parts.append(f"s.ID IN ('{ids_str}')")
+
+    if maintained_by == 'odot':
+        where_parts.append("s.ODOT_MAINTAINED = TRUE")
+    elif maintained_by == 'others':
+        where_parts.append("s.ODOT_MAINTAINED = FALSE")
+
+    if approach is not None and approach != '':
+        approach_bool = 'TRUE' if approach.lower() == 'true' else 'FALSE'
+        where_parts.append(f"xd.APPROACH = {approach_bool}")
+
+    if valid_geometry is not None and valid_geometry != '' and valid_geometry != 'all':
+        if valid_geometry == 'valid':
+            where_parts.append("xd.VALID_GEOMETRY = TRUE")
+        elif valid_geometry == 'invalid':
+            where_parts.append("xd.VALID_GEOMETRY = FALSE")
+
+    where_clause = " AND ".join(where_parts) if where_parts else ""
+
+    return (join_clause, where_clause)
 
 
 def create_xd_lookup_dict(dim_result) -> Dict[int, Dict[str, Any]]:
