@@ -19,6 +19,7 @@ from utils.query_utils import (
     extract_xd_values,
     build_xd_filter,
     build_xd_filter_with_joins,
+    build_filter_joins_and_where,
     create_xd_lookup_dict,
     get_aggregation_table,
     build_time_of_day_filter
