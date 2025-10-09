@@ -270,8 +270,11 @@ async function loadMapData() {
     const t0 = performance.now()
     loadingMap.value = true
 
-    // Check if this is an "all signals" query (no signal filter)
-    const isAllSignals = !filtersStore.selectedSignalIds || filtersStore.selectedSignalIds.length === 0
+    // Check if this is an "all signals" query (no filters applied)
+    const isAllSignals = (!filtersStore.selectedSignalIds || filtersStore.selectedSignalIds.length === 0) &&
+                         filtersStore.maintainedBy === 'all' &&
+                         !filtersStore.approach &&
+                         (!filtersStore.validGeometry || filtersStore.validGeometry === 'all')
 
     // Try cache first for "all signals" queries
     if (isAllSignals) {
