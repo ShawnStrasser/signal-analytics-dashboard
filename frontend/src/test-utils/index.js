@@ -16,17 +16,18 @@ export function setupTestPinia() {
 }
 
 /**
- * Mock signal data factory
+ * Mock signal data factory (DIM_SIGNALS)
  * Creates test signal data with customizable properties
+ * Per PLAN.md: DIM_SIGNALS now has lat/long, District, Name, MAINTAINED_BY
  */
 export function createMockSignal(overrides = {}) {
   return {
     ID: 1,
-    XD: 100,
+    NAME: 'Signal 1',
+    DISTRICT: 'District 1',
+    MAINTAINED_BY: 'ODOT',
     LATITUDE: 39.7392,
     LONGITUDE: -104.9903,
-    APPROACH: true,
-    VALID_GEOMETRY: true,
     TRAVEL_TIME_INDEX: 1.2,
     AVG_TRAVEL_TIME: 120,
     RECORD_COUNT: 100,
@@ -37,11 +38,28 @@ export function createMockSignal(overrides = {}) {
 }
 
 /**
- * Creates multiple mock signals with the same signal ID but different XD segments
+ * Mock XD segment data factory (DIM_SIGNALS_XD)
+ * Per PLAN.md: DIM_SIGNALS_XD no longer has lat/long, only XD relationships
+ */
+export function createMockXdSegment(overrides = {}) {
+  return {
+    ID: 1, // Signal ID
+    XD: 100,
+    APPROACH: true,
+    VALID_GEOMETRY: true,
+    BEARING: 90,
+    ROAD: 'Main St',
+    MILES: 0.5,
+    ...overrides
+  }
+}
+
+/**
+ * Creates multiple XD segments for the same signal ID
  * Simulates a signal with multiple XD segments (approach/extended)
  */
 export function createMultiXdSignal(signalId, xdSegments = [100, 200]) {
-  return xdSegments.map((xd, index) => createMockSignal({
+  return xdSegments.map((xd, index) => createMockXdSegment({
     ID: signalId,
     XD: xd,
     APPROACH: index === 0, // First is approach, rest are extended
@@ -49,19 +67,56 @@ export function createMultiXdSignal(signalId, xdSegments = [100, 200]) {
 }
 
 /**
- * Creates mock signals with overlapping XD segments
+ * Creates XD segments with overlapping XD values (shared between signals)
  * Useful for testing shared XD segment selection logic
  */
 export function createOverlappingSignals() {
   return [
     // Signal 1 has XD 100, 200
-    createMockSignal({ ID: 1, XD: 100 }),
-    createMockSignal({ ID: 1, XD: 200 }),
+    createMockXdSegment({ ID: 1, XD: 100 }),
+    createMockXdSegment({ ID: 1, XD: 200 }),
     // Signal 2 has XD 200, 300 (200 is shared with Signal 1)
-    createMockSignal({ ID: 2, XD: 200 }),
-    createMockSignal({ ID: 2, XD: 300 }),
+    createMockXdSegment({ ID: 2, XD: 200 }),
+    createMockXdSegment({ ID: 2, XD: 300 }),
     // Signal 3 has XD 400 (no overlap)
-    createMockSignal({ ID: 3, XD: 400 }),
+    createMockXdSegment({ ID: 3, XD: 400 }),
+  ]
+}
+
+/**
+ * Creates mock signals grouped by district
+ * Useful for testing hierarchical district filter
+ */
+export function createSignalsByDistrict() {
+  return [
+    // District 1 - ODOT maintained
+    createMockSignal({ ID: 101, NAME: 'Signal 101', DISTRICT: 'District 1', MAINTAINED_BY: 'ODOT' }),
+    createMockSignal({ ID: 102, NAME: 'Signal 102', DISTRICT: 'District 1', MAINTAINED_BY: 'ODOT' }),
+    createMockSignal({ ID: 103, NAME: 'Signal 103', DISTRICT: 'District 1', MAINTAINED_BY: 'ODOT' }),
+
+    // District 2 - Mixed maintenance
+    createMockSignal({ ID: 201, NAME: 'Signal 201', DISTRICT: 'District 2', MAINTAINED_BY: 'ODOT' }),
+    createMockSignal({ ID: 202, NAME: 'Signal 202', DISTRICT: 'District 2', MAINTAINED_BY: 'City' }),
+
+    // District 3 - Others maintained
+    createMockSignal({ ID: 301, NAME: 'Signal 301', DISTRICT: 'District 3', MAINTAINED_BY: 'City' }),
+    createMockSignal({ ID: 302, NAME: 'Signal 302', DISTRICT: 'District 3', MAINTAINED_BY: 'County' }),
+  ]
+}
+
+/**
+ * Creates XD segments with duplicate XD values (same XD, different signals)
+ * Useful for testing MAX(APPROACH) and MAX(VALID_GEOMETRY) logic
+ */
+export function createDuplicateXdSegments() {
+  return [
+    // XD 100 appears twice: once as approach, once as extended
+    createMockXdSegment({ ID: 1, XD: 100, APPROACH: true, VALID_GEOMETRY: true }),
+    createMockXdSegment({ ID: 2, XD: 100, APPROACH: false, VALID_GEOMETRY: false }),
+
+    // XD 200 appears twice: both as approach
+    createMockXdSegment({ ID: 1, XD: 200, APPROACH: true, VALID_GEOMETRY: true }),
+    createMockXdSegment({ ID: 3, XD: 200, APPROACH: true, VALID_GEOMETRY: false }),
   ]
 }
 
