@@ -152,17 +152,17 @@ describe('SharedMap Component', () => {
 
   describe('Signal Marker Interactions', () => {
     it('should call toggleSignal when marker is clicked', async () => {
-      const signals = createMultiXdSignal(1, [100, 200])
+      const signals = createMultiXdSignal('1', [100, 200])
       selectionStore.updateMappings(signals)
 
       // Verify initial state
-      expect(selectionStore.isSignalSelected(1)).toBe(false)
+      expect(selectionStore.isSignalSelected('1')).toBe(false)
 
       // Simulate marker click by calling the store directly
       // (In real component, this happens via marker.on('click', ...))
-      selectionStore.toggleSignal(1)
+      selectionStore.toggleSignal('1')
 
-      expect(selectionStore.isSignalSelected(1)).toBe(true)
+      expect(selectionStore.isSignalSelected('1')).toBe(true)
       expect(selectionStore.selectedXdSegments.has(100)).toBe(true)
       expect(selectionStore.selectedXdSegments.has(200)).toBe(true)
     })
@@ -170,7 +170,7 @@ describe('SharedMap Component', () => {
 
   describe('XD Segment Interactions', () => {
     it('should call toggleXdSegment when XD layer is clicked', () => {
-      const signals = createMultiXdSignal(1, [100])
+      const signals = createMultiXdSignal('1', [100])
       selectionStore.updateMappings(signals)
 
       // Simulate XD segment click
@@ -180,14 +180,14 @@ describe('SharedMap Component', () => {
     })
 
     it('should allow independent XD selection without signal selection', () => {
-      const signals = createMultiXdSignal(1, [100, 200])
+      const signals = createMultiXdSignal('1', [100, 200])
       selectionStore.updateMappings(signals)
 
       // Select XD segment directly
       selectionStore.toggleXdSegment(100)
 
       expect(selectionStore.isXdSegmentSelected(100)).toBe(true)
-      expect(selectionStore.isSignalSelected(1)).toBe(false)
+      expect(selectionStore.isSignalSelected('1')).toBe(false)
     })
   })
 
@@ -218,17 +218,17 @@ describe('SharedMap Component', () => {
 
   describe('Selection State Integration', () => {
     it('should reflect selection state from store', () => {
-      const signals = createMultiXdSignal(1, [100, 200])
+      const signals = createMultiXdSignal('1', [100, 200])
       selectionStore.updateMappings(signals)
 
       // No selections initially
       expect(selectionStore.hasMapSelections).toBe(false)
 
       // Select signal
-      selectionStore.toggleSignal(1)
+      selectionStore.toggleSignal('1')
 
       expect(selectionStore.hasMapSelections).toBe(true)
-      expect(selectionStore.selectedSignalsList).toEqual([1])
+      expect(selectionStore.selectedSignalsList).toEqual(['1'])
       expect(selectionStore.selectedXdSegmentsList).toEqual(
         expect.arrayContaining([100, 200])
       )
@@ -236,16 +236,16 @@ describe('SharedMap Component', () => {
 
     it('should handle multiple signal selections', () => {
       const signals = [
-        ...createMultiXdSignal(1, [100, 200]),
-        ...createMultiXdSignal(2, [300, 400]),
+        ...createMultiXdSignal('1', [100, 200]),
+        ...createMultiXdSignal('2', [300, 400]),
       ]
       selectionStore.updateMappings(signals)
 
-      selectionStore.toggleSignal(1)
-      selectionStore.toggleSignal(2)
+      selectionStore.toggleSignal('1')
+      selectionStore.toggleSignal('2')
 
       expect(selectionStore.selectedSignalsList).toEqual(
-        expect.arrayContaining([1, 2])
+        expect.arrayContaining(['1', '2'])
       )
       expect(selectionStore.selectedXdSegmentsList).toEqual(
         expect.arrayContaining([100, 200, 300, 400])
@@ -253,9 +253,9 @@ describe('SharedMap Component', () => {
     })
 
     it('should clear all selections', () => {
-      const signals = createMultiXdSignal(1, [100])
+      const signals = createMultiXdSignal('1', [100])
       selectionStore.updateMappings(signals)
-      selectionStore.toggleSignal(1)
+      selectionStore.toggleSignal('1')
 
       expect(selectionStore.hasMapSelections).toBe(true)
 
@@ -269,9 +269,9 @@ describe('SharedMap Component', () => {
 
   describe('Data Filtering for Chart', () => {
     it('should provide selected XD segments for chart filtering', () => {
-      const signals = createMultiXdSignal(1, [100, 200])
+      const signals = createMultiXdSignal('1', [100, 200])
       selectionStore.updateMappings(signals)
-      selectionStore.toggleSignal(1)
+      selectionStore.toggleSignal('1')
 
       // The chart should filter to these XD segments
       const selectedXds = selectionStore.selectedXdSegmentsList
@@ -281,11 +281,11 @@ describe('SharedMap Component', () => {
     })
 
     it('should handle mixed signal and direct XD selections', () => {
-      const signals = createMultiXdSignal(1, [100, 200])
+      const signals = createMultiXdSignal('1', [100, 200])
       selectionStore.updateMappings(signals)
 
       // Select signal 1 (adds XD 100, 200)
-      selectionStore.toggleSignal(1)
+      selectionStore.toggleSignal('1')
 
       // Also manually select XD 999
       selectionStore.toggleXdSegment(999)
@@ -304,11 +304,11 @@ describe('SharedMap Component', () => {
       // the highlighted xd segments to deselect it. The segment was deselected but
       // the chart did not update."
 
-      const signals = createMultiXdSignal(1, [100, 200])
+      const signals = createMultiXdSignal('1', [100, 200])
       selectionStore.updateMappings(signals)
 
       // Step 1: Click on signal - adds XD 100, 200
-      selectionStore.toggleSignal(1)
+      selectionStore.toggleSignal('1')
       expect(selectionStore.selectedXdSegmentsList.sort()).toEqual([100, 200])
 
       // Step 2: Click on XD segment 100 to deselect it
@@ -326,21 +326,21 @@ describe('SharedMap Component', () => {
       // Signal 1: XD 100, 200
       // Signal 2: XD 200, 300 (XD 200 is shared)
       const signals = [
-        createMockSignal({ ID: 1, XD: 100 }),
-        createMockSignal({ ID: 1, XD: 200 }),
-        createMockSignal({ ID: 2, XD: 200 }),
-        createMockSignal({ ID: 2, XD: 300 }),
+        createMockSignal({ ID: '1', XD: 100 }),
+        createMockSignal({ ID: '1', XD: 200 }),
+        createMockSignal({ ID: '2', XD: 200 }),
+        createMockSignal({ ID: '2', XD: 300 }),
       ]
       selectionStore.updateMappings(signals)
 
       // Select both signals
-      selectionStore.toggleSignal(1)
-      selectionStore.toggleSignal(2)
+      selectionStore.toggleSignal('1')
+      selectionStore.toggleSignal('2')
 
       expect(selectionStore.selectedXdSegmentsList.sort()).toEqual([100, 200, 300])
 
       // Deselect signal 1
-      selectionStore.toggleSignal(1)
+      selectionStore.toggleSignal('1')
 
       // EXPECTED: XD 200 should still be selected (signal 2 is still selected)
       // BUG: XD 200 gets deselected even though signal 2 is still selected
@@ -359,16 +359,16 @@ describe('SharedMap Component', () => {
     })
 
     it('should handle rapid selection/deselection', () => {
-      const signals = createMultiXdSignal(1, [100])
+      const signals = createMultiXdSignal('1', [100])
       selectionStore.updateMappings(signals)
 
       // Rapid toggles
       for (let i = 0; i < 10; i++) {
-        selectionStore.toggleSignal(1)
+        selectionStore.toggleSignal('1')
       }
 
       // Should end in deselected state (started at false, toggled even number of times)
-      expect(selectionStore.isSignalSelected(1)).toBe(false)
+      expect(selectionStore.isSignalSelected('1')).toBe(false)
     })
   })
 })
