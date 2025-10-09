@@ -167,6 +167,7 @@ const legendByLabel = computed(() => {
 // Watch for geometry/signal filter changes (triggers auto-zoom)
 watch(() => [
   filtersStore.selectedSignalIds,
+  filtersStore.maintainedBy,
   filtersStore.approach,
   filtersStore.validGeometry
 ], async () => {

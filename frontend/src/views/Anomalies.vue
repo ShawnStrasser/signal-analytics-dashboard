@@ -151,6 +151,7 @@ const anomaliesTableData = computed(() => {
 // Watch for geometry/signal/anomaly filter changes (triggers auto-zoom)
 watch(() => [
   filtersStore.selectedSignalIds,
+  filtersStore.maintainedBy,
   filtersStore.approach,
   filtersStore.validGeometry,
   filtersStore.anomalyType
