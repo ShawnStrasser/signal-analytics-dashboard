@@ -2,6 +2,55 @@
 
 This document outlines the changes needed to implement hierarchical signal filtering with district grouping and improved API efficiency.
 
+## Implementation Steps (Recommended Order)
+
+Implement these steps **one at a time** to ensure each piece works before moving on:
+
+### Step 1: Add Maintained By Filter (Frontend Store Only) ✅ COMPLETED
+**Goal:** Add maintainedBy state to filters store
+**Files:** `frontend/src/stores/filters.js`
+**Tests to pass:** 5 tests in "Maintained By Filter"
+**Why first:** Simple, self-contained, no UI changes needed yet
+**Dependencies:** None
+**Status:** All 5 tests passing (32/38 total tests passing)
+
+### Step 2: Backend API Efficiency Improvements
+**Goal:** Add join-based filtering support to backend APIs
+**Files:** `routes/api_travel_time.py`, `routes/api_anomalies.py`
+**Tests to pass:** 1 test in "API Efficiency"
+**Why second:** Can be done independently, maintains backward compatibility
+**Dependencies:** None (but benefits from Step 1)
+
+### Step 3: Hierarchical District Selection (Frontend Store)
+**Goal:** Add district-level selection state and logic
+**Files:** `frontend/src/stores/filters.js`
+**Tests to pass:** 4 tests in "Hierarchical District Selection"
+**Why third:** Builds on Step 1, more complex store logic
+**Dependencies:** Step 1 (uses maintainedBy filter)
+
+### Step 4: Update FilterPanel UI Components
+**Goal:** Add UI controls for new filters
+**Files:** `frontend/src/components/FilterPanel.vue`
+**Tests:** Manual testing (UI/visual)
+**Why fourth:** Requires Steps 1 & 3 to be complete
+**Dependencies:** Steps 1 & 3
+
+### Step 5: Fix Approach & Valid Geometry Filtering
+**Goal:** Ensure approach/validGeometry filters actually work
+**Files:** Backend query logic (uses Step 2 infrastructure)
+**Tests:** Existing tests already pass, just need to verify behavior
+**Why fifth:** Leverages join infrastructure from Step 2
+**Dependencies:** Step 2
+
+### Step 6: Update Map Tooltips
+**Goal:** Show correct fields in signal and XD tooltips
+**Files:** `frontend/src/components/SharedMap.vue`
+**Tests:** Manual testing (UI/visual)
+**Why last:** Independent, pure UI change, no breaking changes
+**Dependencies:** None
+
+---
+
 **IMPORTANT:** All column names and schemas strictly follow `README.md`. Key points:
 - `DIM_SIGNALS.ODOT_MAINTAINED` is a **BOOLEAN** (not a string like 'ODOT', 'City', etc.)
 - `DIM_SIGNALS_XD.ROADNAME` (not 'ROAD')
@@ -14,7 +63,7 @@ Unit tests have been created to validate implementation. Tests are in:
 - `frontend/src/stores/__tests__/filters.test.js` (38 tests)
 - `frontend/src/test-utils/index.js` (updated with new mock data helpers)
 
-**Current Test Status: 26 PASS / 12 FAIL**
+**Current Test Status: 32 PASS / 6 FAIL**
 
 Run tests with: `cd frontend && npm test`
 
@@ -22,27 +71,21 @@ Run tests with: `cd frontend && npm test`
 - Initial state (4/4)
 - Approach and Valid Geometry filtering (4/4)
 - Existing features (18/18): Date range, signal selection, time-of-day, day-of-week, aggregation level, anomaly type
+- **Maintained By Filter (5/5)** ✅ STEP 1 COMPLETE
+- API Efficiency (2/2)
 
 ### Tests Failing (Expected) ❌
 These will pass once features are implemented:
 
-1. **Maintained By Filter (5 tests)**:
-   - `store.maintainedBy` state missing
-   - `store.setMaintainedBy()` action missing
-   - `filterParams.maintained_by` not included
-
-2. **Hierarchical District Selection (4 tests)**:
+1. **Hierarchical District Selection (4 tests)**:
    - `store.selectedDistricts` state missing
    - `store.selectDistrict()` action missing
    - `store.deselectDistrict()` action missing
    - `store.filteredSignalsByDistrict` computed property missing
 
-3. **Edge Cases (2 tests)**:
+2. **Edge Cases (2 tests)**:
    - Invalid date range handling (minor)
    - Individual signal deselection within district
-
-4. **API Efficiency (1 test)**:
-   - Filter-based params instead of XD lists
 
 ---
 
@@ -91,13 +134,13 @@ Current tooltip shows: minimal info
 **Database Column:** `DIM_SIGNALS.ODOT_MAINTAINED` (BOOLEAN)
 
 **File:** `frontend/src/stores/filters.js`
-- [ ] Add state: `const maintainedBy = ref('all')`
+- [x] Add state: `const maintainedBy = ref('all')`
   - Values: `'all'` (no filter), `'odot'` (ODOT_MAINTAINED = TRUE), `'others'` (ODOT_MAINTAINED = FALSE)
-- [ ] Add action: `function setMaintainedBy(value) { maintainedBy.value = value }`
-- [ ] Update `filterParams` computed to include `maintained_by: maintainedBy.value !== 'all' ? maintainedBy.value : undefined`
-- [ ] Export `maintainedBy` and `setMaintainedBy` in return statement
+- [x] Add action: `function setMaintainedBy(value) { maintainedBy.value = value }`
+- [x] Update `filterParams` computed to include `maintained_by: maintainedBy.value !== 'all' ? maintainedBy.value : undefined`
+- [x] Export `maintainedBy` and `setMaintainedBy` in return statement
 
-**Tests to pass:** 5 tests in "PLAN.md Feature: Maintained By Filter"
+**Tests to pass:** 5 tests in "PLAN.md Feature: Maintained By Filter" ✅ ALL PASSING
 
 #### 2. Hierarchical Signal Selection with Districts
 **File:** `frontend/src/stores/filters.js`

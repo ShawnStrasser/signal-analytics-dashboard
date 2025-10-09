@@ -12,6 +12,7 @@ export const useFiltersStore = defineStore('filters', () => {
   const selectedSignalIds = ref([])
   const approach = ref(null)
   const validGeometry = ref('all') // 'all', 'valid', or 'invalid'
+  const maintainedBy = ref('all') // 'all', 'odot', or 'others'
   const anomalyType = ref('All')
   const startHour = ref(6)   // Will be set from config
   const startMinute = ref(0)
@@ -49,6 +50,7 @@ export const useFiltersStore = defineStore('filters', () => {
     signal_ids: selectedSignalIds.value,
     approach: approach.value,
     valid_geometry: validGeometry.value,
+    maintained_by: maintainedBy.value !== 'all' ? maintainedBy.value : undefined,
     anomaly_type: anomalyType.value,
     // Only include time filter when different from defaults (for efficiency)
     start_hour: !isDefaultTimeRange.value ? startHour.value : undefined,
@@ -74,6 +76,10 @@ export const useFiltersStore = defineStore('filters', () => {
 
   function setValidGeometry(value) {
     validGeometry.value = value
+  }
+
+  function setMaintainedBy(value) {
+    maintainedBy.value = value
   }
 
   function setAnomalyType(value) {
@@ -122,6 +128,7 @@ export const useFiltersStore = defineStore('filters', () => {
     selectedSignalIds,
     approach,
     validGeometry,
+    maintainedBy,
     anomalyType,
     startHour,
     startMinute,
@@ -143,6 +150,7 @@ export const useFiltersStore = defineStore('filters', () => {
     setSelectedSignalIds,
     setApproach,
     setValidGeometry,
+    setMaintainedBy,
     setAnomalyType,
     setTimeOfDayRange,
     setTimeFilterEnabled,
