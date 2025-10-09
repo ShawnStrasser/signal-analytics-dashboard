@@ -28,6 +28,19 @@
         </v-col>
       </v-row>
 
+      <!-- Maintained By Filter -->
+      <v-row>
+        <v-col cols="12">
+          <v-select
+            v-model="filtersStore.maintainedBy"
+            :items="maintainedByOptions"
+            label="Maintained By"
+            density="compact"
+            variant="outlined"
+          />
+        </v-col>
+      </v-row>
+
       <!-- Signal Selection -->
       <v-row>
         <v-col cols="12">
@@ -135,6 +148,7 @@
           <div class="text-caption">
             <div><strong>Date Range:</strong> {{ filtersStore.startDate }} to {{ filtersStore.endDate }}</div>
             <div><strong>Aggregation:</strong> {{ filtersStore.aggregationLevel }}</div>
+            <div v-if="filtersStore.maintainedBy !== 'all'"><strong>Maintained By:</strong> {{ maintainedByDisplayText }}</div>
             <div><strong>Signals:</strong> {{ filtersStore.selectedSignalIds.length || 'All' }}</div>
             <div v-if="filtersStore.approach !== null"><strong>Approach:</strong> {{ filtersStore.approach ? 'True' : 'False' }}</div>
             <div v-if="filtersStore.validGeometry !== null"><strong>Valid Geometry:</strong> {{ validGeometryDisplayText }}</div>
@@ -230,13 +244,51 @@ function formatTime(hour) {
   return `${String(hour).padStart(2, '0')}:00`
 }
 
-const signalOptions = computed(() => {
+// Group signals by district (when district data becomes available)
+const signalsByDistrict = computed(() => {
+  // Filter signals by maintainedBy if not 'all'
+  let filteredSignals = signals.value
+
+  // Note: When backend is updated to use DIM_SIGNALS with ODOT_MAINTAINED column,
+  // uncomment this filtering logic:
+  // if (filtersStore.maintainedBy === 'odot') {
+  //   filteredSignals = filteredSignals.filter(s => s.ODOT_MAINTAINED === true)
+  // } else if (filtersStore.maintainedBy === 'others') {
+  //   filteredSignals = filteredSignals.filter(s => s.ODOT_MAINTAINED === false)
+  // }
+
   // Deduplicate signal IDs - DIM_SIGNALS_XD has multiple rows per signal
-  const uniqueSignalIds = [...new Set(signals.value.map(signal => signal.ID))]
-  return uniqueSignalIds.map(id => ({
-    text: `Signal ${id}`,
-    value: id
-  }))
+  const uniqueSignalIds = [...new Set(filteredSignals.map(signal => signal.ID))]
+
+  // Group by district when DISTRICT column is available
+  // For now, return a flat structure until backend provides district data
+  const grouped = {}
+  uniqueSignalIds.forEach(id => {
+    const district = 'Unknown' // Replace with s.DISTRICT when available
+    if (!grouped[district]) {
+      grouped[district] = []
+    }
+    grouped[district].push(id)
+  })
+
+  return grouped
+})
+
+const signalOptions = computed(() => {
+  // Flat list for autocomplete - will be enhanced for hierarchical selection later
+  const allDistricts = signalsByDistrict.value
+  const flatList = []
+
+  Object.entries(allDistricts).forEach(([district, signalIds]) => {
+    signalIds.forEach(id => {
+      flatList.push({
+        text: `Signal ${id}`,
+        value: id
+      })
+    })
+  })
+
+  return flatList
 })
 
 const validGeometryDisplayText = computed(() => {
@@ -245,6 +297,18 @@ const validGeometryDisplayText = computed(() => {
   if (filtersStore.validGeometry === 'all') return 'All'
   return 'All'
 })
+
+const maintainedByDisplayText = computed(() => {
+  if (filtersStore.maintainedBy === 'odot') return 'ODOT'
+  if (filtersStore.maintainedBy === 'others') return 'Others'
+  return 'All'
+})
+
+const maintainedByOptions = [
+  { title: 'All', value: 'all' },
+  { title: 'ODOT', value: 'odot' },
+  { title: 'Others', value: 'others' }
+]
 
 const approachOptions = [
   { title: 'True', value: true },
