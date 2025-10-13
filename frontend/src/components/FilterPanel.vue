@@ -75,29 +75,33 @@
                   :title="`${district} (${districtSignals.length} signals)`"
                 >
                   <template v-slot:title>
-                    <div class="d-flex align-center">
+                    <div class="d-flex align-center" style="width: 100%;">
                       <v-checkbox
                         :model-value="isDistrictSelected(district)"
                         :indeterminate="isDistrictIndeterminate(district)"
                         @click.stop="toggleDistrict(district)"
                         hide-details
                         density="compact"
-                        class="mr-2"
+                        class="flex-shrink-0 mr-2"
                       />
-                      <span>{{ district }}</span>
+                      <span class="district-name">{{ district }}</span>
                     </div>
                   </template>
                   <v-expansion-panel-text>
-                    <v-checkbox
-                      v-for="signal in districtSignals"
+                    <div
+                      v-for="(signal, index) in districtSignals"
                       :key="signal.ID"
-                      :model-value="filtersStore.selectedSignalIds.includes(signal.ID)"
-                      @update:model-value="toggleSignal(signal.ID)"
-                      :label="`${signal.ID} - ${signal.NAME || 'Unknown'}`"
-                      hide-details
-                      density="compact"
-                      class="mb-1"
-                    />
+                      class="signal-item"
+                      :class="{ 'with-divider': index < districtSignals.length - 1 }"
+                    >
+                      <v-checkbox
+                        :model-value="filtersStore.selectedSignalIds.includes(signal.ID)"
+                        @update:model-value="toggleSignal(signal.ID)"
+                        :label="`${signal.ID} - ${signal.NAME || 'Unknown'}`"
+                        hide-details
+                        density="compact"
+                      />
+                    </div>
                   </v-expansion-panel-text>
                 </v-expansion-panel>
               </v-expansion-panels>
@@ -478,5 +482,24 @@ async function loadSignals() {
 .district-panels {
   max-height: 400px;
   overflow-y: auto;
+}
+
+/* Prevent district name from wrapping under checkbox */
+.district-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Signal item styling with separators */
+.signal-item {
+  padding: 4px 0;
+}
+
+.signal-item.with-divider {
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.12);
+  margin-bottom: 4px;
+  padding-bottom: 8px;
 }
 </style>
