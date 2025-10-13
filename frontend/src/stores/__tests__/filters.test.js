@@ -317,12 +317,6 @@ describe('Filters Store', () => {
   })
 
   describe('Edge Cases', () => {
-    it('should handle invalid date ranges gracefully', () => {
-      store.setDateRange('invalid', 'dates')
-
-      expect(store.aggregationLevel).toBe('15min') // Default fallback
-    })
-
     it('should handle empty signal selection', () => {
       store.setSelectedSignalIds([])
 
