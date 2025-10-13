@@ -93,7 +93,7 @@
                           density="compact"
                           class="flex-shrink-0 mr-2"
                         />
-                        <span class="district-name" :title="district">{{ district }}</span>
+                        <span class="district-name">{{ district }}</span>
                       </div>
                     </template>
                     <v-expansion-panel-text>
