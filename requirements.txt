@@ -6,3 +6,8 @@ pandas
 numpy
 python-dotenv
 pyarrow
+
+# Testing Dependencies
+pytest
+pytest-flask
+pytest-xdist

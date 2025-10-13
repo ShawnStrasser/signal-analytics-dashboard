@@ -242,14 +242,19 @@ export const useSignalsStore = defineStore('signals', () => {
 - Allow individual signal deselection within district
 - Filtered by maintainedBy (districts with no matching signals hidden)
 
-### Step 6: Fix Approach & Valid Geometry Filtering ⏳ NOT STARTED
+### Step 6: Fix Approach & Valid Geometry Filtering ✅ COMPLETED
 **Goal:** Ensure approach/validGeometry filters work correctly with MAX aggregation
 **Dependencies:** Step 4a (efficient join-based queries)
+**Status:** Verified working via comprehensive integration tests
 
 **Problem:** Same XD can appear multiple times in DIM_SIGNALS_XD with different APPROACH/VALID_GEOMETRY values
 **Solution:** Use MAX() aggregation when filtering (if any occurrence is TRUE, treat as TRUE)
 
-**Already handled in Step 4a queries** - Just verify behavior is correct.
+**Verification:** Created comprehensive test suite with 33 integration tests covering:
+- Approach filter (true/false) across all endpoints
+- Valid geometry filter (valid/invalid) across all endpoints
+- Combined multi-parameter scenarios
+- All tests passing with real Snowflake data
 
 ### Step 7: Update Map Tooltips ⏳ NOT STARTED
 **Goal:** Show correct fields in signal and XD tooltips
@@ -290,10 +295,10 @@ export const useSignalsStore = defineStore('signals', () => {
 - ✅ Step 4b: Fetch and cache DIM_SIGNALS data
 - ✅ Step 4c: Filter map display (already working via backend)
 - ✅ Step 5: Hierarchical district UI
+- ✅ Step 6: Verify approach/validGeometry filters (33 integration tests)
 
 **Not Started:**
-- ⏳ Step 6: Verify approach/validGeometry (NEXT TASK)
-- ⏳ Step 7: Update tooltips
+- ⏳ Step 7: Update tooltips (NEXT TASK)
 - ⏳ Step 8: Fix anomaly endpoint inefficiency (do last)
 
 ---
