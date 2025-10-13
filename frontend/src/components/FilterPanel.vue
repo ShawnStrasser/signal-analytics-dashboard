@@ -47,11 +47,11 @@
           <v-card variant="outlined">
             <!-- Collapsible header -->
             <v-card-subtitle
-              class="py-2 text-caption d-flex align-center justify-space-between signal-selector-header"
+              class="py-2 d-flex align-center justify-space-between signal-selector-header"
               @click="signalSelectorExpanded = !signalSelectorExpanded"
               style="cursor: pointer;"
             >
-              <span>Select Signals (by District)</span>
+              <span>Select Signals</span>
               <v-icon>{{ signalSelectorExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </v-card-subtitle>
 
@@ -494,6 +494,7 @@ async function loadSignals() {
 .signal-selector-header {
   user-select: none;
   transition: background-color 0.2s;
+  font-size: 0.95rem !important;
 }
 
 .signal-selector-header:hover {
