@@ -45,80 +45,90 @@
       <v-row>
         <v-col cols="12">
           <v-card variant="outlined">
-            <v-card-subtitle class="py-2 text-caption">
-              Select Signals (by District)
+            <!-- Collapsible header -->
+            <v-card-subtitle
+              class="py-2 text-caption d-flex align-center justify-space-between signal-selector-header"
+              @click="signalSelectorExpanded = !signalSelectorExpanded"
+              style="cursor: pointer;"
+            >
+              <span>Select Signals (by District)</span>
+              <v-icon>{{ signalSelectorExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </v-card-subtitle>
-            <v-card-text class="py-2">
-              <!-- Search bar -->
-              <v-text-field
-                v-model="searchQuery"
-                prepend-inner-icon="mdi-magnify"
-                label="Search signals..."
-                density="compact"
-                variant="outlined"
-                clearable
-                hide-details
-                class="mb-2"
-              />
 
-              <!-- District groups -->
-              <div v-if="signalsStore.loading" class="text-center py-4">
-                <v-progress-circular indeterminate size="32"></v-progress-circular>
-              </div>
-              <div v-else-if="Object.keys(filteredDistrictGroups).length === 0" class="text-caption text-grey py-2">
-                No signals found
-              </div>
-              <v-expansion-panels v-else multiple variant="accordion" class="district-panels">
-                <v-expansion-panel
-                  v-for="(districtSignals, district) in filteredDistrictGroups"
-                  :key="district"
-                  :title="`${district} (${districtSignals.length} signals)`"
+            <v-expand-transition>
+              <v-card-text v-show="signalSelectorExpanded" class="py-2">
+                <!-- Search bar -->
+                <v-text-field
+                  v-model="searchQuery"
+                  prepend-inner-icon="mdi-magnify"
+                  label="Search signals..."
+                  density="compact"
+                  variant="outlined"
+                  clearable
+                  hide-details
+                  class="mb-2"
+                />
+
+                <!-- District groups -->
+                <div v-if="signalsStore.loading" class="text-center py-4">
+                  <v-progress-circular indeterminate size="32"></v-progress-circular>
+                </div>
+                <div v-else-if="Object.keys(filteredDistrictGroups).length === 0" class="text-caption text-grey py-2">
+                  No signals found
+                </div>
+                <v-expansion-panels v-else multiple variant="accordion" class="district-panels">
+                  <v-expansion-panel
+                    v-for="(districtSignals, district) in filteredDistrictGroups"
+                    :key="district"
+                    :title="`${district} (${districtSignals.length} signals)`"
+                    class="district-panel-item"
+                  >
+                    <template v-slot:title>
+                      <div class="d-flex align-center" style="width: 100%;">
+                        <v-checkbox
+                          :model-value="isDistrictSelected(district)"
+                          :indeterminate="isDistrictIndeterminate(district)"
+                          @click.stop="toggleDistrict(district)"
+                          hide-details
+                          density="compact"
+                          class="flex-shrink-0 mr-2"
+                        />
+                        <span class="district-name" :title="district">{{ district }}</span>
+                      </div>
+                    </template>
+                    <v-expansion-panel-text>
+                      <div
+                        v-for="(signal, index) in districtSignals"
+                        :key="signal.ID"
+                        class="signal-item"
+                        :class="{ 'with-divider': index < districtSignals.length - 1 }"
+                      >
+                        <v-checkbox
+                          :model-value="filtersStore.selectedSignalIds.includes(signal.ID)"
+                          @update:model-value="toggleSignal(signal.ID)"
+                          :label="`${signal.ID} - ${signal.NAME || 'Unknown'}`"
+                          hide-details
+                          density="compact"
+                        />
+                      </div>
+                    </v-expansion-panel-text>
+                  </v-expansion-panel>
+                </v-expansion-panels>
+
+                <!-- Clear all button -->
+                <v-btn
+                  v-if="filtersStore.selectedSignalIds.length > 0"
+                  block
+                  size="small"
+                  variant="outlined"
+                  color="error"
+                  class="mt-2"
+                  @click="clearAllSignals"
                 >
-                  <template v-slot:title>
-                    <div class="d-flex align-center" style="width: 100%;">
-                      <v-checkbox
-                        :model-value="isDistrictSelected(district)"
-                        :indeterminate="isDistrictIndeterminate(district)"
-                        @click.stop="toggleDistrict(district)"
-                        hide-details
-                        density="compact"
-                        class="flex-shrink-0 mr-2"
-                      />
-                      <span class="district-name">{{ district }}</span>
-                    </div>
-                  </template>
-                  <v-expansion-panel-text>
-                    <div
-                      v-for="(signal, index) in districtSignals"
-                      :key="signal.ID"
-                      class="signal-item"
-                      :class="{ 'with-divider': index < districtSignals.length - 1 }"
-                    >
-                      <v-checkbox
-                        :model-value="filtersStore.selectedSignalIds.includes(signal.ID)"
-                        @update:model-value="toggleSignal(signal.ID)"
-                        :label="`${signal.ID} - ${signal.NAME || 'Unknown'}`"
-                        hide-details
-                        density="compact"
-                      />
-                    </div>
-                  </v-expansion-panel-text>
-                </v-expansion-panel>
-              </v-expansion-panels>
-
-              <!-- Clear all button -->
-              <v-btn
-                v-if="filtersStore.selectedSignalIds.length > 0"
-                block
-                size="small"
-                variant="outlined"
-                color="error"
-                class="mt-2"
-                @click="clearAllSignals"
-              >
-                Clear All ({{ filtersStore.selectedSignalIds.length }} selected)
-              </v-btn>
-            </v-card-text>
+                  Clear All ({{ filtersStore.selectedSignalIds.length }} selected)
+                </v-btn>
+              </v-card-text>
+            </v-expand-transition>
           </v-card>
         </v-col>
       </v-row>
@@ -236,6 +246,7 @@ const signalsStore = useSignalsStore()
 const loadingSignals = ref(false)
 const signals = ref([]) // Keep for backward compat with old DIM_SIGNALS_XD endpoint
 const searchQuery = ref('')
+const signalSelectorExpanded = ref(true) // Start expanded by default
 
 // Local date state with debouncing
 const localStartDate = ref(filtersStore.startDate)
@@ -479,17 +490,44 @@ async function loadSignals() {
 </script>
 
 <style scoped>
+/* Collapsible signal selector header */
+.signal-selector-header {
+  user-select: none;
+  transition: background-color 0.2s;
+}
+
+.signal-selector-header:hover {
+  background-color: rgba(var(--v-theme-on-surface), 0.04);
+}
+
+/* Taller district panels with scrolling */
 .district-panels {
-  max-height: 400px;
+  max-height: 600px;
   overflow-y: auto;
 }
 
-/* Prevent district name from wrapping under checkbox */
+/* Reduce spacing between district panels */
+.district-panels :deep(.v-expansion-panel) {
+  margin-bottom: 2px !important;
+}
+
+.district-panels :deep(.v-expansion-panel:not(:first-child)::after) {
+  border-top: none;
+}
+
+.district-panels :deep(.v-expansion-panel-title) {
+  min-height: 40px !important;
+  padding: 8px 12px !important;
+}
+
+/* Make district name text stand out more */
 .district-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 600;
+  font-size: 0.9rem;
 }
 
 /* Signal item styling with separators */
