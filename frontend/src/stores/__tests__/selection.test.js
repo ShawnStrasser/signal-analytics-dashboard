@@ -91,9 +91,9 @@ describe('Selection Store', () => {
     })
 
     it('should select signal and add all its XD segments', () => {
-      store.toggleSignal(1)
+      store.toggleSignal('1')
 
-      expect(store.isSignalSelected(1)).toBe(true)
+      expect(store.isSignalSelected('1')).toBe(true)
       expect(store.selectedXdSegments.has(100)).toBe(true)
       expect(store.selectedXdSegments.has(200)).toBe(true)
       expect(store.hasMapSelections).toBe(true)
@@ -101,10 +101,10 @@ describe('Selection Store', () => {
 
     it('should deselect signal and remove all its XD segments', () => {
       // Select then deselect
-      store.toggleSignal(1)
-      store.toggleSignal(1)
+      store.toggleSignal('1')
+      store.toggleSignal('1')
 
-      expect(store.isSignalSelected(1)).toBe(false)
+      expect(store.isSignalSelected('1')).toBe(false)
       expect(store.selectedXdSegments.has(100)).toBe(false)
       expect(store.selectedXdSegments.has(200)).toBe(false)
       expect(store.hasMapSelections).toBe(false)
@@ -117,8 +117,8 @@ describe('Selection Store', () => {
       ]
       store.updateMappings(signals)
 
-      store.toggleSignal(1)
-      store.toggleSignal(2)
+      store.toggleSignal('1')
+      store.toggleSignal('2')
 
       expect(store.selectedSignals.size).toBe(2)
       expect(store.selectedXdSegments.size).toBe(4)
@@ -152,7 +152,7 @@ describe('Selection Store', () => {
       store.toggleXdSegment(100)
 
       expect(store.isXdSegmentSelected(100)).toBe(true)
-      expect(store.isSignalSelected(1)).toBe(false)
+      expect(store.isSignalSelected('1')).toBe(false)
       expect(store.allSelectedXdSegments.has(100)).toBe(true)
     })
   })
@@ -164,7 +164,7 @@ describe('Selection Store', () => {
       store.updateMappings(signals)
 
       // Step 1: Select signal (chart shows XD 100, 200)
-      store.toggleSignal(1)
+      store.toggleSignal('1')
       expect(store.selectedXdSegmentsList.sort()).toEqual([100, 200])
 
       // Step 2: Click on XD 100 to deselect it
@@ -213,7 +213,7 @@ describe('Selection Store', () => {
     })
 
     it('should include XD segments from selected signals', () => {
-      store.toggleSignal(1)
+      store.toggleSignal('1')
 
       expect(store.allSelectedXdSegments.has(100)).toBe(true)
       expect(store.allSelectedXdSegments.has(200)).toBe(true)
@@ -226,7 +226,7 @@ describe('Selection Store', () => {
     })
 
     it('should combine signal-based and direct XD selections', () => {
-      store.toggleSignal(1) // Adds XD 100, 200
+      store.toggleSignal('1') // Adds XD 100, 200
       store.toggleXdSegment(999) // Adds XD 999 directly
 
       expect(store.allSelectedXdSegments.size).toBe(3)
@@ -234,7 +234,7 @@ describe('Selection Store', () => {
     })
 
     it('should deselect XD segment when toggled if already selected', () => {
-      store.toggleSignal(1) // Adds XD 100, 200
+      store.toggleSignal('1') // Adds XD 100, 200
       store.toggleXdSegment(100) // XD 100 already in selection from signal, so toggle removes it
 
       // XD 100 should now be deselected (toggle behavior)
@@ -249,7 +249,7 @@ describe('Selection Store', () => {
     it('should be true when signals are selected', () => {
       const signals = createMultiXdSignal(1, [100])
       store.updateMappings(signals)
-      store.toggleSignal(1)
+      store.toggleSignal('1')
 
       expect(store.hasMapSelections).toBe(true)
     })
@@ -276,7 +276,7 @@ describe('Selection Store', () => {
     it('should clear all signals and XD segments', () => {
       const signals = createMultiXdSignal(1, [100, 200])
       store.updateMappings(signals)
-      store.toggleSignal(1)
+      store.toggleSignal('1')
       store.toggleXdSegment(999)
 
       store.clearAllSelections()
@@ -294,10 +294,10 @@ describe('Selection Store', () => {
     })
 
     it('isSignalSelected should return correct status', () => {
-      expect(store.isSignalSelected(1)).toBe(false)
+      expect(store.isSignalSelected('1')).toBe(false)
 
-      store.toggleSignal(1)
-      expect(store.isSignalSelected(1)).toBe(true)
+      store.toggleSignal('1')
+      expect(store.isSignalSelected('1')).toBe(true)
     })
 
     it('isXdSegmentSelected should return correct status', () => {
@@ -326,15 +326,15 @@ describe('Selection Store', () => {
     it('selectedSignalsList should return array of selected signals', () => {
       const signals = createMultiXdSignal(1, [100])
       store.updateMappings(signals)
-      store.toggleSignal(1)
+      store.toggleSignal('1')
 
-      expect(store.selectedSignalsList).toEqual([1])
+      expect(store.selectedSignalsList).toEqual(['1'])
     })
 
     it('selectedXdSegmentsList should return array of all selected XD segments', () => {
       const signals = createMultiXdSignal(1, [100, 200])
       store.updateMappings(signals)
-      store.toggleSignal(1)
+      store.toggleSignal('1')
       store.toggleXdSegment(999)
 
       expect(store.selectedXdSegmentsList.sort()).toEqual([100, 200, 999])
@@ -344,9 +344,9 @@ describe('Selection Store', () => {
   describe('Edge Cases', () => {
     it('should handle toggling signal with no XD mappings', () => {
       // Toggle signal that hasn't been mapped
-      store.toggleSignal(999)
+      store.toggleSignal('999')
 
-      expect(store.isSignalSelected(999)).toBe(true)
+      expect(store.isSignalSelected('999')).toBe(true)
       expect(store.selectedXdSegments.size).toBe(0) // No XD segments added
     })
 
@@ -362,11 +362,11 @@ describe('Selection Store', () => {
       store.updateMappings(signals)
 
       // Select signal (adds XD 100)
-      store.toggleSignal(1)
+      store.toggleSignal('1')
       expect(store.selectedXdSegments.has(100)).toBe(true)
 
       // Deselect signal (removes XD 100)
-      store.toggleSignal(1)
+      store.toggleSignal('1')
       expect(store.selectedXdSegments.has(100)).toBe(false)
 
       // Manually select XD 100 again

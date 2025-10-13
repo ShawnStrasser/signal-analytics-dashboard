@@ -20,6 +20,10 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  xdSegments: {
+    type: Array,
+    default: () => []
+  },
   dataType: {
     type: String,
     default: 'travel-time', // 'travel-time' or 'anomaly'
@@ -326,7 +330,7 @@ onMounted(() => {
   // Update mappings when signals load
   if (props.signals.length > 0) {
     const t4 = performance.now()
-    selectionStore.updateMappings(props.signals)
+    selectionStore.updateMappings(props.signals, props.xdSegments)
     const t5 = performance.now()
     console.log(`🗺️ SharedMap: updateMappings took ${(t5 - t4).toFixed(2)}ms`)
 
@@ -376,7 +380,7 @@ watch(() => props.signals, (newSignals, oldSignals) => {
 
   const t0 = performance.now()
   if (newSignals.length > 0) {
-    selectionStore.updateMappings(newSignals)
+    selectionStore.updateMappings(newSignals, props.xdSegments)
   }
 
   const t1 = performance.now()
@@ -661,8 +665,13 @@ function updateGeometry() {
     return
   }
 
-  // Build set of XD values from currently displayed signals
-  const displayedXDs = new Set(props.signals.map(signal => signal.XD))
+  // Build set of XD values from currently displayed XD segments
+  // In travel-time mode, use xdSegments prop; in anomaly mode, extract from signals
+  const displayedXDs = new Set(
+    props.dataType === 'travel-time' && props.xdSegments.length > 0
+      ? props.xdSegments.map(xd => xd.XD)
+      : props.signals.map(signal => signal.XD)
+  )
   console.log('🗺️ updateGeometry:', {
     totalFeatures: collection.features.length,
     displayedXDsCount: displayedXDs.size,
@@ -841,43 +850,59 @@ function updateGeometry() {
 }
 
 function getXdDataMap() {
-  // Create a map of XD -> data values from signals
+  // Create a map of XD -> data values from xdSegments
+  // For travel-time mode, use dedicated XD data if available
+  // For anomaly mode, fall back to aggregating from signals (for backward compatibility)
   const xdMap = new Map()
-  
-  props.signals.forEach(signal => {
-    if (signal.XD !== undefined && signal.XD !== null) {
-      // Accumulate data for XD segments (since multiple signals can map to same XD)
-      if (!xdMap.has(signal.XD)) {
-        xdMap.set(signal.XD, {
-          ANOMALY_COUNT: 0,
-          POINT_SOURCE_COUNT: 0,
-          TRAVEL_TIME_INDEX: 0,
-          AVG_TRAVEL_TIME: 0,
-          RECORD_COUNT: 0,
-          count: 0
-        })
+
+  if (props.dataType === 'travel-time' && props.xdSegments && props.xdSegments.length > 0) {
+    // Use dedicated XD segment data (no aggregation needed!)
+    props.xdSegments.forEach(xd => {
+      xdMap.set(xd.XD, {
+        TRAVEL_TIME_INDEX: xd.TRAVEL_TIME_INDEX || 0,
+        BEARING: xd.BEARING,
+        ROADNAME: xd.ROADNAME,
+        MILES: xd.MILES,
+        APPROACH: xd.APPROACH
+      })
+    })
+  } else {
+    // Anomaly mode OR no XD data - aggregate from signals (legacy behavior)
+    props.signals.forEach(signal => {
+      if (signal.XD !== undefined && signal.XD !== null) {
+        // Accumulate data for XD segments (since multiple signals can map to same XD)
+        if (!xdMap.has(signal.XD)) {
+          xdMap.set(signal.XD, {
+            ANOMALY_COUNT: 0,
+            POINT_SOURCE_COUNT: 0,
+            TRAVEL_TIME_INDEX: 0,
+            AVG_TRAVEL_TIME: 0,
+            RECORD_COUNT: 0,
+            count: 0
+          })
+        }
+
+        const existing = xdMap.get(signal.XD)
+        existing.ANOMALY_COUNT += (signal.ANOMALY_COUNT || 0)
+        existing.POINT_SOURCE_COUNT += (signal.POINT_SOURCE_COUNT || 0)
+        existing.TRAVEL_TIME_INDEX += (signal.TRAVEL_TIME_INDEX || 0)
+        existing.AVG_TRAVEL_TIME += (signal.AVG_TRAVEL_TIME || signal.AVG_TRAVEL_TIME_SECONDS || 0)
+        existing.RECORD_COUNT += (signal.RECORD_COUNT || 0)
+        existing.count += 1
+
+        // Average the AVG_TRAVEL_TIME and TRAVEL_TIME_INDEX
+        existing.AVG_TRAVEL_TIME = existing.AVG_TRAVEL_TIME / existing.count
+        existing.TRAVEL_TIME_INDEX = existing.TRAVEL_TIME_INDEX / existing.count
       }
+    })
+  }
 
-      const existing = xdMap.get(signal.XD)
-      existing.ANOMALY_COUNT += (signal.ANOMALY_COUNT || 0)
-      existing.POINT_SOURCE_COUNT += (signal.POINT_SOURCE_COUNT || 0)
-      existing.TRAVEL_TIME_INDEX += (signal.TRAVEL_TIME_INDEX || 0)
-      existing.AVG_TRAVEL_TIME += (signal.AVG_TRAVEL_TIME || signal.AVG_TRAVEL_TIME_SECONDS || 0)
-      existing.RECORD_COUNT += (signal.RECORD_COUNT || 0)
-      existing.count += 1
-
-      // Average the AVG_TRAVEL_TIME and TRAVEL_TIME_INDEX
-      existing.AVG_TRAVEL_TIME = existing.AVG_TRAVEL_TIME / existing.count
-      existing.TRAVEL_TIME_INDEX = existing.TRAVEL_TIME_INDEX / existing.count
-    }
-  })
-  
   return xdMap
 }
 
 function createXdTooltip(xd, dataValue) {
   if (!dataValue) {
-    return `<div><strong>XD Segment:</strong> ${xd}<br><em>No data</em></div>`
+    return `<div><strong>XD:</strong> ${xd}<br><em>No data</em></div>`
   }
 
   if (props.dataType === 'anomaly') {
@@ -888,18 +913,28 @@ function createXdTooltip(xd, dataValue) {
 
     return `
       <div>
-        <strong>XD Segment:</strong> ${xd}<br>
+        <strong>XD:</strong> ${xd}<br>
         <strong>Anomaly Percentage:</strong> ${percentage.toFixed(1)}%<br>
         <strong>Total Anomalies:</strong> ${anomalyCount}<br>
         <strong>Point Source:</strong> ${pointSourceCount}
       </div>
     `
   } else {
-    const travelTimeIndex = dataValue.TRAVEL_TIME_INDEX || 0
+    // Travel time mode - show detailed XD segment info
+    const tti = dataValue.TRAVEL_TIME_INDEX || 0
+    const bearing = dataValue.BEARING || 'N/A'
+    const roadname = dataValue.ROADNAME || 'N/A'
+    const miles = dataValue.MILES
+    const approach = dataValue.APPROACH
+
     return `
       <div>
-        <strong>XD Segment:</strong> ${xd}<br>
-        <strong>Travel Time Index:</strong> ${travelTimeIndex.toFixed(2)}
+        <strong>XD:</strong> ${xd}<br>
+        <strong>Bearing:</strong> ${bearing}<br>
+        <strong>Road:</strong> ${roadname}<br>
+        <strong>Miles:</strong> ${miles !== undefined && miles !== null ? miles.toFixed(2) : 'N/A'}<br>
+        <strong>Approach:</strong> ${approach ? 'Yes' : 'No'}<br>
+        <strong>TTI:</strong> ${tti.toFixed(2)}
       </div>
     `
   }
@@ -913,7 +948,11 @@ function selectXdSegmentsInPolygon(polygon) {
     signalMarkersCount: signalMarkers.size
   })
 
-  const displayedXDs = new Set(props.signals.map(signal => signal.XD))
+  const displayedXDs = new Set(
+    props.dataType === 'travel-time' && props.xdSegments.length > 0
+      ? props.xdSegments.map(xd => xd.XD)
+      : props.signals.map(signal => signal.XD)
+  )
   const selectedXDs = []
   const selectedSignalIds = []
 
@@ -1380,31 +1419,18 @@ function updateMarkers() {
       if (!signalGroups.has(signal.ID)) {
         signalGroups.set(signal.ID, {
           ID: signal.ID,
+          NAME: signal.NAME,  // Include NAME from backend
           LATITUDE: latitude,
           LONGITUDE: longitude,
-          APPROACH: signal.APPROACH,
-          VALID_GEOMETRY: signal.VALID_GEOMETRY,
-          TRAVEL_TIME_INDEX: 0,
-          RECORD_COUNT: 0,
-          totalForAvg: 0,
-          countForAvg: 0,
-          ttiCount: 0
+          TRAVEL_TIME_INDEX: Number(signal.TRAVEL_TIME_INDEX ?? 0) || 0,
+          ttiCount: 1  // Backend now pre-aggregates, so typically 1 row per signal
         })
-      }
-
-      const group = signalGroups.get(signal.ID)
-      const tti = Number(signal.TRAVEL_TIME_INDEX ?? 0) || 0
-      const records = Number(signal.RECORD_COUNT ?? 0) || 0
-      const avgTime = Number(signal.AVG_TRAVEL_TIME ?? signal.AVG_TRAVEL_TIME_SECONDS ?? 0) || 0
-
-      group.TRAVEL_TIME_INDEX += tti
-      group.ttiCount += 1
-      group.RECORD_COUNT += records
-
-      // For weighted average calculation
-      if (records > 0 && avgTime > 0) {
-        group.totalForAvg += avgTime * records
-        group.countForAvg += records
+      } else {
+        // Handle legacy case where signal appears multiple times (shouldn't happen with new backend)
+        const group = signalGroups.get(signal.ID)
+        const tti = Number(signal.TRAVEL_TIME_INDEX ?? 0) || 0
+        group.TRAVEL_TIME_INDEX += tti
+        group.ttiCount += 1
       }
     })
     
@@ -1452,11 +1478,11 @@ function updateMarkers() {
 
         // Update tooltip content immediately so it reflects new data
         const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
+        const signalName = signal.NAME || `Signal ${signal.ID}`
         const tooltipContent = `
           <div>
-            <h4>Signal ${signal.ID}</h4>
+            <h4>${signalName}</h4>
             <p><strong>Travel Time Index:</strong> ${ttiDisplay}</p>
-            <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
           </div>
         `
         if (existingMarker.getTooltip()) {
@@ -1484,12 +1510,12 @@ function updateMarkers() {
         })
 
         const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
+        const signalName = signal.NAME || `Signal ${signal.ID}`
 
         const tooltipContent = `
           <div>
-            <h4>Signal ${signal.ID}</h4>
+            <h4>${signalName}</h4>
             <p><strong>Travel Time Index:</strong> ${ttiDisplay}</p>
-            <p><strong>Approach:</strong> ${signal.APPROACH ? 'Yes' : 'No'}</p>
           </div>
         `
 
@@ -1500,34 +1526,21 @@ function updateMarkers() {
 
         // Lazy tooltip update on mouseover
         marker.on('mouseover', () => {
-          // Recalculate aggregated TTI from current signal data
-          const currentGroup = {
-            TRAVEL_TIME_INDEX: 0,
-            ttiCount: 0,
-            APPROACH: signal.APPROACH
+          // Get current signal from props (which has NAME and already aggregated TTI)
+          const currentSignal = props.signals.find(s => s.ID === signal.ID)
+          if (currentSignal) {
+            const currentTTI = Number(currentSignal.TRAVEL_TIME_INDEX ?? 0) || 0
+            const currentTtiDisplay = Number.isFinite(currentTTI) ? currentTTI.toFixed(2) : 'N/A'
+            const currentName = currentSignal.NAME || `Signal ${currentSignal.ID}`
+
+            const updatedTooltip = `
+              <div>
+                <h4>${currentName}</h4>
+                <p><strong>Travel Time Index:</strong> ${currentTtiDisplay}</p>
+              </div>
+            `
+            marker.setTooltipContent(updatedTooltip)
           }
-
-          props.signals.forEach(s => {
-            if (s.ID === signal.ID) {
-              const tti = Number(s.TRAVEL_TIME_INDEX ?? 0) || 0
-              currentGroup.TRAVEL_TIME_INDEX += tti
-              currentGroup.ttiCount += 1
-            }
-          })
-
-          const currentAvgTTI = currentGroup.ttiCount > 0
-            ? currentGroup.TRAVEL_TIME_INDEX / currentGroup.ttiCount
-            : 0
-          const currentTtiDisplay = Number.isFinite(currentAvgTTI) ? currentAvgTTI.toFixed(2) : 'N/A'
-
-          const updatedTooltip = `
-            <div>
-              <h4>Signal ${signal.ID}</h4>
-              <p><strong>Travel Time Index:</strong> ${currentTtiDisplay}</p>
-              <p><strong>Approach:</strong> ${currentGroup.APPROACH ? 'Yes' : 'No'}</p>
-            </div>
-          `
-          marker.setTooltipContent(updatedTooltip)
         })
 
         marker.on('click', (e) => {
@@ -1577,7 +1590,11 @@ function autoZoomToSignals() {
 
     // OPTIMIZATION: Skip XD bounds iteration for large datasets (>20 signals)
     // Marker bounds are sufficient for zoom, and iterating XDs is expensive
-    const displayedXDs = new Set(props.signals.map(signal => signal.XD))
+    const displayedXDs = new Set(
+      props.dataType === 'travel-time' && props.xdSegments.length > 0
+        ? props.xdSegments.map(xd => xd.XD)
+        : props.signals.map(signal => signal.XD)
+    )
     let xdBoundsAdded = 0
 
     if (signalMarkers.size <= 20) {
@@ -1691,8 +1708,12 @@ function updateSelectionStyles() {
     console.log(`🔄 updateSelectionStyles: Updated ${updatedCount}/${signalMarkers.size} markers`)
   }
 
-  // Build set of XD values from currently displayed signals
-  const displayedXDs = new Set(props.signals.map(signal => signal.XD))
+  // Build set of XD values from currently displayed XD segments
+  const displayedXDs = new Set(
+    props.dataType === 'travel-time' && props.xdSegments.length > 0
+      ? props.xdSegments.map(xd => xd.XD)
+      : props.signals.map(signal => signal.XD)
+  )
 
   // Update XD layer styles
   const xdDataMap = getXdDataMap()

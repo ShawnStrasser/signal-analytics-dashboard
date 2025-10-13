@@ -220,23 +220,20 @@ def get_travel_time_summary():
         INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD
         INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID"""
 
-        # Single query that does all filtering in SQL
-        # Note: LATITUDE and LONGITUDE come from DIM_SIGNALS (s), not DIM_SIGNALS_XD
+        # Single query that does all filtering in SQL - SIGNAL-LEVEL aggregation
+        # Groups by signal only (not XD) to return one row per signal
+        # Note: LATITUDE, LONGITUDE, NAME come from DIM_SIGNALS (s), not DIM_SIGNALS_XD
         analytics_query = f"""
         SELECT
             s.ID,
+            s.NAME,
             s.LATITUDE,
             s.LONGITUDE,
-            xd.APPROACH,
-            xd.VALID_GEOMETRY,
-            xd.XD,
-            AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) AS TRAVEL_TIME_INDEX,
-            AVG(t.TRAVEL_TIME_SECONDS) AS AVG_TRAVEL_TIME,
-            0 AS RECORD_COUNT
+            AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) AS TRAVEL_TIME_INDEX
         {from_clause}
         WHERE {where_clause}
-        GROUP BY s.ID, s.LATITUDE, s.LONGITUDE, xd.APPROACH, xd.VALID_GEOMETRY, xd.XD
-        ORDER BY xd.XD
+        GROUP BY s.ID, s.NAME, s.LATITUDE, s.LONGITUDE
+        ORDER BY s.ID
         """
 
         if DEBUG_BACKEND_TIMING:
@@ -257,6 +254,112 @@ def get_travel_time_summary():
     except Exception as e:
         print(f"[ERROR] /travel-time-summary: {e}")
         return f"Error fetching travel time summary: {e}", 500
+
+
+@travel_time_bp.route('/travel-time-summary-xd')
+def get_travel_time_summary_xd():
+    """Get XD segment-level data for map tooltips and coloring as Arrow"""
+    request_start = time.time()
+
+    session = get_snowflake_session(retry=True, max_retries=2)
+    if not session:
+        return "Connecting to Database - please wait", 503
+
+    # Get query parameters (same as travel-time-summary)
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    signal_ids = request.args.getlist('signal_ids')
+    maintained_by = request.args.get('maintained_by', 'all')
+    approach = request.args.get('approach')
+    valid_geometry = request.args.get('valid_geometry')
+    start_hour = request.args.get('start_hour')
+    start_minute = request.args.get('start_minute')
+    end_hour = request.args.get('end_hour')
+    end_minute = request.args.get('end_minute')
+    day_of_week = request.args.getlist('day_of_week')
+
+    # Normalize dates
+    start_date_str = normalize_date(start_date)
+    end_date_str = normalize_date(end_date)
+
+    # Build time-of-day filter
+    time_filter = build_time_of_day_filter(start_hour, start_minute, end_hour, end_minute)
+
+    # Build day-of-week filter
+    dow_filter = build_day_of_week_filter(day_of_week)
+
+    if DEBUG_BACKEND_TIMING:
+        print(f"\n[TIMING] /travel-time-summary-xd START")
+        print(f"  Params: date={start_date_str} to {end_date_str}, signals={len(signal_ids) if signal_ids else 'all'}")
+
+    try:
+        # Build filter joins for efficient SQL filtering
+        filter_join, filter_where = build_filter_joins_and_where(
+            signal_ids, maintained_by, approach, valid_geometry
+        )
+
+        # Build single efficient query with all joins and filters
+        query_start = time.time()
+
+        # Build WHERE clause parts
+        where_parts = [f"t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'"]
+
+        if filter_where:
+            where_parts.append(filter_where)
+
+        if time_filter:
+            clean_time = time_filter.strip()
+            if clean_time.startswith('AND '):
+                clean_time = clean_time[4:]
+            clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
+            where_parts.append(clean_time)
+
+        where_clause = " AND ".join(where_parts)
+
+        # Build FROM clause
+        # Always join DIM_SIGNALS_XD and DIM_SIGNALS for filtering
+        from_clause = f"""FROM TRAVEL_TIME_ANALYTICS t
+        {dow_filter}
+        INNER JOIN FREEFLOW f ON t.XD = f.XD
+        INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD
+        INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID"""
+
+        # Single query that does all filtering in SQL - XD-LEVEL aggregation
+        # Groups by XD to return one row per XD segment with XD-specific fields
+        # IMPORTANT: Include xd.ID so frontend can build signal<->XD mappings
+        analytics_query = f"""
+        SELECT
+            xd.XD,
+            xd.ID,
+            xd.BEARING,
+            xd.ROADNAME,
+            xd.MILES,
+            xd.APPROACH,
+            AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) AS TRAVEL_TIME_INDEX
+        {from_clause}
+        WHERE {where_clause}
+        GROUP BY xd.XD, xd.ID, xd.BEARING, xd.ROADNAME, xd.MILES, xd.APPROACH
+        ORDER BY xd.XD
+        """
+
+        if DEBUG_BACKEND_TIMING:
+            print(f"  [QUERY]:\n{analytics_query}\n")
+
+        arrow_data = session.sql(analytics_query).to_arrow()
+        query_time = (time.time() - query_start) * 1000
+
+        arrow_bytes = snowflake_result_to_arrow(arrow_data)
+        total_time = (time.time() - request_start) * 1000
+
+        if DEBUG_BACKEND_TIMING:
+            print(f"  [1] Single efficient query: {query_time:.2f}ms ({arrow_data.num_rows} rows)")
+            print(f"  [TOTAL] /travel-time-summary-xd: {total_time:.2f}ms\n")
+
+        return create_arrow_response(arrow_bytes)
+
+    except Exception as e:
+        print(f"[ERROR] /travel-time-summary-xd: {e}")
+        return f"Error fetching XD travel time summary: {e}", 500
 
 
 @travel_time_bp.route('/travel-time-aggregated')
@@ -344,7 +447,7 @@ def get_travel_time_aggregated():
 
         # Determine SELECT and GROUP BY clauses based on legend
         if legend_field:
-            select_clause = f"{timestamp_expr}, s.{legend_field} AS LEGEND_GROUP, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX"
+            select_clause = f"{timestamp_expr}, legend_xd.{legend_field} AS LEGEND_GROUP, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX"
             group_by_clause = "GROUP BY 1, 2\nORDER BY 1, 2"
         else:
             select_clause = f"{timestamp_expr}, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX"
@@ -501,7 +604,7 @@ def get_travel_time_by_time_of_day():
 
         # Determine SELECT and GROUP BY clauses based on legend
         if legend_field:
-            select_clause = f"t.TIME_15MIN AS TIME_OF_DAY, s.{legend_field} AS LEGEND_GROUP, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX"
+            select_clause = f"t.TIME_15MIN AS TIME_OF_DAY, legend_xd.{legend_field} AS LEGEND_GROUP, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX"
             group_by_clause = "GROUP BY 1, 2\nORDER BY 1, 2"
         else:
             select_clause = f"t.TIME_15MIN AS TIME_OF_DAY, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX"

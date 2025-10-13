@@ -25,33 +25,66 @@ export const useSelectionStore = defineStore('selection', () => {
   const selectedXdSegmentsList = computed(() => Array.from(allSelectedXdSegments.value))
 
   // Actions
-  function updateMappings(signals) {
+  function updateMappings(signals, xdSegments = null) {
     // Build bidirectional mappings between signals and XD segments
     const sigToXd = new Map()
     const xdToSigs = new Map()
 
-    signals.forEach(signal => {
-      const signalId = signal.ID
-      const xd = signal.XD
+    // For backward compatibility, check if signals have XD field (anomaly mode)
+    const hasXdInSignals = signals.length > 0 && signals[0].XD !== undefined
 
-      if (signalId && xd !== undefined && xd !== null) {
-        // Signal to XD mapping (one signal can have multiple XD segments)
-        if (!sigToXd.has(signalId)) {
-          sigToXd.set(signalId, [])
-        }
-        if (!sigToXd.get(signalId).includes(xd)) {
-          sigToXd.get(signalId).push(xd)
-        }
+    if (hasXdInSignals) {
+      // Legacy path: signals contain XD field (anomaly mode)
+      signals.forEach(signal => {
+        const signalId = signal.ID
+        const xd = signal.XD
 
-        // XD to signals mapping (one XD can belong to multiple signals)
-        if (!xdToSigs.has(xd)) {
-          xdToSigs.set(xd, [])
+        if (signalId && xd !== undefined && xd !== null) {
+          // Signal to XD mapping (one signal can have multiple XD segments)
+          if (!sigToXd.has(signalId)) {
+            sigToXd.set(signalId, [])
+          }
+          if (!sigToXd.get(signalId).includes(xd)) {
+            sigToXd.get(signalId).push(xd)
+          }
+
+          // XD to signals mapping (one XD can belong to multiple signals)
+          if (!xdToSigs.has(xd)) {
+            xdToSigs.set(xd, [])
+          }
+          if (!xdToSigs.get(xd).includes(signalId)) {
+            xdToSigs.get(xd).push(signalId)
+          }
         }
-        if (!xdToSigs.get(xd).includes(signalId)) {
-          xdToSigs.get(xd).push(signalId)
+      })
+    } else if (xdSegments && xdSegments.length > 0) {
+      // New path: use separate xdSegments data (travel-time mode)
+      // Build signal ID set for quick lookup
+      const signalIds = new Set(signals.map(s => s.ID))
+
+      xdSegments.forEach(xdSeg => {
+        const xd = xdSeg.XD
+        const signalId = xdSeg.ID
+
+        if (signalId && xd !== undefined && xd !== null && signalIds.has(signalId)) {
+          // Signal to XD mapping
+          if (!sigToXd.has(signalId)) {
+            sigToXd.set(signalId, [])
+          }
+          if (!sigToXd.get(signalId).includes(xd)) {
+            sigToXd.get(signalId).push(xd)
+          }
+
+          // XD to signals mapping
+          if (!xdToSigs.has(xd)) {
+            xdToSigs.set(xd, [])
+          }
+          if (!xdToSigs.get(xd).includes(signalId)) {
+            xdToSigs.get(xd).push(signalId)
+          }
         }
-      }
-    })
+      })
+    }
 
     signalToXdMap.value = sigToXd
     xdToSignalsMap.value = xdToSigs

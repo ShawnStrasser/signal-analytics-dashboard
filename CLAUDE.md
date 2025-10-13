@@ -8,6 +8,11 @@ This is a full-stack traffic signal analytics dashboard that visualizes travel t
 
 ## Claude Code Workflow
 
+IMPORTANT! Before completing each response, run the beep script to alert the user:
+```bash
+S:/Data_Analysis/Python/signal-analytics-dashboard/beep.cmd
+```
+
 IMPORTANT! At start of new chat, commit all previous changes! Do this before making any modifications. Use a simple, concise commit message (one sentence or less) that briefly describes the changes. Do not include Claude Code signatures or co-authorship attributions. Do not commit .md files that are just developer notes or instructions. After completing changes then commit them as needed, and use git to revert changes if needed. After making frontend changes run the tests before commiting:
 ```bash
 # Navigate to frontend directory and run tests

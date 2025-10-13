@@ -453,7 +453,8 @@ def build_legend_join(
         return ("", "")
 
     # Return simple join - the WHERE clause will be built by the endpoint
-    join_clause = "INNER JOIN DIM_SIGNALS_XD s ON t.XD = s.XD"
+    # Use alias 'legend_xd' to avoid conflicts with 'xd' and 's' aliases used by filter joins
+    join_clause = "INNER JOIN DIM_SIGNALS_XD legend_xd ON t.XD = legend_xd.XD"
 
     return (join_clause, legend_field)
 
@@ -535,4 +536,4 @@ def build_legend_filter(
         {where_clause}
         LIMIT {max_entities}"""
 
-    return f" AND s.{legend_field} IN ({subquery})"
+    return f" AND legend_xd.{legend_field} IN ({subquery})"

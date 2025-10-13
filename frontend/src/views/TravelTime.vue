@@ -52,6 +52,7 @@
             ref="mapRef"
             v-if="mapData.length > 0"
             :signals="mapData"
+            :xd-segments="xdData"
             data-type="travel-time"
             @selection-changed="onSelectionChanged"
           />
@@ -132,6 +133,7 @@ const filtersStore = useFiltersStore()
 const selectionStore = useSelectionStore()
 const mapDataCacheStore = useMapDataCacheStore()
 const mapData = ref([])
+const xdData = ref([])  // XD segment data for map tooltips/coloring
 const chartData = ref([])
 const loadingMap = ref(false)
 const loadingChart = ref(false)
@@ -270,68 +272,32 @@ async function loadMapData() {
     const t0 = performance.now()
     loadingMap.value = true
 
-    // Check if this is an "all signals" query (no filters applied)
-    const isAllSignals = (!filtersStore.selectedSignalIds || filtersStore.selectedSignalIds.length === 0) &&
-                         filtersStore.maintainedBy === 'all' &&
-                         !filtersStore.approach &&
-                         (!filtersStore.validGeometry || filtersStore.validGeometry === 'all')
+    // Fetch both signal-level and XD-level data in parallel
+    const [signalTable, xdTable] = await Promise.all([
+      ApiService.getTravelTimeSummary(filtersStore.filterParams),
+      ApiService.getTravelTimeSummaryXd(filtersStore.filterParams)
+    ])
 
-    // Try cache first for "all signals" queries
-    if (isAllSignals) {
-      const cached = mapDataCacheStore.getTravelTimeCache(
-        filtersStore.startDate,
-        filtersStore.endDate,
-        filtersStore.startHour,
-        filtersStore.startMinute,
-        filtersStore.endHour,
-        filtersStore.endMinute,
-        filtersStore.dayOfWeek
-      )
-
-      if (cached) {
-        mapData.value = cached
-        const t1 = performance.now()
-        console.log(`📡 API: Loading map data DONE (CACHED) - ${mapData.value.length} records in ${(t1 - t0).toFixed(2)}ms`)
-        return
-      }
-    }
-
-    // Cache miss or filtered query - fetch from backend
-    const arrowTable = await ApiService.getTravelTimeSummary(filtersStore.filterParams)
     const t1 = performance.now()
-    console.log(`📡 API: getTravelTimeSummary took ${(t1 - t0).toFixed(2)}ms`)
+    console.log(`📡 API: Parallel fetch took ${(t1 - t0).toFixed(2)}ms`)
 
+    // Convert Arrow tables to objects
     const conversionStart = performance.now()
-    const objects = ApiService.arrowTableToObjects(arrowTable)
+    const signalObjects = ApiService.arrowTableToObjects(signalTable)
+    const xdObjects = ApiService.arrowTableToObjects(xdTable)
     const t2 = performance.now()
-    console.log(`📡 API: arrowTableToObjects took ${(t2 - conversionStart).toFixed(2)}ms`)
+    console.log(`📡 API: arrowTableToObjects (both) took ${(t2 - conversionStart).toFixed(2)}ms`)
 
-    // Cache "all signals" result
-    if (isAllSignals) {
-      mapDataCacheStore.setTravelTimeCache(
-        filtersStore.startDate,
-        filtersStore.endDate,
-        filtersStore.startHour,
-        filtersStore.startMinute,
-        filtersStore.endHour,
-        filtersStore.endMinute,
-        filtersStore.dayOfWeek,
-        objects
-      )
-    }
-
-    const assignmentStart = performance.now()
-    mapData.value = objects
+    // Assign to refs
+    mapData.value = signalObjects
+    xdData.value = xdObjects
     const t3 = performance.now()
-    console.log(`📡 API: mapData assignment took ${(t3 - assignmentStart).toFixed(2)}ms`)
-    console.log(`📡 API: Loading map data DONE - ${mapData.value.length} records in ${(t3 - t0).toFixed(2)}ms`)
 
-    // Log time from assignment to end of function
-    const t4 = performance.now()
-    console.log(`📡 API: Post-assignment overhead ${(t4 - t3).toFixed(2)}ms`)
+    console.log(`📡 API: Loading map data DONE - ${mapData.value.length} signals, ${xdData.value.length} XDs in ${(t3 - t0).toFixed(2)}ms`)
   } catch (error) {
     console.error('Failed to load map data:', error)
     mapData.value = []
+    xdData.value = []
   } finally {
     loadingMap.value = false
   }

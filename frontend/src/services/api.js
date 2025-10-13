@@ -101,6 +101,10 @@ class ApiService {
     return this.fetchArrowData('/travel-time-summary', filters)
   }
 
+  async getTravelTimeSummaryXd(filters) {
+    return this.fetchArrowData('/travel-time-summary-xd', filters)
+  }
+
   async getTravelTimeAggregated(filters, legendBy = null) {
     const params = { ...filters }
     if (legendBy && legendBy !== 'none') {
