@@ -8,7 +8,6 @@ import sys
 import pyarrow as pa
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from flask_compress import Compress
 from database import get_snowflake_session, get_connection_status
 
 # Download timezone database on Windows if needed
@@ -19,19 +18,8 @@ if sys.platform == 'win32':
     except Exception as e:
         print(f"⚠️  Failed to download timezone database: {e}")
 
-app = Flask(__name__, static_folder='frontend/dist')
+app = Flask(__name__, static_folder='static/dist')
 CORS(app)
-
-# Enable gzip/brotli compression for all responses
-# Configure for minimum size threshold to avoid compressing small responses
-app.config['COMPRESS_MIMETYPES'] = [
-    'text/html', 'text/css', 'text/xml',
-    'application/json', 'application/javascript',
-    'application/octet-stream'  # Include Arrow binary data
-]
-app.config['COMPRESS_MIN_SIZE'] = 500  # Only compress responses > 500 bytes
-app.config['COMPRESS_LEVEL'] = 6  # Balance between speed and compression ratio
-Compress(app)
 
 @app.route('/api/health')
 def health_check():

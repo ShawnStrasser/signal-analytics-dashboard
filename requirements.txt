@@ -7,6 +7,9 @@ numpy
 python-dotenv
 pyarrow
 
+# Production Dependencies
+gunicorn
+
 # Testing Dependencies
 pytest
 pytest-flask
