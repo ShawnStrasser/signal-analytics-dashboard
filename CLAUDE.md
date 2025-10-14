@@ -69,22 +69,6 @@ Periodically update CLAUDE.md as needed to keep it accurate and up to date with 
 
 ## Database Schema
 
-### Tables
-- **DIM_SIGNALS_XD**: Signal dimension table with XD segments, lat/lon, approach/extended flags, valid_geometry
-- **TRAVEL_TIME_ANALYTICS**: Time series data with XD, timestamp, travel_time_seconds, prediction, anomaly flags, TIME_15MIN (computed as TO_TIME(TIMESTAMP))
-- **DIM_DATE**: Date dimension table with DATE_ONLY and DAY_OF_WEEK_ISO (1=Mon, 7=Sun)
-- **XD_GEOM**: Road segment geometries (ST_ASGEOJSON format) keyed by XD
-- **CHANGEPOINTS**: Detected changepoints with scores and before/after averages
-- **FREEFLOW**: Free-flow travel times by XD segment
+Full schema definitions are in README.md reference when needed.
 
-Full schema definitions are in README.md.
-
-
-## Important Notes
-
-- **Arrow serialization**: Use `pyarrow.ipc.new_stream()` to serialize Arrow tables, not `to_pybytes()` directly
-- **Date normalization**: All API endpoints normalize dates to `YYYY-MM-DD` format using `pd.to_datetime().strftime()`
-- **Empty results**: API endpoints return empty Arrow tables with proper schema when no data matches filters
-- **XD caching**: `xd-geometry` endpoint caches GeoJSON data in `_xd_geometry_cache` global variable
-- **Filter persistence**: All filter state persists in Pinia stores when navigating between pages
 

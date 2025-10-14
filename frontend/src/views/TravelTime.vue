@@ -1,52 +1,61 @@
 <template>
   <div class="travel-time-view">
-    <!-- Page Title -->
+    <!-- Page Title with Legend -->
     <v-card class="mb-3">
-      <v-card-title class="py-2">
-        <v-icon left>mdi-chart-line</v-icon>
-        Travel Time Index Analysis
+      <v-card-title class="py-2 d-flex align-center flex-wrap">
+        <div class="d-flex align-center">
+          <v-icon left>mdi-chart-line</v-icon>
+          <span>Travel Time Index Analysis</span>
+        </div>
+        <v-spacer class="d-none d-sm-flex"></v-spacer>
+        <div class="legend-container d-flex align-center flex-wrap mt-2 mt-sm-0">
+          <span class="text-caption font-weight-medium mr-2 d-none d-sm-inline">Legend:</span>
+          <div class="legend-item">
+            <div class="legend-circle green-circle"></div>
+            <span class="legend-text"><span class="d-none d-sm-inline">Low </span>&lt;1.5</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-circle yellow-circle"></div>
+            <span class="legend-text"><span class="d-none d-sm-inline">Med </span>1.5-2.25</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-circle red-circle"></div>
+            <span class="legend-text"><span class="d-none d-sm-inline">High </span>≥2.25</span>
+          </div>
+        </div>
       </v-card-title>
-    </v-card>
-
-    <!-- Selection Summary -->
-    <v-card v-if="selectionStore.hasMapSelections" color="info" variant="tonal" class="mb-3">
-      <v-card-text class="py-2">
-        <div>
-          <strong>Map Selection:</strong>
-          <span v-if="selectionStore.selectedSignals.size > 0">
-            {{ selectionStore.selectedSignals.size }} signal(s) selected
-          </span>
-          <span v-if="selectionStore.selectedSignals.size > 0 && selectionStore.selectedXdSegments.size > 0"> • </span>
-          <span v-if="selectionStore.selectedXdSegments.size > 0">
-            {{ selectionStore.selectedXdSegments.size }} XD segment(s) directly selected
-          </span>
-        </div>
-        <div class="text-caption mt-1">
-          Chart below is filtered to {{ selectionStore.allSelectedXdSegments.size }} total XD segment(s)
-        </div>
-      </v-card-text>
     </v-card>
 
     <!-- Main Content Area with Dynamic Height -->
     <div class="content-grid">
       <!-- Map Section -->
       <v-card class="map-card">
-        <v-card-title class="py-2 d-flex align-center">
-          🗺️ Traffic Signals Map
+        <v-card-title class="py-2 d-flex align-center flex-wrap">
+          <div class="d-flex align-center">
+            🗺️ Traffic Signals Map
+            <span class="map-instruction ml-2 text-medium-emphasis d-none d-md-inline">— Click signals or segments to filter the chart.</span>
+          </div>
           <v-spacer></v-spacer>
-          <v-btn
-            v-if="selectionStore.hasMapSelections"
-            size="small"
-            variant="outlined"
-            color="error"
-            @click="clearMapSelections"
-          >
-            Clear Map Selections
-          </v-btn>
+          <div v-if="selectionStore.hasMapSelections" class="d-flex align-center gap-2 flex-wrap">
+            <v-chip size="small" color="info" variant="tonal" class="selection-chip">
+              <span v-if="selectionStore.selectedSignals.size > 0">
+                {{ selectionStore.selectedSignals.size }} signal(s)
+              </span>
+              <span v-if="selectionStore.selectedSignals.size > 0 && selectionStore.selectedXdSegments.size > 0"> • </span>
+              <span v-if="selectionStore.selectedXdSegments.size > 0">
+                {{ selectionStore.selectedXdSegments.size }} XD segment(s)
+              </span>
+            </v-chip>
+            <v-btn
+              size="small"
+              variant="outlined"
+              color="error"
+              @click="clearMapSelections"
+            >
+              Clear Map Selections
+            </v-btn>
+          </div>
         </v-card-title>
-        <v-card-subtitle class="py-1">
-          Signal points show travel time index by color. Click signals or XD segments to filter the chart below.
-        </v-card-subtitle>
         <v-card-text class="map-container">
           <SharedMap
             ref="mapRef"
@@ -427,6 +436,101 @@ function clearMapSelections() {
   .chart-container {
     min-height: 300px; /* Ensure minimum height on mobile */
     padding: 8px !important;
+  }
+}
+
+/* Legend styling */
+.legend-container {
+  background-color: rgba(0, 0, 0, 0.04);
+  padding: 6px 12px;
+  border-radius: 8px;
+  gap: 12px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  background-color: rgba(255, 255, 255, 0.5);
+  border-radius: 12px;
+}
+
+.legend-circle {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-block;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.green-circle {
+  background-color: #4caf50;
+}
+
+.yellow-circle {
+  background-color: #ffc107;
+}
+
+.red-circle {
+  background-color: #d32f2f;
+}
+
+.legend-text {
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.gap-2 {
+  gap: 8px;
+}
+
+.gap-3 {
+  gap: 12px;
+}
+
+/* Map instruction text */
+.map-instruction {
+  font-size: 0.95rem;
+  font-weight: 400;
+}
+
+/* Selection chip styling */
+.selection-chip {
+  font-size: 0.875rem !important;
+  height: auto !important;
+  padding: 4px 8px !important;
+}
+
+.selection-chip span {
+  font-size: 0.875rem;
+}
+
+/* Mobile legend adjustments */
+@media (max-width: 600px) {
+  .legend-container {
+    width: 100%;
+    margin-top: 8px;
+    padding: 4px 8px;
+    gap: 6px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  .legend-item {
+    padding: 2px 6px;
+    flex-shrink: 0;
+  }
+
+  .legend-text {
+    font-size: 0.65rem;
+  }
+
+  .legend-circle {
+    width: 12px;
+    height: 12px;
   }
 }
 </style>
