@@ -10,7 +10,7 @@
         🚦 Signal Analytics Dashboard
       </v-app-bar-title>
 
-      <!-- Theme toggle and connection status -->
+      <!-- Theme toggle -->
       <template v-slot:append>
         <!-- Theme toggle button -->
         <v-tooltip location="bottom">
@@ -23,22 +23,6 @@
             ></v-btn>
           </template>
           <span>Toggle {{ themeStore.currentTheme === 'dark' ? 'light' : 'dark' }} mode</span>
-        </v-tooltip>
-
-        <!-- Connection status indicator -->
-        <v-tooltip location="bottom">
-          <template v-slot:activator="{ props }">
-            <v-chip
-              v-bind="props"
-              :color="connectionChipColor"
-              variant="flat"
-              size="small"
-            >
-              <v-icon :icon="connectionIcon" start></v-icon>
-              {{ connectionText }}
-            </v-chip>
-          </template>
-          <span>{{ connectionTooltip }}</span>
         </v-tooltip>
       </template>
     </v-app-bar>

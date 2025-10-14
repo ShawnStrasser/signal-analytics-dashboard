@@ -6,7 +6,8 @@ Optimized for low-latency small queries
 import pyarrow as pa
 from flask import Blueprint, request
 
-from database import get_snowflake_session
+from database import get_snowflake_session, is_auth_error
+from utils.error_handler import handle_auth_error_retry
 from utils.arrow_utils import (
     serialize_arrow_to_ipc,
     create_empty_arrow_response,
@@ -31,10 +32,6 @@ anomalies_bp = Blueprint('anomalies', __name__)
 @anomalies_bp.route('/anomaly-summary')
 def get_anomaly_summary():
     """Get anomaly summary data for map visualization as Arrow"""
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        return "Connecting to Database - please wait", 503
-
     # Get query parameters
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
@@ -58,7 +55,10 @@ def get_anomaly_summary():
     # Build time-of-day filter
     time_filter = build_time_of_day_filter(start_hour, start_minute, end_hour, end_minute)
 
-    try:
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
         # Step 1: Determine whether to use join-based or direct filtering
         use_join_based = signal_ids or maintained_by != 'all'
 
@@ -165,18 +165,18 @@ def get_anomaly_summary():
         arrow_bytes = serialize_arrow_to_ipc(result_table)
         return create_arrow_response(arrow_bytes)
 
+    try:
+        return handle_auth_error_retry(execute_query)
     except Exception as e:
         print(f"[ERROR] /anomaly-summary: {e}")
+        if is_auth_error(e):
+            return "Database reconnecting - please wait", 503
         return f"Error fetching anomaly data: {e}", 500
 
 
 @anomalies_bp.route('/anomaly-aggregated')
 def get_anomaly_aggregated():
     """Get aggregated anomaly data by timestamp as Arrow"""
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        return "Connecting to Database - please wait", 503
-
     # Get query parameters
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
@@ -200,7 +200,10 @@ def get_anomaly_aggregated():
     # Build time-of-day filter
     time_filter = build_time_of_day_filter(start_hour, start_minute, end_hour, end_minute)
 
-    try:
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
         # Resolve XD segments if signal_ids provided
         xd_values = None
         if xd_segments:
@@ -258,18 +261,18 @@ def get_anomaly_aggregated():
         arrow_bytes = snowflake_result_to_arrow(arrow_data)
         return create_arrow_response(arrow_bytes)
 
+    try:
+        return handle_auth_error_retry(execute_query)
     except Exception as e:
         print(f"[ERROR] /anomaly-aggregated: {e}")
+        if is_auth_error(e):
+            return "Database reconnecting - please wait", 503
         return f"Error fetching aggregated anomaly data: {e}", 500
 
 
 @anomalies_bp.route('/travel-time-data')
 def get_travel_time_data():
     """Get detailed travel time data for anomaly analysis as Arrow"""
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        return "Connecting to Database - please wait", 503
-
     # Get query parameters
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
@@ -283,7 +286,10 @@ def get_travel_time_data():
     start_date_str = normalize_date(start_date)
     end_date_str = normalize_date(end_date)
 
-    try:
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
         # Resolve XD segments
         if xd_segments:
             # Map interaction - use direct XD list
@@ -387,6 +393,10 @@ def get_travel_time_data():
         arrow_bytes = serialize_arrow_to_ipc(result_table)
         return create_arrow_response(arrow_bytes)
 
+    try:
+        return handle_auth_error_retry(execute_query)
     except Exception as e:
         print(f"[ERROR] /travel-time-data: {e}")
+        if is_auth_error(e):
+            return "Database reconnecting - please wait", 503
         return f"Error fetching travel time data: {e}", 500

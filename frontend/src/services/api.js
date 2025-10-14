@@ -10,43 +10,68 @@ class ApiService {
     this.baseURL = baseURL
   }
 
-  async fetchArrowData(endpoint, params = {}) {
-    try {
-      // Simple URL construction that works with Vite proxy
-      let url = `${this.baseURL}${endpoint}`
-      
-      // Add query parameters
-      const searchParams = new URLSearchParams()
-      Object.keys(params).forEach(key => {
-        const value = params[key]
-        if (value !== null && value !== undefined) {
-          if (Array.isArray(value)) {
-            value.forEach(v => searchParams.append(key, v))
-          } else {
-            searchParams.append(key, value)
-          }
+  async fetchArrowData(endpoint, params = {}, retries = 3, retryDelay = 1000) {
+    // Simple URL construction that works with Vite proxy
+    let url = `${this.baseURL}${endpoint}`
+
+    // Add query parameters
+    const searchParams = new URLSearchParams()
+    Object.keys(params).forEach(key => {
+      const value = params[key]
+      if (value !== null && value !== undefined) {
+        if (Array.isArray(value)) {
+          value.forEach(v => searchParams.append(key, v))
+        } else {
+          searchParams.append(key, value)
         }
-      })
-      
-      if (searchParams.toString()) {
-        url += '?' + searchParams.toString()
       }
+    })
 
-      const response = await fetch(url)
+    if (searchParams.toString()) {
+      url += '?' + searchParams.toString()
+    }
 
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error('Response error:', errorText)
-        throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`)
+    // Retry logic for 503 errors (database reconnecting)
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(url)
+
+        // Handle 503 (Service Unavailable - database reconnecting)
+        if (response.status === 503) {
+          const errorText = await response.text()
+
+          // If this is a reconnection error and we have retries left
+          if (attempt < retries && errorText.includes('reconnecting')) {
+            console.log(`🔄 Database reconnecting (attempt ${attempt + 1}/${retries + 1}), retrying in ${retryDelay}ms...`)
+            await new Promise(resolve => setTimeout(resolve, retryDelay))
+            continue
+          }
+
+          // Out of retries
+          throw new Error(`Service unavailable: ${errorText}`)
+        }
+
+        if (!response.ok) {
+          const errorText = await response.text()
+          console.error('Response error:', errorText)
+          throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`)
+        }
+
+        const arrayBuffer = await response.arrayBuffer()
+        const table = arrow.tableFromIPC(arrayBuffer)
+
+        return table
+      } catch (error) {
+        // If this is the last attempt or not a retryable error, throw
+        if (attempt === retries || !error.message.includes('Service unavailable')) {
+          console.error('Error fetching Arrow data:', error)
+          throw error
+        }
+
+        // Otherwise retry
+        console.log(`🔄 Request failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${retryDelay}ms...`)
+        await new Promise(resolve => setTimeout(resolve, retryDelay))
       }
-
-      const arrayBuffer = await response.arrayBuffer()
-      const table = arrow.tableFromIPC(arrayBuffer)
-      
-      return table
-    } catch (error) {
-      console.error('Error fetching Arrow data:', error)
-      throw error
     }
   }
 

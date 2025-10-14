@@ -11,7 +11,7 @@
     >
       <v-card-text class="text-center">
         <v-progress-circular
-          v-if="status === 'connecting'"
+          v-if="status === 'connecting' || status === 'reconnecting'"
           indeterminate
           size="64"
           color="primary"
@@ -58,7 +58,7 @@ import { ref, computed, watch } from 'vue'
 const props = defineProps({
   status: {
     type: String,
-    default: 'idle' // 'idle', 'connecting', 'connected', 'error'
+    default: 'idle' // 'idle', 'connecting', 'reconnecting', 'connected', 'error'
   },
   errorDetails: {
     type: String,
@@ -76,6 +76,8 @@ const statusTitle = computed(() => {
   switch (props.status) {
     case 'connecting':
       return 'Connecting to Database'
+    case 'reconnecting':
+      return 'Reconnecting to Database'
     case 'error':
       return 'Connection Failed'
     default:
@@ -87,6 +89,8 @@ const statusMessage = computed(() => {
   switch (props.status) {
     case 'connecting':
       return 'Connecting to the database. Please wait...'
+    case 'reconnecting':
+      return 'Database authentication expired. Reconnecting automatically...'
     case 'error':
       return 'Unable to connect to the database. Please check your connection and try again.'
     default:

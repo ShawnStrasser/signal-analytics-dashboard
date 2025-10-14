@@ -9,13 +9,14 @@ import pyarrow as pa
 from flask import Blueprint, request, jsonify
 
 from config import DEBUG_BACKEND_TIMING, DEBUG_DISABLE_SERVER_CACHE, MAX_LEGEND_ENTITIES
-from database import get_snowflake_session
+from database import get_snowflake_session, is_auth_error
 from utils.arrow_utils import (
     serialize_arrow_to_ipc,
     create_empty_arrow_response,
     create_arrow_response,
     snowflake_result_to_arrow
 )
+from utils.error_handler import handle_auth_error_retry
 from utils.query_utils import (
     normalize_date,
     build_xd_dimension_query,
@@ -40,10 +41,6 @@ _xd_geometry_cache = None
 @travel_time_bp.route('/signals')
 def get_signals():
     """Get signals dimension data as Arrow (DIM_SIGNALS_XD)"""
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        return "Connecting to Database - please wait", 503
-
     query = """
     SELECT
         ID,
@@ -60,22 +57,26 @@ def get_signals():
     FROM DIM_SIGNALS_XD
     """
 
-    try:
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
         arrow_data = session.sql(query).to_arrow()
         arrow_bytes = snowflake_result_to_arrow(arrow_data)
         return create_arrow_response(arrow_bytes)
+
+    try:
+        return handle_auth_error_retry(execute_query)
     except Exception as e:
         print(f"[ERROR] /signals: {e}")
+        if is_auth_error(e):
+            return "Database reconnecting - please wait", 503
         return f"Error fetching signals data: {e}", 500
 
 
 @travel_time_bp.route('/dim-signals')
 def get_dim_signals():
     """Get DIM_SIGNALS dimension data (for hierarchical filtering, cached on client)"""
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        return "Connecting to Database - please wait", 503
-
     query = """
     SELECT
         ID,
@@ -88,12 +89,20 @@ def get_dim_signals():
     ORDER BY DISTRICT, ID
     """
 
-    try:
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
         arrow_data = session.sql(query).to_arrow()
         arrow_bytes = snowflake_result_to_arrow(arrow_data)
         return create_arrow_response(arrow_bytes)
+
+    try:
+        return handle_auth_error_retry(execute_query)
     except Exception as e:
         print(f"[ERROR] /dim-signals: {e}")
+        if is_auth_error(e):
+            return "Database reconnecting - please wait", 503
         return f"Error fetching DIM_SIGNALS data: {e}", 500
 
 
@@ -109,10 +118,6 @@ def get_xd_geometry():
             print("[TIMING] /xd-geometry: Returned from cache")
         return create_arrow_response(_xd_geometry_cache)
 
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        return "Connecting to Database - please wait", 503
-
     if DEBUG_BACKEND_TIMING:
         print(f"\n[TIMING] /xd-geometry START")
 
@@ -124,7 +129,11 @@ def get_xd_geometry():
     WHERE GEOM IS NOT NULL
     """
 
-    try:
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
+
         query_start = time.time()
         arrow_data = session.sql(query).to_arrow()
         query_time = (time.time() - query_start) * 1000
@@ -144,11 +153,17 @@ def get_xd_geometry():
             print(f"  [TOTAL] /xd-geometry: {total_time:.2f}ms\n")
 
         # Cache the serialized Arrow bytes
+        global _xd_geometry_cache
         _xd_geometry_cache = arrow_bytes
 
         return create_arrow_response(arrow_bytes)
+
+    try:
+        return handle_auth_error_retry(execute_query)
     except Exception as e:
         print(f"[ERROR] /xd-geometry: {e}")
+        if is_auth_error(e):
+            return "Database reconnecting - please wait", 503
         return f"Error fetching XD geometry: {e}", 500
 
 
@@ -156,10 +171,6 @@ def get_xd_geometry():
 def get_travel_time_summary():
     """Get travel time summary for map visualization as Arrow"""
     request_start = time.time()
-
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        return "Connecting to Database - please wait", 503
 
     # Get query parameters
     start_date = request.args.get('start_date')
@@ -188,7 +199,11 @@ def get_travel_time_summary():
         print(f"\n[TIMING] /travel-time-summary START")
         print(f"  Params: date={start_date_str} to {end_date_str}, signals={len(signal_ids) if signal_ids else 'all'}")
 
-    try:
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
+
         # Build filter joins for efficient SQL filtering
         filter_join, filter_where = build_filter_joins_and_where(
             signal_ids, maintained_by, approach, valid_geometry
@@ -251,8 +266,12 @@ def get_travel_time_summary():
 
         return create_arrow_response(arrow_bytes)
 
+    try:
+        return handle_auth_error_retry(execute_query)
     except Exception as e:
         print(f"[ERROR] /travel-time-summary: {e}")
+        if is_auth_error(e):
+            return "Database reconnecting - please wait", 503
         return f"Error fetching travel time summary: {e}", 500
 
 
@@ -260,10 +279,6 @@ def get_travel_time_summary():
 def get_travel_time_summary_xd():
     """Get XD segment-level data for map tooltips and coloring as Arrow"""
     request_start = time.time()
-
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        return "Connecting to Database - please wait", 503
 
     # Get query parameters (same as travel-time-summary)
     start_date = request.args.get('start_date')
@@ -292,7 +307,11 @@ def get_travel_time_summary_xd():
         print(f"\n[TIMING] /travel-time-summary-xd START")
         print(f"  Params: date={start_date_str} to {end_date_str}, signals={len(signal_ids) if signal_ids else 'all'}")
 
-    try:
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
+
         # Build filter joins for efficient SQL filtering
         filter_join, filter_where = build_filter_joins_and_where(
             signal_ids, maintained_by, approach, valid_geometry
@@ -357,8 +376,12 @@ def get_travel_time_summary_xd():
 
         return create_arrow_response(arrow_bytes)
 
+    try:
+        return handle_auth_error_retry(execute_query)
     except Exception as e:
         print(f"[ERROR] /travel-time-summary-xd: {e}")
+        if is_auth_error(e):
+            return "Database reconnecting - please wait", 503
         return f"Error fetching XD travel time summary: {e}", 500
 
 
@@ -366,10 +389,6 @@ def get_travel_time_summary_xd():
 def get_travel_time_aggregated():
     """Get aggregated travel time data by timestamp as Arrow"""
     request_start = time.time()
-
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        return "Connecting to Database - please wait", 503
 
     # Get query parameters
     start_date = request.args.get('start_date')
@@ -403,7 +422,10 @@ def get_travel_time_aggregated():
         print(f"\n[TIMING] /travel-time-aggregated START")
         print(f"  Params: date={start_date_str} to {end_date_str}, xd_segments={len(xd_segments) if xd_segments else 0}, signals={len(signal_ids) if signal_ids else 0}, agg_level={agg_level}, legend_by={legend_by}")
 
-    try:
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
         # Determine filtering strategy
         if xd_segments:
             # Map interaction - use direct XD list (small, efficient)
@@ -527,8 +549,12 @@ def get_travel_time_aggregated():
 
         return create_arrow_response(arrow_bytes)
 
+    try:
+        return handle_auth_error_retry(execute_query)
     except Exception as e:
         print(f"[ERROR] /travel-time-aggregated: {e}")
+        if is_auth_error(e):
+            return "Database reconnecting - please wait", 503
         return f"Error fetching aggregated travel time data: {e}", 500
 
 
@@ -536,10 +562,6 @@ def get_travel_time_aggregated():
 def get_travel_time_by_time_of_day():
     """Get aggregated travel time data by time of day (15-min intervals) as Arrow"""
     request_start = time.time()
-
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        return "Connecting to Database - please wait", 503
 
     # Get query parameters
     start_date = request.args.get('start_date')
@@ -570,7 +592,10 @@ def get_travel_time_by_time_of_day():
         print(f"\n[TIMING] /travel-time-by-time-of-day START")
         print(f"  Params: date={start_date_str} to {end_date_str}, xd_segments={len(xd_segments) if xd_segments else 0}, signals={len(signal_ids) if signal_ids else 0}, legend_by={legend_by}")
 
-    try:
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
         # Determine filtering strategy
         if xd_segments:
             # Map interaction - use direct XD list (small, efficient)
@@ -684,6 +709,10 @@ def get_travel_time_by_time_of_day():
 
         return create_arrow_response(arrow_bytes)
 
+    try:
+        return handle_auth_error_retry(execute_query)
     except Exception as e:
         print(f"[ERROR] /travel-time-by-time-of-day: {e}")
+        if is_auth_error(e):
+            return "Database reconnecting - please wait", 503
         return f"Error fetching time-of-day travel time data: {e}", 500
