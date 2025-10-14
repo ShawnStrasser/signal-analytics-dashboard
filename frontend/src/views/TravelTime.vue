@@ -361,7 +361,41 @@ async function loadChartData() {
       legendClipped.value = false
     }
 
-    chartData.value = data
+    // Filter chart data if legend is Signal ID and signals are selected
+    let filteredData = data
+    if (legendBy.value === 'id' && selectionStore.selectedSignals.size > 0 && data.length > 0 && data[0].LEGEND_GROUP !== undefined) {
+      const selectedSignalsList = Array.from(selectionStore.selectedSignals)
+
+      // Build set of allowed signal IDs: selected signals + signals associated with orphan XD segments
+      const allowedSignals = new Set(selectedSignalsList)
+
+      // Find XD segments that were selected directly (not via a signal)
+      // These are XDs in selectedXdSegments that don't belong to any selected signal
+      const selectedXds = Array.from(selectionStore.selectedXdSegments)
+      const orphanXds = selectedXds.filter(xd => {
+        // Get all signals associated with this XD
+        const associatedSignals = selectionStore.getSignalsForXdSegment(xd)
+        // Check if ANY of those signals are in selectedSignals
+        const belongsToSelectedSignal = associatedSignals.some(sigId => selectedSignalsList.includes(sigId))
+        return !belongsToSelectedSignal
+      })
+
+      // Add signals associated with orphan XDs to allowed signals
+      orphanXds.forEach(xd => {
+        const associatedSignals = selectionStore.getSignalsForXdSegment(xd)
+        associatedSignals.forEach(sigId => allowedSignals.add(sigId))
+      })
+
+      filteredData = data.filter(row => {
+        // Convert LEGEND_GROUP to string for comparison (since signal IDs are strings in the store)
+        const signalId = String(row.LEGEND_GROUP)
+        return allowedSignals.has(signalId)
+      })
+
+      console.log(`📊 API: Filtered Signal ID legend: ${data.length} → ${filteredData.length} records (${orphanXds.length} orphan XDs)`)
+    }
+
+    chartData.value = filteredData
     const t2 = performance.now()
     console.log(`📊 API: arrowTableToObjects took ${(t2 - t1).toFixed(2)}ms`)
     console.log(`📊 API: Loading chart data DONE - ${chartData.value.length} records in ${(t2 - t0).toFixed(2)}ms`)
