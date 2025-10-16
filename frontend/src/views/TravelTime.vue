@@ -134,6 +134,8 @@ import { ref, watch, onMounted, computed } from 'vue'
 import { useFiltersStore } from '@/stores/filters'
 import { useSelectionStore } from '@/stores/selection'
 import { useMapDataCacheStore } from '@/stores/mapDataCache'
+import { useSignalDimensionsStore } from '@/stores/signalDimensions'
+import { useXdDimensionsStore } from '@/stores/xdDimensions'
 import ApiService from '@/services/api'
 import SharedMap from '@/components/SharedMap.vue'
 import TravelTimeChart from '@/components/TravelTimeChart.vue'
@@ -141,6 +143,8 @@ import TravelTimeChart from '@/components/TravelTimeChart.vue'
 const filtersStore = useFiltersStore()
 const selectionStore = useSelectionStore()
 const mapDataCacheStore = useMapDataCacheStore()
+const signalDimensionsStore = useSignalDimensionsStore()
+const xdDimensionsStore = useXdDimensionsStore()
 const mapData = ref([])
 const xdData = ref([])  // XD segment data for map tooltips/coloring
 const chartData = ref([])
@@ -265,14 +269,23 @@ onMounted(async () => {
   const config = await ApiService.getConfig()
   maxLegendEntities.value = config.maxLegendEntities
 
-  // Load map and chart data in parallel
+  // Load dimension data first (once per session)
+  // These are cached and won't be re-queried on filter changes
+  await Promise.all([
+    signalDimensionsStore.loadDimensions(),
+    xdDimensionsStore.loadDimensions()
+  ])
+  const t1 = performance.now()
+  console.log(`📊 Dimensions loaded in ${(t1 - t0).toFixed(2)}ms`)
+
+  // Load map and chart data (metrics only - will be merged with dimensions)
   await Promise.all([
     loadMapData(),
     loadChartData()
   ])
 
-  const t1 = performance.now()
-  console.log(`✅ TravelTime.vue: onMounted COMPLETE, total ${(t1 - t0).toFixed(2)}ms`)
+  const t2 = performance.now()
+  console.log(`✅ TravelTime.vue: onMounted COMPLETE, total ${(t2 - t0).toFixed(2)}ms`)
 })
 
 async function loadMapData() {
@@ -281,7 +294,7 @@ async function loadMapData() {
     const t0 = performance.now()
     loadingMap.value = true
 
-    // Fetch both signal-level and XD-level data in parallel
+    // Fetch both signal-level and XD-level METRICS ONLY (no dimensions)
     const [signalTable, xdTable] = await Promise.all([
       ApiService.getTravelTimeSummary(filtersStore.filterParams),
       ApiService.getTravelTimeSummaryXd(filtersStore.filterParams)
@@ -290,19 +303,51 @@ async function loadMapData() {
     const t1 = performance.now()
     console.log(`📡 API: Parallel fetch took ${(t1 - t0).toFixed(2)}ms`)
 
-    // Convert Arrow tables to objects
+    // Convert Arrow tables to objects (metrics only)
     const conversionStart = performance.now()
-    const signalObjects = ApiService.arrowTableToObjects(signalTable)
-    const xdObjects = ApiService.arrowTableToObjects(xdTable)
+    const signalMetrics = ApiService.arrowTableToObjects(signalTable)
+    const xdMetrics = ApiService.arrowTableToObjects(xdTable)
     const t2 = performance.now()
     console.log(`📡 API: arrowTableToObjects (both) took ${(t2 - conversionStart).toFixed(2)}ms`)
+
+    // Merge metrics with cached dimensions
+    const mergeStart = performance.now()
+
+    // Merge signal metrics with dimensions
+    const signalObjects = signalMetrics.map(metric => {
+      const dimensions = signalDimensionsStore.getSignalDimensions(metric.ID)
+      return {
+        ID: metric.ID,
+        TRAVEL_TIME_INDEX: metric.TRAVEL_TIME_INDEX,
+        NAME: dimensions?.NAME || `Signal ${metric.ID}`,
+        LATITUDE: dimensions?.LATITUDE,
+        LONGITUDE: dimensions?.LONGITUDE
+      }
+    }).filter(signal => signal.LATITUDE && signal.LONGITUDE) // Only include signals with coordinates
+
+    // Merge XD metrics with dimensions
+    const xdObjects = xdMetrics.map(metric => {
+      const dimensions = xdDimensionsStore.getXdDimensions(metric.XD)
+      return {
+        XD: metric.XD,
+        TRAVEL_TIME_INDEX: metric.TRAVEL_TIME_INDEX,
+        ID: dimensions?.ID,
+        BEARING: dimensions?.BEARING,
+        ROADNAME: dimensions?.ROADNAME,
+        MILES: dimensions?.MILES,
+        APPROACH: dimensions?.APPROACH
+      }
+    })
+
+    const t3 = performance.now()
+    console.log(`📡 API: Dimension merge took ${(t3 - mergeStart).toFixed(2)}ms`)
 
     // Assign to refs
     mapData.value = signalObjects
     xdData.value = xdObjects
-    const t3 = performance.now()
+    const t4 = performance.now()
 
-    console.log(`📡 API: Loading map data DONE - ${mapData.value.length} signals, ${xdData.value.length} XDs in ${(t3 - t0).toFixed(2)}ms`)
+    console.log(`📡 API: Loading map data DONE - ${mapData.value.length} signals, ${xdData.value.length} XDs in ${(t4 - t0).toFixed(2)}ms`)
   } catch (error) {
     console.error('Failed to load map data:', error)
     mapData.value = []

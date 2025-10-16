@@ -106,6 +106,40 @@ def get_dim_signals():
         return f"Error fetching DIM_SIGNALS data: {e}", 500
 
 
+@travel_time_bp.route('/dim-signals-xd')
+def get_dim_signals_xd():
+    """Get DIM_SIGNALS_XD dimension data (XD segment attributes, cached on client)"""
+    query = """
+    SELECT
+        XD,
+        ID,
+        BEARING,
+        COUNTY,
+        ROADNAME,
+        MILES,
+        APPROACH,
+        EXTENDED
+    FROM DIM_SIGNALS_XD
+    ORDER BY XD
+    """
+
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
+        arrow_data = session.sql(query).to_arrow()
+        arrow_bytes = snowflake_result_to_arrow(arrow_data)
+        return create_arrow_response(arrow_bytes)
+
+    try:
+        return handle_auth_error_retry(execute_query)
+    except Exception as e:
+        print(f"[ERROR] /dim-signals-xd: {e}")
+        if is_auth_error(e):
+            return "Database reconnecting - please wait", 503
+        return f"Error fetching DIM_SIGNALS_XD data: {e}", 500
+
+
 @travel_time_bp.route('/xd-geometry')
 def get_xd_geometry():
     """Return XD road segment geometries as Arrow (efficient binary format)"""
@@ -237,17 +271,15 @@ def get_travel_time_summary():
 
         # Single query that does all filtering in SQL - SIGNAL-LEVEL aggregation
         # Groups by signal only (not XD) to return one row per signal
-        # Note: LATITUDE, LONGITUDE, NAME come from DIM_SIGNALS (s), not DIM_SIGNALS_XD
+        # OPTIMIZATION: Returns only ID and metric (no dimension data like NAME, LATITUDE, LONGITUDE)
+        # Dimension data should be cached on client from /dim-signals endpoint
         analytics_query = f"""
         SELECT
             s.ID,
-            s.NAME,
-            s.LATITUDE,
-            s.LONGITUDE,
             AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) AS TRAVEL_TIME_INDEX
         {from_clause}
         WHERE {where_clause}
-        GROUP BY s.ID, s.NAME, s.LATITUDE, s.LONGITUDE
+        GROUP BY s.ID
         ORDER BY s.ID
         """
 
@@ -344,20 +376,16 @@ def get_travel_time_summary_xd():
         INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID"""
 
         # Single query that does all filtering in SQL - XD-LEVEL aggregation
-        # Groups by XD to return one row per XD segment with XD-specific fields
-        # IMPORTANT: Include xd.ID so frontend can build signal<->XD mappings
+        # Groups by XD to return one row per XD segment
+        # OPTIMIZATION: Returns only XD and metric (no dimension data like BEARING, ROADNAME, etc.)
+        # Dimension data should be cached on client from /dim-signals-xd endpoint
         analytics_query = f"""
         SELECT
             xd.XD,
-            xd.ID,
-            xd.BEARING,
-            xd.ROADNAME,
-            xd.MILES,
-            xd.APPROACH,
             AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) AS TRAVEL_TIME_INDEX
         {from_clause}
         WHERE {where_clause}
-        GROUP BY xd.XD, xd.ID, xd.BEARING, xd.ROADNAME, xd.MILES, xd.APPROACH
+        GROUP BY xd.XD
         ORDER BY xd.XD
         """
 

@@ -122,6 +122,10 @@ class ApiService {
     return this.fetchArrowData('/dim-signals')
   }
 
+  async getDimSignalsXd() {
+    return this.fetchArrowData('/dim-signals-xd')
+  }
+
   async getTravelTimeSummary(filters) {
     return this.fetchArrowData('/travel-time-summary', filters)
   }
