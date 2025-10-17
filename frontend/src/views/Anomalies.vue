@@ -66,10 +66,10 @@
             :anomaly-type="filtersStore.anomalyType"
             @selection-changed="onSelectionChanged"
           />
-          <div v-if="loading" class="d-flex justify-center align-center loading-overlay">
+          <div v-if="mapIsLoading" class="d-flex justify-center align-center loading-overlay">
             <v-progress-circular indeterminate size="64"></v-progress-circular>
           </div>
-          <div v-else-if="!loading && mapData.length === 0" class="d-flex justify-center align-center loading-overlay">
+          <div v-else-if="!mapIsLoading && mapData.length === 0" class="d-flex justify-center align-center loading-overlay">
             <div class="text-h5 text-grey">NO DATA</div>
           </div>
         </v-card-text>
@@ -85,10 +85,10 @@
             v-if="chartData.length > 0"
             :data="chartData"
           />
-          <div v-if="loading" class="d-flex justify-center align-center loading-overlay">
+          <div v-if="chartIsLoading" class="d-flex justify-center align-center loading-overlay">
             <v-progress-circular indeterminate size="64"></v-progress-circular>
           </div>
-          <div v-else-if="!loading && chartData.length === 0" class="d-flex justify-center align-center loading-overlay">
+          <div v-else-if="!chartIsLoading && chartData.length === 0" class="d-flex justify-center align-center loading-overlay">
             <div class="text-h5 text-grey">NO DATA</div>
           </div>
         </v-card-text>
@@ -115,9 +115,12 @@ const mapData = ref([])
 const xdData = ref([])  // XD segment data for map tooltips/coloring
 const chartData = ref([])
 const mapRef = ref(null)
-const loadingMap = ref(false)
-const loadingChart = ref(false)
-const loading = ref(false) // Global loading state
+const loadingMap = ref(true)
+const loadingChart = ref(true)
+const loading = ref(true) // Global loading state
+
+const mapIsLoading = computed(() => loading.value || loadingMap.value)
+const chartIsLoading = computed(() => loading.value || loadingChart.value)
 
 // Track last known selection state to detect changes when page reactivates
 const lastSelectionState = ref(null)
@@ -218,10 +221,15 @@ onMounted(async () => {
   console.log(`📊 Dimensions loaded in ${(t1 - t0).toFixed(2)}ms`)
 
   // Load map and chart data (metrics only - will be merged with dimensions)
-  await Promise.all([
-    loadMapData(),
-    loadChartData()
-  ])
+  loading.value = true
+  try {
+    await Promise.all([
+      loadMapData(),
+      loadChartData()
+    ])
+  } finally {
+    loading.value = false
+  }
 
   const t2 = performance.now()
   console.log(`✅ Anomalies.vue: onMounted COMPLETE, total ${(t2 - t0).toFixed(2)}ms`)
