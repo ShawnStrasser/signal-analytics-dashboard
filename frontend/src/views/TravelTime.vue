@@ -12,15 +12,15 @@
           <span class="text-caption font-weight-medium mr-2 d-none d-sm-inline">Legend:</span>
           <div class="legend-item">
             <div class="legend-circle green-circle"></div>
-            <span class="legend-text"><span class="d-none d-sm-inline">Low </span>&lt;1.5</span>
+            <span class="legend-text"><span class="d-none d-sm-inline">Low </span>&lt;2</span>
           </div>
           <div class="legend-item">
             <div class="legend-circle yellow-circle"></div>
-            <span class="legend-text"><span class="d-none d-sm-inline">Med </span>1.5-2.25</span>
+            <span class="legend-text"><span class="d-none d-sm-inline">Med </span>2-3</span>
           </div>
           <div class="legend-item">
             <div class="legend-circle red-circle"></div>
-            <span class="legend-text"><span class="d-none d-sm-inline">High </span>≥2.25</span>
+            <span class="legend-text"><span class="d-none d-sm-inline">High </span>≥3</span>
           </div>
         </div>
       </v-card-title>
@@ -130,7 +130,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, computed } from 'vue'
+import { ref, watch, onMounted, onActivated, onDeactivated, computed } from 'vue'
 import { useFiltersStore } from '@/stores/filters'
 import { useSelectionStore } from '@/stores/selection'
 import { useMapDataCacheStore } from '@/stores/mapDataCache'
@@ -156,6 +156,18 @@ const aggregateByTimeOfDay = ref('false') // Toggle for time-of-day aggregation
 const legendBy = ref('none') // Legend grouping selection
 const legendClipped = ref(false) // Whether legend entities were clipped
 const maxLegendEntities = ref(10) // Max legend entities from backend config
+
+// Track last known selection state to detect changes when page reactivates
+const lastSelectionState = ref(null)
+
+function captureSelectionState() {
+  return {
+    signalsSize: selectionStore.selectedSignals.size,
+    xdSegmentsSize: selectionStore.selectedXdSegments.size,
+    signals: Array.from(selectionStore.selectedSignals).sort().join(','),
+    xdSegments: Array.from(selectionStore.selectedXdSegments).sort().join(',')
+  }
+}
 
 // Legend options for the dropdown
 const legendOptions = [
@@ -286,6 +298,35 @@ onMounted(async () => {
 
   const t2 = performance.now()
   console.log(`✅ TravelTime.vue: onMounted COMPLETE, total ${(t2 - t0).toFixed(2)}ms`)
+})
+
+onActivated(() => {
+  console.log('🔄 TravelTime.vue: onActivated')
+
+  const currentState = captureSelectionState()
+
+  // Check if selections changed while we were away
+  const selectionsChanged = !lastSelectionState.value ||
+    currentState.signalsSize !== lastSelectionState.value.signalsSize ||
+    currentState.xdSegmentsSize !== lastSelectionState.value.xdSegmentsSize ||
+    currentState.signals !== lastSelectionState.value.signals ||
+    currentState.xdSegments !== lastSelectionState.value.xdSegments
+
+  if (selectionsChanged) {
+    console.log('🔄 Selections changed while away - reloading chart data', {
+      old: lastSelectionState.value,
+      new: currentState
+    })
+    loadChartData()
+  } else {
+    console.log('🔄 Selections unchanged - no chart reload needed')
+  }
+})
+
+onDeactivated(() => {
+  console.log('🔄 TravelTime.vue: onDeactivated - capturing selection state')
+  // Capture state when leaving the page so we can detect changes on return
+  lastSelectionState.value = captureSelectionState()
 })
 
 async function loadMapData() {

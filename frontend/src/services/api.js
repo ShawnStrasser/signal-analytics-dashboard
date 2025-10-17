@@ -154,6 +154,10 @@ class ApiService {
     return this.fetchArrowData('/anomaly-summary', filters)
   }
 
+  async getAnomalySummaryXd(filters) {
+    return this.fetchArrowData('/anomaly-summary-xd', filters)
+  }
+
   async getAnomalyAggregated(filters) {
     return this.fetchArrowData('/anomaly-aggregated', filters)
   }

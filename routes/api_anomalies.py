@@ -23,7 +23,9 @@ from utils.query_utils import (
     build_filter_joins_and_where,
     create_xd_lookup_dict,
     get_aggregation_table,
-    build_time_of_day_filter
+    build_time_of_day_filter,
+    build_day_of_week_filter,
+    get_aggregation_level
 )
 
 anomalies_bp = Blueprint('anomalies', __name__)
@@ -31,7 +33,11 @@ anomalies_bp = Blueprint('anomalies', __name__)
 
 @anomalies_bp.route('/anomaly-summary')
 def get_anomaly_summary():
-    """Get anomaly summary data for map visualization as Arrow"""
+    """Get anomaly summary data for map visualization as Arrow (metrics only)
+
+    OPTIMIZATION: Returns only ID and metrics (no dimension data like NAME, LATITUDE, LONGITUDE)
+    Dimension data should be cached on client from /dim-signals endpoint
+    """
     # Get query parameters
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
@@ -44,125 +50,67 @@ def get_anomaly_summary():
     start_minute = request.args.get('start_minute')
     end_hour = request.args.get('end_hour')
     end_minute = request.args.get('end_minute')
+    day_of_week = request.args.getlist('day_of_week')
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
     end_date_str = normalize_date(end_date)
 
-    # Determine aggregation table based on date range
-    agg_table = get_aggregation_table(start_date_str, end_date_str)
-
     # Build time-of-day filter
     time_filter = build_time_of_day_filter(start_hour, start_minute, end_hour, end_minute)
+
+    # Build day-of-week filter
+    dow_filter = build_day_of_week_filter(day_of_week)
 
     def execute_query():
         session = get_snowflake_session(retry=True, max_retries=2)
         if not session:
             raise Exception("Unable to establish database connection")
-        # Step 1: Determine whether to use join-based or direct filtering
-        use_join_based = signal_ids or maintained_by != 'all'
 
-        if use_join_based:
-            # Efficient join-based query for large signal selections
-            xd_values = build_xd_filter_with_joins(
-                session, signal_ids, maintained_by, approach, valid_geometry
-            )
+        # Build filter joins for efficient SQL filtering
+        filter_join, filter_where = build_filter_joins_and_where(
+            signal_ids, maintained_by, approach, valid_geometry
+        )
 
-            if not xd_values:
-                arrow_bytes = create_empty_arrow_response('anomaly_summary')
-                return create_arrow_response(arrow_bytes)
-        else:
-            # No filters - will query all XDs
-            xd_values = None
+        # Build WHERE clause parts
+        where_parts = [f"t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'"]
 
-        # Step 1b: Get dimension data for map display (still need lat/lon/approach/etc)
-        dim_query = build_xd_dimension_query(signal_ids, approach, valid_geometry)
-        dim_result = session.sql(dim_query).collect()
+        if filter_where:
+            where_parts.append(filter_where)
 
-        if not dim_result:
-            arrow_bytes = create_empty_arrow_response('anomaly_summary')
-            return create_arrow_response(arrow_bytes)
+        if time_filter:
+            clean_time = time_filter.strip()
+            if clean_time.startswith('AND '):
+                clean_time = clean_time[4:]
+            clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
+            where_parts.append(clean_time)
 
-        # Step 2: Query aggregated table using XD values
-        xd_filter = build_xd_filter(xd_values) if xd_values else ""
+        where_clause = " AND ".join(where_parts)
 
-        # Build query based on aggregation table
-        if agg_table == "TRAVEL_TIME_ANALYTICS":
-            # Base table: count directly
-            analytics_query = f"""
-            SELECT
-                XD,
-                COUNT(CASE WHEN ANOMALY = TRUE THEN 1 END) as ANOMALY_COUNT,
-                COUNT(CASE WHEN ORIGINATED_ANOMALY = TRUE THEN 1 END) as POINT_SOURCE_COUNT,
-                COUNT(*) as RECORD_COUNT
-            FROM TRAVEL_TIME_ANALYTICS
-            WHERE TIMESTAMP >= '{start_date_str}'
-            AND TIMESTAMP <= '{end_date_str}'
-            {xd_filter}
-            {time_filter}
-            GROUP BY XD
-            """
-        else:
-            # Materialized view: sum pre-aggregated counts
-            date_filter = "DATE_ONLY" if agg_table == "TRAVEL_TIME_DAILY_AGG" else "TIMESTAMP"
-            analytics_query = f"""
-            SELECT
-                XD,
-                SUM(ANOMALY_COUNT) as ANOMALY_COUNT,
-                SUM(POINT_SOURCE_COUNT) as POINT_SOURCE_COUNT,
-                SUM(RECORD_COUNT) as RECORD_COUNT
-            FROM {agg_table}
-            WHERE {date_filter} >= '{start_date_str}'
-            AND {date_filter} <= '{end_date_str}'
-            {xd_filter}
-            {time_filter}
-            GROUP BY XD
-            """
+        # Build FROM clause
+        from_clause = f"""FROM TRAVEL_TIME_ANALYTICS t
+        {dow_filter}
+        INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD
+        INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID"""
 
-        analytics_result = session.sql(analytics_query).collect()
+        # Single query that does all filtering in SQL - SIGNAL-LEVEL aggregation
+        # Groups by signal only (not XD) to return one row per signal
+        # OPTIMIZATION: Returns only ID and metrics (no dimension data like NAME, LATITUDE, LONGITUDE)
+        # Dimension data should be cached on client from /dim-signals endpoint
+        analytics_query = f"""
+        SELECT
+            s.ID,
+            SUM(CASE WHEN t.ANOMALY = TRUE THEN 1 ELSE 0 END) AS ANOMALY_COUNT,
+            SUM(CASE WHEN t.ORIGINATED_ANOMALY = TRUE THEN 1 ELSE 0 END) AS POINT_SOURCE_COUNT,
+            COUNT(*) AS RECORD_COUNT
+        {from_clause}
+        WHERE {where_clause}
+        GROUP BY s.ID
+        ORDER BY s.ID
+        """
 
-        # Step 3: Join results - create XD -> analytics lookup
-        analytics_dict = create_xd_lookup_dict(analytics_result)
-
-        # Build final Arrow table
-        ids = []
-        latitudes = []
-        longitudes = []
-        approaches = []
-        valid_geometries = []
-        xds = []
-        anomaly_counts = []
-        point_source_counts = []
-        record_counts = []
-
-        for row in dim_result:
-            dim_dict = row.as_dict()
-            xd = dim_dict['XD']
-            analytics = analytics_dict.get(xd, {})
-
-            ids.append(dim_dict['ID'])
-            latitudes.append(dim_dict['LATITUDE'])
-            longitudes.append(dim_dict['LONGITUDE'])
-            approaches.append(dim_dict.get('APPROACH'))
-            valid_geometries.append(dim_dict.get('VALID_GEOMETRY'))
-            xds.append(xd)
-            anomaly_counts.append(analytics.get('ANOMALY_COUNT', 0))
-            point_source_counts.append(analytics.get('POINT_SOURCE_COUNT', 0))
-            record_counts.append(analytics.get('RECORD_COUNT', 0))
-
-        result_table = pa.table({
-            'ID': ids,
-            'LATITUDE': latitudes,
-            'LONGITUDE': longitudes,
-            'APPROACH': approaches,
-            'VALID_GEOMETRY': valid_geometries,
-            'XD': xds,
-            'ANOMALY_COUNT': anomaly_counts,
-            'POINT_SOURCE_COUNT': point_source_counts,
-            'RECORD_COUNT': record_counts
-        })
-
-        arrow_bytes = serialize_arrow_to_ipc(result_table)
+        arrow_data = session.sql(analytics_query).to_arrow()
+        arrow_bytes = snowflake_result_to_arrow(arrow_data)
         return create_arrow_response(arrow_bytes)
 
     try:
@@ -174,9 +122,100 @@ def get_anomaly_summary():
         return f"Error fetching anomaly data: {e}", 500
 
 
+@anomalies_bp.route('/anomaly-summary-xd')
+def get_anomaly_summary_xd():
+    """Get XD segment-level anomaly metrics as Arrow (metrics only)
+
+    OPTIMIZATION: Returns only XD and metrics (no dimension data like BEARING, ROADNAME, etc.)
+    Dimension data should be cached on client from /dim-signals-xd endpoint
+    """
+    # Get query parameters
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    signal_ids = request.args.getlist('signal_ids')
+    maintained_by = request.args.get('maintained_by', 'all')
+    approach = request.args.get('approach')
+    valid_geometry = request.args.get('valid_geometry')
+    anomaly_type = request.args.get('anomaly_type', default='All')
+    start_hour = request.args.get('start_hour')
+    start_minute = request.args.get('start_minute')
+    end_hour = request.args.get('end_hour')
+    end_minute = request.args.get('end_minute')
+    day_of_week = request.args.getlist('day_of_week')
+
+    # Normalize dates
+    start_date_str = normalize_date(start_date)
+    end_date_str = normalize_date(end_date)
+
+    # Build time-of-day filter
+    time_filter = build_time_of_day_filter(start_hour, start_minute, end_hour, end_minute)
+
+    # Build day-of-week filter
+    dow_filter = build_day_of_week_filter(day_of_week)
+
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
+
+        # Build filter joins for efficient SQL filtering
+        filter_join, filter_where = build_filter_joins_and_where(
+            signal_ids, maintained_by, approach, valid_geometry
+        )
+
+        # Build WHERE clause parts
+        where_parts = [f"t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'"]
+
+        if filter_where:
+            where_parts.append(filter_where)
+
+        if time_filter:
+            clean_time = time_filter.strip()
+            if clean_time.startswith('AND '):
+                clean_time = clean_time[4:]
+            clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
+            where_parts.append(clean_time)
+
+        where_clause = " AND ".join(where_parts)
+
+        # Build FROM clause
+        from_clause = f"""FROM TRAVEL_TIME_ANALYTICS t
+        {dow_filter}
+        INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD
+        INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID"""
+
+        # Single query that does all filtering in SQL - XD-LEVEL aggregation
+        # Groups by XD to return one row per XD segment
+        # OPTIMIZATION: Returns only XD and metrics (no dimension data like BEARING, ROADNAME, etc.)
+        # Dimension data should be cached on client from /dim-signals-xd endpoint
+        analytics_query = f"""
+        SELECT
+            xd.XD,
+            SUM(CASE WHEN t.ANOMALY = TRUE THEN 1 ELSE 0 END) AS ANOMALY_COUNT,
+            SUM(CASE WHEN t.ORIGINATED_ANOMALY = TRUE THEN 1 ELSE 0 END) AS POINT_SOURCE_COUNT,
+            COUNT(*) AS RECORD_COUNT
+        {from_clause}
+        WHERE {where_clause}
+        GROUP BY xd.XD
+        ORDER BY xd.XD
+        """
+
+        arrow_data = session.sql(analytics_query).to_arrow()
+        arrow_bytes = snowflake_result_to_arrow(arrow_data)
+        return create_arrow_response(arrow_bytes)
+
+    try:
+        return handle_auth_error_retry(execute_query)
+    except Exception as e:
+        print(f"[ERROR] /anomaly-summary-xd: {e}")
+        if is_auth_error(e):
+            return "Database reconnecting - please wait", 503
+        return f"Error fetching XD anomaly summary: {e}", 500
+
+
 @anomalies_bp.route('/anomaly-aggregated')
 def get_anomaly_aggregated():
-    """Get aggregated anomaly data by timestamp as Arrow"""
+    """Get aggregated anomaly data by timestamp as Arrow (with dynamic aggregation)"""
     # Get query parameters
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
@@ -189,73 +228,101 @@ def get_anomaly_aggregated():
     start_minute = request.args.get('start_minute')
     end_hour = request.args.get('end_hour')
     end_minute = request.args.get('end_minute')
+    day_of_week = request.args.getlist('day_of_week')
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
     end_date_str = normalize_date(end_date)
 
-    # Determine aggregation table based on date range
-    agg_table = get_aggregation_table(start_date_str, end_date_str)
+    # Determine aggregation level based on date range (matching TTI pattern)
+    agg_level = get_aggregation_level(start_date_str, end_date_str)
 
     # Build time-of-day filter
     time_filter = build_time_of_day_filter(start_hour, start_minute, end_hour, end_minute)
+
+    # Build day-of-week filter
+    dow_filter = build_day_of_week_filter(day_of_week)
 
     def execute_query():
         session = get_snowflake_session(retry=True, max_retries=2)
         if not session:
             raise Exception("Unable to establish database connection")
-        # Resolve XD segments if signal_ids provided
-        xd_values = None
+
+        # Determine filtering strategy
         if xd_segments:
             # Map interaction - use direct XD list (small, efficient)
             xd_values = [int(xd) for xd in xd_segments]
-        elif signal_ids or maintained_by != 'all':
-            # Filter panel - use join-based filtering (efficient for large selections)
-            xd_values = build_xd_filter_with_joins(
-                session, signal_ids, maintained_by, approach, valid_geometry
+            xd_filter = build_xd_filter(xd_values)
+            filter_join = ""
+            filter_where = ""
+        elif signal_ids or maintained_by != 'all' or approach or (valid_geometry and valid_geometry != 'all'):
+            # Filter panel - use efficient join-based filtering (ALL filtering in SQL)
+            filter_join, filter_where = build_filter_joins_and_where(
+                signal_ids, maintained_by, approach, valid_geometry
             )
-
-            if not xd_values:
-                arrow_bytes = create_empty_arrow_response('anomaly_aggregated')
-                return create_arrow_response(arrow_bytes)
-
-        # Build XD filter
-        xd_filter = build_xd_filter(xd_values) if xd_values else ""
-
-        # Build query based on aggregation table
-        if agg_table == "TRAVEL_TIME_ANALYTICS":
-            # Base table
-            query = f"""
-            SELECT
-                TIMESTAMP,
-                SUM(TRAVEL_TIME_SECONDS) as TOTAL_ACTUAL_TRAVEL_TIME,
-                SUM(PREDICTION) as TOTAL_PREDICTION
-            FROM TRAVEL_TIME_ANALYTICS
-            WHERE TIMESTAMP >= '{start_date_str}'
-            AND TIMESTAMP <= '{end_date_str}'
-            AND PREDICTION IS NOT NULL
-            {xd_filter}
-            {time_filter}
-            GROUP BY TIMESTAMP
-            ORDER BY TIMESTAMP
-            """
+            xd_filter = ""  # No XD list needed - filtering via joins
         else:
-            # Materialized view: aggregate using pre-computed sums
-            timestamp_col = "CAST(DATE_ONLY AS TIMESTAMP_NTZ) as TIMESTAMP" if agg_table == "TRAVEL_TIME_DAILY_AGG" else "TIMESTAMP"
-            date_filter = "DATE_ONLY" if agg_table == "TRAVEL_TIME_DAILY_AGG" else "TIMESTAMP"
-            query = f"""
-            SELECT
-                {timestamp_col},
-                SUM(TOTAL_TRAVEL_TIME_SECONDS) as TOTAL_ACTUAL_TRAVEL_TIME,
-                SUM(AVG_PREDICTION * RECORD_COUNT) as TOTAL_PREDICTION
-            FROM {agg_table}
-            WHERE {date_filter} >= '{start_date_str}'
-            AND {date_filter} <= '{end_date_str}'
-            {xd_filter}
-            {time_filter}
-            GROUP BY {timestamp_col.split(' as ')[0]}
-            ORDER BY {timestamp_col.split(' as ')[0]}
-            """
+            # NO filters - query all
+            xd_filter = ""
+            filter_join = ""
+            filter_where = ""
+
+        # Build query based on aggregation level
+        if agg_level == "none":
+            # No aggregation: query by TIMESTAMP (15-minute intervals)
+            timestamp_expr = "t.TIMESTAMP"
+        elif agg_level == "hourly":
+            # Hourly aggregation: truncate timestamp to hour
+            timestamp_expr = "DATE_TRUNC('HOUR', t.TIMESTAMP) as TIMESTAMP"
+        else:  # daily
+            # Daily aggregation: use DATE_ONLY, cast to TIMESTAMP_NTZ
+            timestamp_expr = "CAST(t.DATE_ONLY AS TIMESTAMP_NTZ) as TIMESTAMP"
+
+        # Build WHERE clause parts
+        where_parts = [f"t.DATE_ONLY BETWEEN '{start_date_str}' AND '{end_date_str}'"]
+        where_parts.append("t.PREDICTION IS NOT NULL")
+
+        # Add XD filter if present (for map interactions with xd_segments)
+        if xd_filter:
+            clean_xd = xd_filter.strip()
+            if clean_xd.startswith('AND '):
+                clean_xd = clean_xd[4:]
+            clean_xd = clean_xd.replace('XD', 't.XD')
+            where_parts.append(clean_xd)
+
+        # Add filter WHERE conditions (for maintainedBy, approach, validGeometry)
+        if filter_where:
+            where_parts.append(filter_where)
+
+        # Add time filter if present
+        if time_filter:
+            clean_time = time_filter.strip()
+            if clean_time.startswith('AND '):
+                clean_time = clean_time[4:]
+            clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
+            where_parts.append(clean_time)
+
+        where_clause = " AND ".join(where_parts)
+
+        # Build FROM clause
+        from_clause = f"""FROM TRAVEL_TIME_ANALYTICS t
+        {dow_filter}"""
+
+        # Add filter joins (for maintainedBy, approach, validGeometry)
+        if filter_join:
+            from_clause += f"\n{filter_join}"
+
+        # Construct final query
+        query = f"""
+        SELECT
+            {timestamp_expr},
+            SUM(t.TRAVEL_TIME_SECONDS) as TOTAL_ACTUAL_TRAVEL_TIME,
+            SUM(t.PREDICTION) as TOTAL_PREDICTION
+        {from_clause}
+        WHERE {where_clause}
+        GROUP BY 1
+        ORDER BY 1
+        """
 
         arrow_data = session.sql(query).to_arrow()
         arrow_bytes = snowflake_result_to_arrow(arrow_data)

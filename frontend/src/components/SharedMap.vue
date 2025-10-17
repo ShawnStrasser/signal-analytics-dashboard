@@ -3,7 +3,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
+import { ref, onMounted, onUnmounted, onActivated, watch, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import L from 'leaflet'
 import 'leaflet-draw'
@@ -130,14 +130,14 @@ function shouldUseSvgIcons(signalData = null) {
 // Categorize values into green/yellow/red thresholds
 function getCategoryFromValue(value, dataType) {
   if (dataType === 'anomaly') {
-    // Anomaly percentage thresholds
-    if (value < 3.3) return 'green'
-    if (value < 6.7) return 'yellow'
+    // Anomaly percentage thresholds: 0, 5, 10
+    if (value < 5) return 'green'
+    if (value < 10) return 'yellow'
     return 'red'
   } else {
-    // Travel Time Index thresholds
-    if (value < 1.5) return 'green'
-    if (value < 2.25) return 'yellow'
+    // Travel Time Index thresholds: 1, 2, 3
+    if (value < 2) return 'green'
+    if (value < 3) return 'yellow'
     return 'red'
   }
 }
@@ -363,6 +363,35 @@ onUnmounted(() => {
   markerStates.clear()
   svgIconCache.clear()
   xdLayers.clear()
+})
+
+onActivated(() => {
+  console.log('🗺️ SharedMap: onActivated - restoring shared map state')
+
+  if (map && mapStateStore.mapCenter && mapStateStore.mapZoom) {
+    const savedCenter = mapStateStore.mapCenter
+    const savedZoom = mapStateStore.mapZoom
+
+    // Get current map state
+    const currentCenter = map.getCenter()
+    const currentZoom = map.getZoom()
+
+    // Check if map state differs from saved state
+    const centerChanged = Math.abs(currentCenter.lat - savedCenter[0]) > 0.0001 ||
+                         Math.abs(currentCenter.lng - savedCenter[1]) > 0.0001
+    const zoomChanged = currentZoom !== savedZoom
+
+    if (centerChanged || zoomChanged) {
+      console.log('🗺️ SharedMap: Restoring saved map state', {
+        from: { center: [currentCenter.lat, currentCenter.lng], zoom: currentZoom },
+        to: { center: savedCenter, zoom: savedZoom }
+      })
+      // Restore saved map state from store
+      map.setView(savedCenter, savedZoom, { animate: false })
+    } else {
+      console.log('🗺️ SharedMap: Map state already matches saved state')
+    }
+  }
 })
 
 // Track previous signal IDs to detect when signal set actually changes
@@ -666,11 +695,11 @@ function updateGeometry() {
   }
 
   // Build set of XD values from currently displayed XD segments
-  // In travel-time mode, use xdSegments prop; in anomaly mode, extract from signals
+  // Both modes now use xdSegments prop when available
   const displayedXDs = new Set(
-    props.dataType === 'travel-time' && props.xdSegments.length > 0
+    props.xdSegments.length > 0
       ? props.xdSegments.map(xd => xd.XD)
-      : props.signals.map(signal => signal.XD)
+      : props.signals.map(signal => signal.XD).filter(xd => xd !== undefined && xd !== null)
   )
   console.log('🗺️ updateGeometry:', {
     totalFeatures: collection.features.length,
@@ -851,48 +880,32 @@ function updateGeometry() {
 
 function getXdDataMap() {
   // Create a map of XD -> data values from xdSegments
-  // For travel-time mode, use dedicated XD data if available
-  // For anomaly mode, fall back to aggregating from signals (for backward compatibility)
+  // Both travel-time and anomaly modes now use dedicated XD segment data
   const xdMap = new Map()
 
-  if (props.dataType === 'travel-time' && props.xdSegments && props.xdSegments.length > 0) {
-    // Use dedicated XD segment data (no aggregation needed!)
+  if (props.xdSegments && props.xdSegments.length > 0) {
+    // Use dedicated XD segment data (includes all dimensions + metrics)
     props.xdSegments.forEach(xd => {
-      xdMap.set(xd.XD, {
-        TRAVEL_TIME_INDEX: xd.TRAVEL_TIME_INDEX || 0,
-        BEARING: xd.BEARING,
-        ROADNAME: xd.ROADNAME,
-        MILES: xd.MILES,
-        APPROACH: xd.APPROACH
-      })
-    })
-  } else {
-    // Anomaly mode OR no XD data - aggregate from signals (legacy behavior)
-    props.signals.forEach(signal => {
-      if (signal.XD !== undefined && signal.XD !== null) {
-        // Accumulate data for XD segments (since multiple signals can map to same XD)
-        if (!xdMap.has(signal.XD)) {
-          xdMap.set(signal.XD, {
-            ANOMALY_COUNT: 0,
-            POINT_SOURCE_COUNT: 0,
-            TRAVEL_TIME_INDEX: 0,
-            AVG_TRAVEL_TIME: 0,
-            RECORD_COUNT: 0,
-            count: 0
-          })
-        }
-
-        const existing = xdMap.get(signal.XD)
-        existing.ANOMALY_COUNT += (signal.ANOMALY_COUNT || 0)
-        existing.POINT_SOURCE_COUNT += (signal.POINT_SOURCE_COUNT || 0)
-        existing.TRAVEL_TIME_INDEX += (signal.TRAVEL_TIME_INDEX || 0)
-        existing.AVG_TRAVEL_TIME += (signal.AVG_TRAVEL_TIME || signal.AVG_TRAVEL_TIME_SECONDS || 0)
-        existing.RECORD_COUNT += (signal.RECORD_COUNT || 0)
-        existing.count += 1
-
-        // Average the AVG_TRAVEL_TIME and TRAVEL_TIME_INDEX
-        existing.AVG_TRAVEL_TIME = existing.AVG_TRAVEL_TIME / existing.count
-        existing.TRAVEL_TIME_INDEX = existing.TRAVEL_TIME_INDEX / existing.count
+      if (props.dataType === 'travel-time') {
+        xdMap.set(xd.XD, {
+          TRAVEL_TIME_INDEX: xd.TRAVEL_TIME_INDEX || 0,
+          BEARING: xd.BEARING,
+          ROADNAME: xd.ROADNAME,
+          MILES: xd.MILES,
+          APPROACH: xd.APPROACH
+        })
+      } else {
+        // Anomaly mode - include dimensions + anomaly metrics
+        xdMap.set(xd.XD, {
+          ANOMALY_COUNT: xd.ANOMALY_COUNT || 0,
+          POINT_SOURCE_COUNT: xd.POINT_SOURCE_COUNT || 0,
+          RECORD_COUNT: xd.RECORD_COUNT || 0,
+          ANOMALY_PERCENTAGE: xd.ANOMALY_PERCENTAGE || 0,
+          BEARING: xd.BEARING,
+          ROADNAME: xd.ROADNAME,
+          MILES: xd.MILES,
+          APPROACH: xd.APPROACH
+        })
       }
     })
   }
@@ -906,17 +919,26 @@ function createXdTooltip(xd, dataValue) {
   }
 
   if (props.dataType === 'anomaly') {
-    const anomalyCount = dataValue.ANOMALY_COUNT || 0
-    const pointSourceCount = dataValue.POINT_SOURCE_COUNT || 0
+    // Anomaly mode - show XD dimensions + anomaly percentage (matching TTI pattern)
+    const bearing = dataValue.BEARING || 'N/A'
+    const roadname = dataValue.ROADNAME || 'N/A'
+    const miles = dataValue.MILES
+    const approach = dataValue.APPROACH
+
+    // Calculate anomaly percentage based on current anomaly type filter
+    const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
+    const count = dataValue[countColumn] || 0
     const totalRecords = dataValue.RECORD_COUNT || 0
-    const percentage = totalRecords > 0 ? (anomalyCount / totalRecords) * 100 : 0
+    const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
 
     return `
       <div>
         <strong>XD:</strong> ${xd}<br>
-        <strong>Anomaly Percentage:</strong> ${percentage.toFixed(1)}%<br>
-        <strong>Total Anomalies:</strong> ${anomalyCount}<br>
-        <strong>Point Source:</strong> ${pointSourceCount}
+        <strong>Bearing:</strong> ${bearing}<br>
+        <strong>Road:</strong> ${roadname}<br>
+        <strong>Miles:</strong> ${miles !== undefined && miles !== null ? miles.toFixed(2) : 'N/A'}<br>
+        <strong>Approach:</strong> ${approach ? 'Yes' : 'No'}<br>
+        <strong>Anomaly %:</strong> ${percentage.toFixed(1)}%
       </div>
     `
   } else {
@@ -949,9 +971,9 @@ function selectXdSegmentsInPolygon(polygon) {
   })
 
   const displayedXDs = new Set(
-    props.dataType === 'travel-time' && props.xdSegments.length > 0
+    props.xdSegments.length > 0
       ? props.xdSegments.map(xd => xd.XD)
-      : props.signals.map(signal => signal.XD)
+      : props.signals.map(signal => signal.XD).filter(xd => xd !== undefined && xd !== null)
   )
   const selectedXDs = []
   const selectedSignalIds = []
@@ -1591,9 +1613,9 @@ function autoZoomToSignals() {
     // OPTIMIZATION: Skip XD bounds iteration for large datasets (>20 signals)
     // Marker bounds are sufficient for zoom, and iterating XDs is expensive
     const displayedXDs = new Set(
-      props.dataType === 'travel-time' && props.xdSegments.length > 0
+      props.xdSegments.length > 0
         ? props.xdSegments.map(xd => xd.XD)
-        : props.signals.map(signal => signal.XD)
+        : props.signals.map(signal => signal.XD).filter(xd => xd !== undefined && xd !== null)
     )
     let xdBoundsAdded = 0
 
@@ -1710,9 +1732,9 @@ function updateSelectionStyles() {
 
   // Build set of XD values from currently displayed XD segments
   const displayedXDs = new Set(
-    props.dataType === 'travel-time' && props.xdSegments.length > 0
+    props.xdSegments.length > 0
       ? props.xdSegments.map(xd => xd.XD)
-      : props.signals.map(signal => signal.XD)
+      : props.signals.map(signal => signal.XD).filter(xd => xd !== undefined && xd !== null)
   )
 
   // Update XD layer styles
