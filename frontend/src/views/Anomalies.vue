@@ -227,7 +227,7 @@ onMounted(async () => {
   console.log(`✅ Anomalies.vue: onMounted COMPLETE, total ${(t2 - t0).toFixed(2)}ms`)
 })
 
-onActivated(() => {
+onActivated(async () => {
   console.log('🔄 Anomalies.vue: onActivated')
 
   const currentState = captureSelectionState()
@@ -244,7 +244,13 @@ onActivated(() => {
       old: lastSelectionState.value,
       new: currentState
     })
-    loadChartData()
+    // Set loading state to hide chart during refresh
+    loading.value = true
+    try {
+      await loadChartData()
+    } finally {
+      loading.value = false
+    }
   } else {
     console.log('🔄 Selections unchanged - no chart reload needed')
   }

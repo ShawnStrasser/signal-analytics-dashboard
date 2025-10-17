@@ -334,10 +334,20 @@ onMounted(() => {
     const t5 = performance.now()
     console.log(`🗺️ SharedMap: updateMappings took ${(t5 - t4).toFixed(2)}ms`)
 
-    // Zoom to fit initial data
-    autoZoomToSignals()
-    const t6 = performance.now()
-    console.log(`🗺️ SharedMap: autoZoomToSignals took ${(t6 - t5).toFixed(2)}ms`)
+    // Only auto-zoom on first load if there's no saved map state from another page
+    // Check if we have a non-default saved state (default is zoom 4 at center of US)
+    const hasUserDefinedMapState = mapStateStore.mapZoom !== 4 ||
+                                    Math.abs(mapStateStore.mapCenter[0] - 39.0) > 0.01 ||
+                                    Math.abs(mapStateStore.mapCenter[1] - (-98.0)) > 0.01
+
+    if (!hasUserDefinedMapState) {
+      console.log('🔍 No saved map state - performing initial auto-zoom')
+      autoZoomToSignals()
+      const t6 = performance.now()
+      console.log(`🗺️ SharedMap: autoZoomToSignals took ${(t6 - t5).toFixed(2)}ms`)
+    } else {
+      console.log('🔍 Saved map state exists - skipping initial auto-zoom')
+    }
 
     // Initialize previousSignalIds to prevent auto-zoom on first data update
     previousSignalIds = new Set(props.signals.map(s => s.ID))
