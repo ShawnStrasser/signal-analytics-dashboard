@@ -12,15 +12,15 @@
           <span class="text-caption font-weight-medium mr-2 d-none d-sm-inline">Legend:</span>
           <div class="legend-item">
             <div class="legend-circle green-circle"></div>
-            <span class="legend-text"><span class="d-none d-sm-inline">Low </span>&lt;2</span>
+            <span class="legend-text"><span class="d-none d-sm-inline">Low </span>1</span>
           </div>
           <div class="legend-item">
             <div class="legend-circle yellow-circle"></div>
-            <span class="legend-text"><span class="d-none d-sm-inline">Med </span>2-3</span>
+            <span class="legend-text"><span class="d-none d-sm-inline">Med </span>2</span>
           </div>
           <div class="legend-item">
             <div class="legend-circle red-circle"></div>
-            <span class="legend-text"><span class="d-none d-sm-inline">High </span>≥3</span>
+            <span class="legend-text"><span class="d-none d-sm-inline">High </span>3</span>
           </div>
         </div>
       </v-card-title>

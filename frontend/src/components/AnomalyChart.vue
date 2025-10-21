@@ -30,6 +30,64 @@ const chartContainer = ref(null)
 let chart = null
 const theme = useTheme()
 
+function getNiceInterval(range, desiredTicks = 6) {
+  if (!Number.isFinite(range) || range <= 0) {
+    return 1
+  }
+
+  const tickCount = Math.max(desiredTicks, 1)
+  const roughInterval = range / tickCount
+  const exponent = Math.floor(Math.log10(roughInterval))
+  const base = Math.pow(10, exponent)
+  const multiples = [1, 2, 5, 10]
+  const niceMultiple = multiples.find(multiple => roughInterval <= multiple * base) ?? 10
+
+  return niceMultiple * base
+}
+
+function formatSeconds(value, options = {}) {
+  const {
+    compact = false,
+    maxFractionDigits = 1,
+    minFractionDigits = 0
+  } = options
+
+  if (!Number.isFinite(value)) {
+    return ''
+  }
+
+  const fractionDigits = {
+    minimumFractionDigits: minFractionDigits,
+    maximumFractionDigits: Math.max(maxFractionDigits, minFractionDigits)
+  }
+
+  if (compact && typeof Intl !== 'undefined' && typeof Intl.NumberFormat === 'function') {
+    try {
+      const abs = Math.abs(value)
+      const compactFractionDigits = {
+        minimumFractionDigits: minFractionDigits,
+        maximumFractionDigits: abs >= 100 ? 0 : abs >= 10 ? Math.min(fractionDigits.maximumFractionDigits, 1) : fractionDigits.maximumFractionDigits
+      }
+
+      const formatted = new Intl.NumberFormat('en-US', {
+        notation: 'compact',
+        ...compactFractionDigits
+      }).format(value)
+
+      return `${formatted} s`
+    } catch (error) {
+      // Fallback to standard formatting below
+    }
+  }
+
+  if (typeof Intl !== 'undefined' && typeof Intl.NumberFormat === 'function') {
+    const formatted = new Intl.NumberFormat('en-US', fractionDigits).format(value)
+    return `${formatted} s`
+  }
+
+  return `${value.toFixed(fractionDigits.maximumFractionDigits)} s`
+}
+
 onMounted(() => {
   initializeChart()
   updateChart()
@@ -231,14 +289,14 @@ function updateChart() {
 
       // Build tooltip with all series at this timestamp
       let tooltip = `<strong>${dayOfWeek} ${time}</strong><br/>`
-      params.forEach(param => {
-        const seriesName = param.seriesName
-        const value = props.chartMode === 'percent'
-          ? param.value[1].toFixed(2) + '%'
-          : param.value[1].toFixed(1) + 's'
-        const color = param.color
-        tooltip += `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${color};margin-right:5px;"></span>${seriesName}: ${value}<br/>`
-      })
+    params.forEach(param => {
+      const seriesName = param.seriesName
+      const value = props.chartMode === 'percent'
+        ? `${param.value[1].toFixed(2)}%`
+        : formatSeconds(param.value[1], { maxFractionDigits: 1, minFractionDigits: 1 })
+      const color = param.color
+      tooltip += `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${color};margin-right:5px;"></span>${seriesName}: ${value}<br/>`
+    })
       return tooltip
     }
     return ''
@@ -333,6 +391,7 @@ function updateChart() {
 
   // Determine appropriate interval based on range
   const paddedRange = rawMax - rawMin
+  const desiredTickCount = isMobile ? 4 : 6
   let interval
   if (props.chartMode === 'percent') {
     // For percentage, use finer intervals
@@ -348,31 +407,22 @@ function updateChart() {
       interval = 10
     }
   } else {
-    // For travel time, use larger intervals
-    if (paddedRange < 10) {
-      interval = 2
-    } else if (paddedRange < 50) {
-      interval = 10
-    } else if (paddedRange < 100) {
-      interval = 20
-    } else if (paddedRange < 500) {
-      interval = 100
-    } else if (paddedRange < 1000) {
-      interval = 200
-    } else if (paddedRange < 5000) {
-      interval = 1000
-    } else if (paddedRange < 10000) {
-      interval = 2000
-    } else if (paddedRange < 50000) {
-      interval = 10000
-    } else {
-      interval = 20000
-    }
+    interval = getNiceInterval(paddedRange || Math.max(maxValue, 1), desiredTickCount)
+  }
+
+  if (!Number.isFinite(interval) || interval === 0) {
+    interval = getNiceInterval(Math.max(maxValue, 1), desiredTickCount) || 1
   }
 
   // Round min down and max up to nearest interval
-  const yAxisMin = Math.floor(rawMin / interval) * interval
-  const yAxisMax = Math.ceil(rawMax / interval) * interval
+  let yAxisMin = Math.floor(rawMin / interval) * interval
+  let yAxisMax = Math.ceil(rawMax / interval) * interval
+
+  if (yAxisMax === yAxisMin) {
+    yAxisMax = yAxisMin + interval
+  }
+
+  const axisSecondsFractionDigits = interval < 1 ? 2 : interval < 10 ? 1 : 0
 
   // Build legend configuration
   let legendConfig = undefined
@@ -540,19 +590,14 @@ function updateChart() {
       axisLabel: {
         color: textColor,
         fontSize: isMobile ? 10 : 12,
-        formatter: function(value) {
+        formatter(value) {
           if (props.chartMode === 'percent') {
             return value.toFixed(1)
-          } else {
-            // Format based on interval
-            if (interval < 1) {
-              return value.toFixed(2)
-            } else if (interval < 10) {
-              return value.toFixed(1)
-            } else {
-              return value.toFixed(0)
-            }
           }
+          return formatSeconds(value, {
+            compact: true,
+            maxFractionDigits: axisSecondsFractionDigits
+          })
         }
       },
       axisLine: {
