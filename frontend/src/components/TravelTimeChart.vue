@@ -78,6 +78,7 @@ function updateChart() {
   const t0 = performance.now()
   if (!chart || !props.data.length) {
     console.log('📊 CHART: updateChart skipped (no chart or data)')
+    chart?.clear()
     return
   }
   console.log('📊 CHART: updateChart START', { dataPoints: props.data.length, isTimeOfDay: props.isTimeOfDay, legendBy: props.legendBy })
@@ -103,8 +104,13 @@ function updateChart() {
   if (props.isTimeOfDay) {
     // Time-of-day mode: use TIME_OF_DAY field
     // Check if data actually has TIME_OF_DAY field
-    if (!props.data[0]?.TIME_OF_DAY) {
+    const hasTimeOfDay = props.data.some(d => {
+      const value = d?.TIME_OF_DAY
+      return value !== null && value !== undefined && value !== ''
+    })
+    if (!hasTimeOfDay) {
       console.warn('📊 CHART: isTimeOfDay=true but data missing TIME_OF_DAY field, skipping render')
+      chart?.clear()
       return
     }
 
@@ -411,6 +417,7 @@ function updateChart() {
   // Safety check: ensure values are valid numbers
   if (!isFinite(minTTI) || !isFinite(maxTTI) || allTTI.length === 0) {
     console.error('📊 CHART ERROR: Invalid y-axis data', { minTTI, maxTTI, allTTILength: allTTI.length })
+    chart?.clear()
     return
   }
 
