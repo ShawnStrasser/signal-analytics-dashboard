@@ -62,6 +62,7 @@
             v-if="mapData.length > 0"
             :signals="mapData"
             :xd-segments="xdData"
+            :auto-zoom-enabled="shouldAutoZoomMap"
             data-type="anomaly"
             :anomaly-type="filtersStore.anomalyType"
             @selection-changed="onSelectionChanged"
@@ -155,6 +156,7 @@ const chartMode = ref('forecast') // 'forecast' or 'percent'
 const legendBy = ref('none') // Legend grouping selection
 const legendClipped = ref(false) // Whether legend entities were clipped
 const maxLegendEntities = ref(10) // Max legend entities from backend config
+const shouldAutoZoomMap = ref(true) // Controls whether the map auto-zooms on data refresh
 
 const mapIsLoading = computed(() => loading.value || loadingMap.value)
 const chartIsLoading = computed(() => loading.value || loadingChart.value)
@@ -208,6 +210,7 @@ watch(() => [
     return
   }
 
+  shouldAutoZoomMap.value = true
   console.log('🔄 Geometry/anomaly filters changed - reloading with auto-zoom')
   loading.value = true
   try {
@@ -242,6 +245,7 @@ watch(() => [
     return
   }
 
+  shouldAutoZoomMap.value = false
   console.log('📅 Date/time filters changed - reloading data only (no zoom)')
   loading.value = true
   try {

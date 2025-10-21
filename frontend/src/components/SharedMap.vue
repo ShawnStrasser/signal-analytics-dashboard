@@ -32,6 +32,10 @@ const props = defineProps({
   anomalyType: {
     type: String,
     default: 'All'
+  },
+  autoZoomEnabled: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -449,16 +453,23 @@ watch(() => props.signals, (newSignals, oldSignals) => {
   console.log(`⏱️ updateGeometry: ${shouldDeferGeometry ? '0.00 (deferred)' : (t3 - t2).toFixed(2)}ms`)
 
   // Only auto-zoom if the signal set actually changed
+  let autoZoomExecuted = false
   if (signalSetChanged) {
-    console.log('🔍 Signal set changed - performing auto-zoom')
-    autoZoomToSignals()
     previousSignalIds = currentSignalIds
+
+    if (props.autoZoomEnabled) {
+      console.log('🔍 Signal set changed - performing auto-zoom')
+      autoZoomToSignals()
+      autoZoomExecuted = true
+    } else {
+      console.log('🔍 Signal set changed - auto-zoom suppressed (autoZoomEnabled=false)')
+    }
   } else {
     console.log('🔍 Signal set unchanged - skipping auto-zoom (data-only update)')
   }
 
   const t4 = performance.now()
-  console.log(`⏱️ autoZoomToSignals: ${signalSetChanged ? (t4 - t3).toFixed(2) : '0.00 (skipped)'}ms`)
+  console.log(`⏱️ autoZoomToSignals: ${autoZoomExecuted ? (t4 - t3).toFixed(2) : '0.00 (skipped)'}ms`)
   console.log(`⏱️ TOTAL map updates: ${(t4 - t0).toFixed(2)}ms`)
   console.log(`⏱️ Watch overhead (trigger to start): ${(t0 - watchStart).toFixed(2)}ms`)
 }, { deep: true })
