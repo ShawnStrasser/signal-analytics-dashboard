@@ -79,11 +79,44 @@
       <v-card class="chart-card">
         <v-card-title class="py-2 d-flex align-center flex-wrap">
           📈 Travel Time Analysis with Anomaly Detection
+          <v-spacer></v-spacer>
+          <div class="d-flex align-center flex-wrap gap-2">
+            <v-select
+              v-model="legendBy"
+              :items="legendOptions"
+              label="Legend"
+              density="compact"
+              variant="outlined"
+              hide-details
+              style="max-width: 200px;"
+            ></v-select>
+            <v-btn-toggle
+              v-model="chartMode"
+              mandatory
+              density="compact"
+              color="primary"
+            >
+              <v-btn value="percent" size="small">
+                Percent Anomaly
+              </v-btn>
+              <v-btn value="forecast" size="small">
+                Forecast vs Actual
+              </v-btn>
+            </v-btn-toggle>
+          </div>
         </v-card-title>
+        <v-card-subtitle v-if="legendClipped" class="py-1">
+          <v-alert density="compact" variant="outlined" color="orange-darken-2" icon="mdi-alert-circle-outline">
+            <strong>Maximum legend items reached ({{ maxLegendEntities }})</strong> — Only the first {{ maxLegendEntities }} {{ legendByLabel }} are displayed.
+            To see other {{ legendByLabel }}, try filtering by date range, signal selection, or map selection.
+          </v-alert>
+        </v-card-subtitle>
         <v-card-text class="chart-container">
           <AnomalyChart
             v-if="chartData.length > 0"
             :data="chartData"
+            :chart-mode="chartMode"
+            :legend-by="legendBy"
           />
           <div v-if="chartIsLoading" class="d-flex justify-center align-center loading-overlay">
             <v-progress-circular indeterminate size="64"></v-progress-circular>
@@ -118,6 +151,10 @@ const mapRef = ref(null)
 const loadingMap = ref(true)
 const loadingChart = ref(true)
 const loading = ref(true) // Global loading state
+const chartMode = ref('forecast') // 'forecast' or 'percent'
+const legendBy = ref('none') // Legend grouping selection
+const legendClipped = ref(false) // Whether legend entities were clipped
+const maxLegendEntities = ref(10) // Max legend entities from backend config
 
 const mapIsLoading = computed(() => loading.value || loadingMap.value)
 const chartIsLoading = computed(() => loading.value || loadingChart.value)
@@ -133,6 +170,28 @@ function captureSelectionState() {
     xdSegments: Array.from(selectionStore.selectedXdSegments).sort().join(',')
   }
 }
+
+// Legend options for the dropdown
+const legendOptions = [
+  { title: 'None', value: 'none' },
+  { title: 'XD Segment', value: 'xd' },
+  { title: 'Bearing', value: 'bearing' },
+  { title: 'County', value: 'county' },
+  { title: 'Road Name', value: 'roadname' },
+  { title: 'Signal ID', value: 'id' }
+]
+
+// Computed label for legend clipping message
+const legendByLabel = computed(() => {
+  const labels = {
+    'xd': 'XD segments',
+    'bearing': 'bearings',
+    'county': 'counties',
+    'roadname': 'road names',
+    'id': 'signal IDs'
+  }
+  return labels[legendBy.value] || 'items'
+})
 
 // Table removed - see plan for details
 
@@ -207,9 +266,25 @@ watch(() => [
   await loadChartData()
 })
 
+// Watch for chart mode changes
+watch(chartMode, async () => {
+  console.log('📊 Chart mode changed - reloading chart data')
+  await loadChartData()
+})
+
+// Watch for legend selection changes
+watch(legendBy, async () => {
+  console.log('🏷️ Legend selection changed - reloading chart data')
+  await loadChartData()
+})
+
 onMounted(async () => {
   const t0 = performance.now()
   console.log('🚀 Anomalies.vue: onMounted START')
+
+  // Fetch config first
+  const config = await ApiService.getConfig()
+  maxLegendEntities.value = config.maxLegendEntities
 
   // Load dimension data first (once per session)
   // These are cached and won't be re-queried on filter changes
@@ -363,28 +438,61 @@ async function loadMapData() {
 
 async function loadChartData() {
   try {
+    console.log('📊 API: Loading chart data START')
+    const t0 = performance.now()
     loadingChart.value = true
-    
+
     // Build filter params for chart based on selections
     const filters = { ...filtersStore.filterParams }
-    
+
     // If there are map selections, send the selected XD segments directly
     if (selectionStore.hasMapSelections) {
       const selectedXds = Array.from(selectionStore.allSelectedXdSegments)
-      
+
       if (selectedXds.length > 0) {
         filters.xd_segments = selectedXds
+        console.log('📊 API: Filtering chart to selected XDs', selectedXds)
       } else {
         // No selections, show empty chart
+        console.log('📊 API: No XD selections, showing empty chart')
         chartData.value = []
         return
       }
     }
-    
-    const arrowTable = await ApiService.getAnomalyAggregated(filters)
-    chartData.value = ApiService.arrowTableToObjects(arrowTable)
+
+    // Use different API based on chart mode
+    let arrowTable
+    let t1
+    if (chartMode.value === 'percent') {
+      // Percent Anomaly mode
+      arrowTable = await ApiService.getAnomalyPercentAggregated(filters, legendBy.value)
+      t1 = performance.now()
+      console.log(`📊 API: getAnomalyPercentAggregated took ${(t1 - t0).toFixed(2)}ms`)
+    } else {
+      // Forecast vs Actual mode
+      arrowTable = await ApiService.getAnomalyAggregated(filters, legendBy.value)
+      t1 = performance.now()
+      console.log(`📊 API: getAnomalyAggregated took ${(t1 - t0).toFixed(2)}ms`)
+    }
+
+    const data = ApiService.arrowTableToObjects(arrowTable)
+
+    // Check if data contains LEGEND_GROUP column (indicates legend grouping is active)
+    if (data.length > 0 && data[0].LEGEND_GROUP !== undefined) {
+      // Count unique legend groups to detect if we hit the MAX_LEGEND_ENTITIES limit
+      const uniqueGroups = new Set(data.map(row => row.LEGEND_GROUP))
+      // Show warning when we have exactly maxLegendEntities groups
+      legendClipped.value = uniqueGroups.size === maxLegendEntities.value
+    } else {
+      legendClipped.value = false
+    }
+
+    chartData.value = data
+    const t2 = performance.now()
+    console.log(`📊 API: arrowTableToObjects took ${(t2 - t1).toFixed(2)}ms`)
+    console.log(`📊 API: Loading chart data DONE - ${chartData.value.length} records in ${(t2 - t0).toFixed(2)}ms`)
   } catch (error) {
-    console.error('Failed to load anomaly chart data:', error)
+    console.error('Failed to load chart data:', error)
     chartData.value = []
   } finally {
     loadingChart.value = false

@@ -158,8 +158,36 @@ class ApiService {
     return this.fetchArrowData('/anomaly-summary-xd', filters)
   }
 
-  async getAnomalyAggregated(filters) {
-    return this.fetchArrowData('/anomaly-aggregated', filters)
+  async getAnomalyAggregated(filters, legendBy = null) {
+    const params = { ...filters }
+    if (legendBy && legendBy !== 'none') {
+      params.legend_by = legendBy
+    }
+    return this.fetchArrowData('/anomaly-aggregated', params)
+  }
+
+  async getAnomalyByTimeOfDay(filters, legendBy = null) {
+    const params = { ...filters }
+    if (legendBy && legendBy !== 'none') {
+      params.legend_by = legendBy
+    }
+    return this.fetchArrowData('/anomaly-by-time-of-day', params)
+  }
+
+  async getAnomalyPercentAggregated(filters, legendBy = null) {
+    const params = { ...filters }
+    if (legendBy && legendBy !== 'none') {
+      params.legend_by = legendBy
+    }
+    return this.fetchArrowData('/anomaly-percent-aggregated', params)
+  }
+
+  async getAnomalyPercentByTimeOfDay(filters, legendBy = null) {
+    const params = { ...filters }
+    if (legendBy && legendBy !== 'none') {
+      params.legend_by = legendBy
+    }
+    return this.fetchArrowData('/anomaly-percent-by-time-of-day', params)
   }
 
   async getTravelTimeData(filters) {
