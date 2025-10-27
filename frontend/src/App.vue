@@ -106,6 +106,11 @@ const routes = [
     title: 'Anomalies',
     icon: 'mdi-alert',
   },
+  {
+    path: '/before-after',
+    title: 'Before/After',
+    icon: 'mdi-compare',
+  },
 ]
 
 const geometryStore = useGeometryStore()

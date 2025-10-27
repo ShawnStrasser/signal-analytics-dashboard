@@ -287,6 +287,57 @@ class ApiService {
     return false
   }
 
+  // Before/After Comparison API Methods
+  async getBeforeAfterSummary(beforeFilters, afterFilters, filters) {
+    const params = {
+      before_start_date: beforeFilters.start_date,
+      before_end_date: beforeFilters.end_date,
+      after_start_date: afterFilters.start_date,
+      after_end_date: afterFilters.end_date,
+      ...filters
+    }
+    return this.fetchArrowData('/before-after-summary', params)
+  }
+
+  async getBeforeAfterSummaryXd(beforeFilters, afterFilters, filters) {
+    const params = {
+      before_start_date: beforeFilters.start_date,
+      before_end_date: beforeFilters.end_date,
+      after_start_date: afterFilters.start_date,
+      after_end_date: afterFilters.end_date,
+      ...filters
+    }
+    return this.fetchArrowData('/before-after-summary-xd', params)
+  }
+
+  async getBeforeAfterAggregated(beforeFilters, afterFilters, filters, legendBy = null) {
+    const params = {
+      before_start_date: beforeFilters.start_date,
+      before_end_date: beforeFilters.end_date,
+      after_start_date: afterFilters.start_date,
+      after_end_date: afterFilters.end_date,
+      ...filters
+    }
+    if (legendBy && legendBy !== 'none') {
+      params.legend_by = legendBy
+    }
+    return this.fetchArrowData('/before-after-aggregated', params)
+  }
+
+  async getBeforeAfterByTimeOfDay(beforeFilters, afterFilters, filters, legendBy = null) {
+    const params = {
+      before_start_date: beforeFilters.start_date,
+      before_end_date: beforeFilters.end_date,
+      after_start_date: afterFilters.start_date,
+      after_end_date: afterFilters.end_date,
+      ...filters
+    }
+    if (legendBy && legendBy !== 'none') {
+      params.legend_by = legendBy
+    }
+    return this.fetchArrowData('/before-after-by-time-of-day', params)
+  }
+
   async getConfig() {
     try {
       const response = await fetch(`${this.baseURL}/config`)

@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import TravelTime from './views/TravelTime.vue'
 import Anomalies from './views/Anomalies.vue'
+import BeforeAfter from './views/BeforeAfter.vue'
 
 const routes = [
   {
@@ -16,6 +17,11 @@ const routes = [
     path: '/anomalies',
     name: 'Anomalies',
     component: Anomalies
+  },
+  {
+    path: '/before-after',
+    name: 'BeforeAfter',
+    component: BeforeAfter
   }
 ]
 

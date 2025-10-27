@@ -218,6 +218,7 @@ def get_travel_time_summary():
     end_hour = request.args.get('end_hour')
     end_minute = request.args.get('end_minute')
     day_of_week = request.args.getlist('day_of_week')
+    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -258,6 +259,9 @@ def get_travel_time_summary():
                 clean_time = clean_time[4:]
             clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
             where_parts.append(clean_time)
+
+        if remove_anomalies:
+            where_parts.append("t.IS_ANOMALY = FALSE")
 
         where_clause = " AND ".join(where_parts)
 
@@ -324,6 +328,7 @@ def get_travel_time_summary_xd():
     end_hour = request.args.get('end_hour')
     end_minute = request.args.get('end_minute')
     day_of_week = request.args.getlist('day_of_week')
+    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -364,6 +369,9 @@ def get_travel_time_summary_xd():
                 clean_time = clean_time[4:]
             clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
             where_parts.append(clean_time)
+
+        if remove_anomalies:
+            where_parts.append("t.IS_ANOMALY = FALSE")
 
         where_clause = " AND ".join(where_parts)
 
@@ -432,6 +440,7 @@ def get_travel_time_aggregated():
     end_minute = request.args.get('end_minute')
     day_of_week = request.args.getlist('day_of_week')
     legend_by = request.args.get('legend_by')  # New parameter
+    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -526,6 +535,9 @@ def get_travel_time_aggregated():
             clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
             where_parts.append(clean_time)
 
+        if remove_anomalies:
+            where_parts.append("t.IS_ANOMALY = FALSE")
+
         where_clause = " AND ".join(where_parts)
 
         # Build FROM clause
@@ -605,6 +617,7 @@ def get_travel_time_by_time_of_day():
     end_hour = request.args.get('end_hour')
     end_minute = request.args.get('end_minute')
     legend_by = request.args.get('legend_by')  # New parameter
+    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -685,6 +698,9 @@ def get_travel_time_by_time_of_day():
                 clean_time = clean_time[4:]  # Remove only leading "AND "
             clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
             where_parts.append(clean_time)
+
+        if remove_anomalies:
+            where_parts.append("t.IS_ANOMALY = FALSE")
 
         where_clause = " AND ".join(where_parts)
 

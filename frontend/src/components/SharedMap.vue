@@ -12,7 +12,7 @@ import { useGeometryStore } from '@/stores/geometry'
 import { useMapStateStore } from '@/stores/mapState'
 import { useSelectionStore } from '@/stores/selection'
 import { useThemeStore } from '@/stores/theme'
-import { travelTimeColorScale, anomalyColorScale } from '@/utils/colorScale'
+import { travelTimeColorScale, anomalyColorScale, beforeAfterDifferenceColorScale } from '@/utils/colorScale'
 import { DEBUG_FRONTEND_LOGGING } from '@/config'
 
 const props = defineProps({
@@ -26,8 +26,8 @@ const props = defineProps({
   },
   dataType: {
     type: String,
-    default: 'travel-time', // 'travel-time' or 'anomaly'
-    validator: (value) => ['travel-time', 'anomaly'].includes(value)
+    default: 'travel-time', // 'travel-time', 'anomaly', or 'before-after'
+    validator: (value) => ['travel-time', 'anomaly', 'before-after'].includes(value)
   },
   anomalyType: {
     type: String,
@@ -44,7 +44,7 @@ const emit = defineEmits(['selection-changed'])
 const mapContainer = ref(null)
 let map = null
 let signalMarkers = new Map() // Map signal ID to marker
-let markerStates = new Map() // Map signal ID to { category, isSelected, iconSize, dataHash } for change detection
+let markerStates = new Map() // Map signal ID to { category, isSelected, iconSize, dataHash, useSvg, customColor, zIndexCategory } for change detection
 let xdLayers = new Map() // Map XD to layer
 let markersLayer = null
 let geometryLayer = null
@@ -147,9 +147,11 @@ function getCategoryFromValue(value, dataType) {
 }
 
 // Generate SVG circle icon as data URI (with caching) - used when zoomed out
-function createCircleIcon(category, isSelected, iconSize) {
-  // Check cache first
-  const cacheKey = `circle_${category}_${isSelected}_${iconSize}_${themeStore.currentTheme}`
+function createCircleIcon(category, isSelected, iconSize, customColor = null) {
+  // Check cache first (include custom colors in cache key)
+  const cacheKey = customColor
+    ? `circle_custom_${customColor}_${isSelected}_${iconSize}_${themeStore.currentTheme}`
+    : `circle_${category}_${isSelected}_${iconSize}_${themeStore.currentTheme}`
   const cached = svgIconCache.get(cacheKey)
   if (cached) {
     return cached
@@ -158,22 +160,31 @@ function createCircleIcon(category, isSelected, iconSize) {
   const isDark = themeStore.currentTheme === 'dark'
   const selectionColor = isDark ? '#FFFFFF' : '#000000'
 
-  // Circle colors matching the traffic light colors
-  const fillColors = {
-    green: '#4caf50',
-    yellow: '#ffc107',
-    red: '#d32f2f'
+  let fillColor
+  let opacity
+
+  if (customColor) {
+    fillColor = customColor
+    opacity = 0.9
+  } else {
+    // Circle colors matching the traffic light colors
+    const fillColors = {
+      green: '#4caf50',
+      yellow: '#ffc107',
+      red: '#d32f2f'
+    }
+
+    // Opacity based on severity - less important signals are more transparent
+    const opacities = {
+      green: 0.5,   // Semi-transparent (fade into background)
+      yellow: 0.8,  // More visible
+      red: 1.0      // Fully opaque (most important)
+    }
+
+    fillColor = fillColors[category] || fillColors.green
+    opacity = opacities[category] || opacities.green
   }
 
-  // Opacity based on severity - less important signals are more transparent
-  const opacities = {
-    green: 0.5,   // Semi-transparent (fade into background)
-    yellow: 0.8,  // More visible
-    red: 1.0      // Fully opaque (most important)
-  }
-
-  const fillColor = fillColors[category] || fillColors.green
-  const opacity = opacities[category] || opacities.green
   const radius = iconSize / 2
   const selectionStrokeWidth = isSelected ? iconSize * 0.12 : 0
 
@@ -765,6 +776,9 @@ function updateGeometry() {
         const totalRecords = dataValue.RECORD_COUNT || 0
         const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
         fillColor = anomalyColorScale(percentage)
+      } else if (props.dataType === 'before-after') {
+        const diff = dataValue.TTI_DIFF || 0
+        fillColor = beforeAfterDifferenceColorScale(diff)
       } else {
         const tti = dataValue.TRAVEL_TIME_INDEX || 0
         fillColor = travelTimeColorScale(tti)
@@ -915,6 +929,17 @@ function getXdDataMap() {
           MILES: xd.MILES,
           APPROACH: xd.APPROACH
         })
+      } else if (props.dataType === 'before-after') {
+        // Before/After mode - include dimensions + before/after metrics
+        xdMap.set(xd.XD, {
+          TTI_BEFORE: xd.TTI_BEFORE || 0,
+          TTI_AFTER: xd.TTI_AFTER || 0,
+          TTI_DIFF: xd.TTI_DIFF || 0,
+          BEARING: xd.BEARING,
+          ROADNAME: xd.ROADNAME,
+          MILES: xd.MILES,
+          APPROACH: xd.APPROACH
+        })
       } else {
         // Anomaly mode - include dimensions + anomaly metrics
         xdMap.set(xd.XD, {
@@ -960,6 +985,28 @@ function createXdTooltip(xd, dataValue) {
         <strong>Miles:</strong> ${miles !== undefined && miles !== null ? miles.toFixed(2) : 'N/A'}<br>
         <strong>Approach:</strong> ${approach ? 'Yes' : 'No'}<br>
         <strong>Anomaly %:</strong> ${percentage.toFixed(1)}%
+      </div>
+    `
+  } else if (props.dataType === 'before-after') {
+    // Before/After mode - show XD dimensions + before/after TTI values
+    const ttiBefore = dataValue.TTI_BEFORE || 0
+    const ttiAfter = dataValue.TTI_AFTER || 0
+    const diff = dataValue.TTI_DIFF || 0
+    const bearing = dataValue.BEARING || 'N/A'
+    const roadname = dataValue.ROADNAME || 'N/A'
+    const miles = dataValue.MILES
+    const approach = dataValue.APPROACH
+
+    return `
+      <div>
+        <strong>XD:</strong> ${xd}<br>
+        <strong>Bearing:</strong> ${bearing}<br>
+        <strong>Road:</strong> ${roadname}<br>
+        <strong>Miles:</strong> ${miles !== undefined && miles !== null ? miles.toFixed(2) : 'N/A'}<br>
+        <strong>Approach:</strong> ${approach ? 'Yes' : 'No'}<br>
+        <strong>TTI Before:</strong> ${ttiBefore.toFixed(2)}<br>
+        <strong>TTI After:</strong> ${ttiAfter.toFixed(2)}<br>
+        <strong>Difference:</strong> ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}
       </div>
     `
   } else {
@@ -1141,26 +1188,36 @@ function pointInPolygon(point, polygon) {
 }
 
 // Helper function to update a single marker icon only if state changed
-function updateMarkerIcon(signalId, marker, category, isSelected, dataHash = null) {
-  const currentState = markerStates.get(signalId)
-  const useSvg = shouldUseSvgIcons()
-  const iconSize = getMarkerSize(category, useSvg)
+function updateMarkerIcon(signalId, marker, category, isSelected, dataHash = null, customColor = null, options = {}) {
+  const {
+    iconSizeOverride = null,
+    zIndexCategory = category,
+    forceCircleIcon = false
+  } = options
 
-  // Check if state actually changed (including data hash and icon type)
+  const currentState = markerStates.get(signalId)
+  const useSvg = (forceCircleIcon || customColor) ? false : shouldUseSvgIcons()
+  const iconSize = iconSizeOverride ?? getMarkerSize(zIndexCategory, useSvg)
+
+  // Check if state actually changed (including data hash, icon type, and custom color)
   if (currentState &&
       currentState.category === category &&
       currentState.isSelected === isSelected &&
       currentState.iconSize === iconSize &&
       currentState.useSvg === useSvg &&
+      currentState.customColor === customColor &&
+      currentState.zIndexCategory === zIndexCategory &&
       (dataHash === null || currentState.dataHash === dataHash)) {
     return false // No change needed
   }
 
   // State changed or new marker - update icon
   const iconStart = performance.now()
-  const iconUrl = useSvg
-    ? createTrafficSignalIcon(category, isSelected, iconSize)
-    : createCircleIcon(category, isSelected, iconSize)
+  const iconUrl = customColor
+    ? createCircleIcon(category, isSelected, iconSize, customColor)
+    : (useSvg
+      ? createTrafficSignalIcon(category, isSelected, iconSize)
+      : createCircleIcon(category, isSelected, iconSize))
   const iconGenTime = performance.now() - iconStart
 
   const divIconStart = performance.now()
@@ -1177,13 +1234,13 @@ function updateMarkerIcon(signalId, marker, category, isSelected, dataHash = nul
   marker.setIcon(icon)
 
   // Update z-index based on category (ensures red/yellow are always on top)
-  const zIndexOffset = getZIndexOffset(category)
+  const zIndexOffset = getZIndexOffset(zIndexCategory)
   marker.setZIndexOffset(zIndexOffset)
 
   const setIconTime = performance.now() - setIconStart
 
   if (setIconTime > 10) {
-    console.log(`⚠️ SLOW setIcon for signal ${signalId}: ${setIconTime.toFixed(2)}ms`, {
+    console.log(`[SharedMap] SLOW setIcon for signal ${signalId}: ${setIconTime.toFixed(2)}ms`, {
       iconGenTime: iconGenTime.toFixed(2) + 'ms',
       divIconTime: divIconTime.toFixed(2) + 'ms',
       setIconTime: setIconTime.toFixed(2) + 'ms'
@@ -1191,7 +1248,7 @@ function updateMarkerIcon(signalId, marker, category, isSelected, dataHash = nul
   }
 
   // Update tracked state
-  markerStates.set(signalId, { category, isSelected, iconSize, dataHash, useSvg })
+  markerStates.set(signalId, { category, isSelected, iconSize, dataHash, useSvg, customColor, zIndexCategory })
 
   return true // Icon was updated
 }
@@ -1223,7 +1280,10 @@ function updateMarkerSizes() {
         POINT_SOURCE_COUNT: 0,
         TRAVEL_TIME_INDEX: 0,
         RECORD_COUNT: 0,
-        ttiCount: 0
+        ttiCount: 0,
+        TTI_BEFORE_TOTAL: 0,
+        TTI_AFTER_TOTAL: 0,
+        beforeAfterCount: 0,
       })
     }
     const data = signalDataMap.get(signal.ID)
@@ -1232,17 +1292,24 @@ function updateMarkerSizes() {
     data.TRAVEL_TIME_INDEX += (signal.TRAVEL_TIME_INDEX || 0)
     data.RECORD_COUNT += (signal.RECORD_COUNT || 0)
     data.ttiCount += 1
+
+    if (signal.TTI_BEFORE !== undefined || signal.TTI_AFTER !== undefined || signal.TTI_DIFF !== undefined) {
+      data.TTI_BEFORE_TOTAL += Number(signal.TTI_BEFORE ?? 0) || 0
+      data.TTI_AFTER_TOTAL += Number(signal.TTI_AFTER ?? 0) || 0
+      data.beforeAfterCount += 1
+    }
   })
   const mapBuildTime = performance.now() - mapBuildStart
   console.log(`⚙️ Built signal data map in ${mapBuildTime.toFixed(2)}ms for ${props.signals.length} signals`)
 
   signalMarkers.forEach((marker, signalId) => {
-    const loopStart = performance.now()
     const isSelected = selectionStore.isSignalSelected(signalId)
 
-    // Get current marker data to determine category
     let category = 'green' // Default
     let dataHash = null
+    let customColor = null
+    let markerOptions
+
     const findStart = performance.now()
     const signalData = signalDataMap.get(signalId) // O(1) lookup
     findSignalTime += (performance.now() - findStart)
@@ -1250,23 +1317,46 @@ function updateMarkerSizes() {
     const categoryStart = performance.now()
     if (signalData) {
       if (props.dataType === 'anomaly') {
-        const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
+        const countColumn = props.anomalyType === 'Point Source' ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
         const count = signalData[countColumn] || 0
         const totalRecords = signalData.RECORD_COUNT || 0
         const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
         category = getCategoryFromValue(percentage, 'anomaly')
-        dataHash = `${count}_${totalRecords}` // Simple hash for data values
+        dataHash = `${count}_${totalRecords}`
+      } else if (props.dataType === 'before-after' && signalData.beforeAfterCount > 0) {
+        const sampleCount = signalData.beforeAfterCount
+        const avgBefore = sampleCount > 0 ? signalData.TTI_BEFORE_TOTAL / sampleCount : 0
+        const avgAfter = sampleCount > 0 ? signalData.TTI_AFTER_TOTAL / sampleCount : 0
+        const diff = avgAfter - avgBefore
+        const absDiff = Math.abs(diff)
+
+        let sizeCategory
+        if (absDiff < 0.03) sizeCategory = 'green'
+        else if (absDiff < 0.08) sizeCategory = 'yellow'
+        else sizeCategory = 'red'
+
+        if (diff <= -0.02) {
+          category = 'green'
+        } else if (diff >= 0.02) {
+          category = 'red'
+        } else {
+          category = 'yellow'
+        }
+
+        customColor = beforeAfterDifferenceColorScale(diff)
+        const iconSizeOverride = getMarkerSize(sizeCategory, false)
+        markerOptions = { iconSizeOverride, zIndexCategory: sizeCategory, forceCircleIcon: true }
+        dataHash = `${avgBefore.toFixed(4)}_${avgAfter.toFixed(4)}`
       } else {
         const avgTTI = signalData.ttiCount > 0 ? signalData.TRAVEL_TIME_INDEX / signalData.ttiCount : 0
         category = getCategoryFromValue(avgTTI, 'travel-time')
-        dataHash = `${signalData.TRAVEL_TIME_INDEX}_${signalData.ttiCount}` // Simple hash for data values
+        dataHash = `${avgTTI.toFixed(4)}_${signalData.ttiCount}`
       }
     }
     getCategoryTime += (performance.now() - categoryStart)
 
-    // Only update if state changed (including data values)
     const iconStart = performance.now()
-    if (updateMarkerIcon(signalId, marker, category, isSelected, dataHash)) {
+    if (updateMarkerIcon(signalId, marker, category, isSelected, dataHash, customColor, markerOptions)) {
       updatedCount++
     }
     updateIconTime += (performance.now() - iconStart)
@@ -1520,16 +1610,19 @@ function updateMarkers() {
         updateMarkerIcon(signal.ID, existingMarker, category, isSelected)
 
         // Update tooltip content immediately so it reflects new data
-        const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
-        const signalName = signal.NAME || `Signal ${signal.ID}`
-        const tooltipContent = `
-          <div>
-            <h4>${signalName}</h4>
-            <p><strong>Travel Time Index:</strong> ${ttiDisplay}</p>
-          </div>
-        `
-        if (existingMarker.getTooltip()) {
-          existingMarker.setTooltipContent(tooltipContent)
+        // Skip for before-after mode - applyBeforeAfterStyling() handles it
+        if (props.dataType !== 'before-after') {
+          const ttiDisplay = Number.isFinite(avgTTI) ? avgTTI.toFixed(2) : 'N/A'
+          const signalName = signal.NAME || `Signal ${signal.ID}`
+          const tooltipContent = `
+            <div>
+              <h4>${signalName}</h4>
+              <p><strong>Travel Time Index:</strong> ${ttiDisplay}</p>
+            </div>
+          `
+          if (existingMarker.getTooltip()) {
+            existingMarker.setTooltipContent(tooltipContent)
+          }
         }
       } else {
         // Create new marker with appropriate icon based on viewport signal count
@@ -1568,23 +1661,26 @@ function updateMarkers() {
         })
 
         // Lazy tooltip update on mouseover
-        marker.on('mouseover', () => {
-          // Get current signal from props (which has NAME and already aggregated TTI)
-          const currentSignal = props.signals.find(s => s.ID === signal.ID)
-          if (currentSignal) {
-            const currentTTI = Number(currentSignal.TRAVEL_TIME_INDEX ?? 0) || 0
-            const currentTtiDisplay = Number.isFinite(currentTTI) ? currentTTI.toFixed(2) : 'N/A'
-            const currentName = currentSignal.NAME || `Signal ${currentSignal.ID}`
+        // Skip for before-after mode - applyBeforeAfterStyling() handles it
+        if (props.dataType !== 'before-after') {
+          marker.on('mouseover', () => {
+            // Get current signal from props (which has NAME and already aggregated TTI)
+            const currentSignal = props.signals.find(s => s.ID === signal.ID)
+            if (currentSignal) {
+              const currentTTI = Number(currentSignal.TRAVEL_TIME_INDEX ?? 0) || 0
+              const currentTtiDisplay = Number.isFinite(currentTTI) ? currentTTI.toFixed(2) : 'N/A'
+              const currentName = currentSignal.NAME || `Signal ${currentSignal.ID}`
 
-            const updatedTooltip = `
-              <div>
-                <h4>${currentName}</h4>
-                <p><strong>Travel Time Index:</strong> ${currentTtiDisplay}</p>
-              </div>
-            `
-            marker.setTooltipContent(updatedTooltip)
-          }
-        })
+              const updatedTooltip = `
+                <div>
+                  <h4>${currentName}</h4>
+                  <p><strong>Travel Time Index:</strong> ${currentTtiDisplay}</p>
+                </div>
+              `
+              marker.setTooltipContent(updatedTooltip)
+            }
+          })
+        }
 
         marker.on('click', (e) => {
           L.DomEvent.stopPropagation(e)
@@ -1597,6 +1693,92 @@ function updateMarkers() {
       }
     })
   }
+
+  if (props.dataType === 'before-after') {
+    applyBeforeAfterStyling()
+  }
+}
+
+function applyBeforeAfterStyling() {
+  const aggregated = new Map()
+
+  props.signals.forEach(signal => {
+    const latitude = Number(signal.LATITUDE)
+    const longitude = Number(signal.LONGITUDE)
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return
+    }
+
+    if (!aggregated.has(signal.ID)) {
+      aggregated.set(signal.ID, {
+        ID: signal.ID,
+        NAME: signal.NAME,
+        LATITUDE: latitude,
+        LONGITUDE: longitude,
+        TTI_BEFORE_TOTAL: 0,
+        TTI_AFTER_TOTAL: 0,
+        count: 0
+      })
+    }
+
+    const entry = aggregated.get(signal.ID)
+    entry.TTI_BEFORE_TOTAL += Number(signal.TTI_BEFORE ?? 0) || 0
+    entry.TTI_AFTER_TOTAL += Number(signal.TTI_AFTER ?? 0) || 0
+    entry.count += 1
+  })
+
+  signalMarkers.forEach((marker, signalId) => {
+    const data = aggregated.get(signalId)
+    if (!data) {
+      return
+    }
+
+    const avgBefore = data.count > 0 ? data.TTI_BEFORE_TOTAL / data.count : 0
+    const avgAfter = data.count > 0 ? data.TTI_AFTER_TOTAL / data.count : 0
+    const diff = avgAfter - avgBefore
+    const absDiff = Math.abs(diff)
+
+    let sizeCategory
+    if (absDiff < 0.03) sizeCategory = 'green'
+    else if (absDiff < 0.08) sizeCategory = 'yellow'
+    else sizeCategory = 'red'
+
+    let colorCategory
+    if (diff <= -0.02) {
+      colorCategory = 'green'
+    } else if (diff >= 0.02) {
+      colorCategory = 'red'
+    } else {
+      colorCategory = 'yellow'
+    }
+
+    const customColor = beforeAfterDifferenceColorScale(diff)
+    const iconSizeOverride = getMarkerSize(sizeCategory, false)
+    const markerOptions = { iconSizeOverride, zIndexCategory: sizeCategory, forceCircleIcon: true }
+    const isSelected = selectionStore.isSignalSelected(signalId)
+    const dataHash = `${avgBefore.toFixed(4)}_${avgAfter.toFixed(4)}`
+
+    updateMarkerIcon(signalId, marker, colorCategory, isSelected, dataHash, customColor, markerOptions)
+
+    const displayName = data.NAME || `Signal ${signalId}`
+    const tooltipContent = `
+      <div>
+        <h4>${displayName}</h4>
+        <p><strong>Before TTI:</strong> ${Number.isFinite(avgBefore) ? avgBefore.toFixed(2) : 'N/A'}</p>
+        <p><strong>After TTI:</strong> ${Number.isFinite(avgAfter) ? avgAfter.toFixed(2) : 'N/A'}</p>
+        <p><strong>Difference:</strong> ${Number.isFinite(diff) ? diff.toFixed(2) : 'N/A'}</p>
+      </div>
+    `
+
+    if (marker.getTooltip()) {
+      marker.setTooltipContent(tooltipContent)
+    } else {
+      marker.bindTooltip(tooltipContent, {
+        direction: 'top',
+        offset: [0, -10]
+      })
+    }
+  })
 }
 
 function autoZoomToSignals() {
@@ -1697,11 +1879,7 @@ function updateSelectionStyles() {
   const isDark = themeStore.currentTheme === 'dark'
   const selectionColor = isDark ? '#FFFFFF' : '#000000'
 
-  // Update signal marker icons with selection state
-  const iconSize = getMarkerSize()
-  let updatedCount = 0
-
-  // Build signal map with aggregated data (since signals may have multiple XD segments)
+  // Build aggregated data map for quick lookups
   const signalDataMap = new Map()
   props.signals.forEach(signal => {
     if (!signalDataMap.has(signal.ID)) {
@@ -1710,7 +1888,10 @@ function updateSelectionStyles() {
         POINT_SOURCE_COUNT: 0,
         TRAVEL_TIME_INDEX: 0,
         RECORD_COUNT: 0,
-        ttiCount: 0
+        ttiCount: 0,
+        TTI_BEFORE_TOTAL: 0,
+        TTI_AFTER_TOTAL: 0,
+        beforeAfterCount: 0
       })
     }
     const data = signalDataMap.get(signal.ID)
@@ -1719,46 +1900,80 @@ function updateSelectionStyles() {
     data.TRAVEL_TIME_INDEX += (signal.TRAVEL_TIME_INDEX || 0)
     data.RECORD_COUNT += (signal.RECORD_COUNT || 0)
     data.ttiCount += 1
+
+    if (signal.TTI_BEFORE !== undefined || signal.TTI_AFTER !== undefined || signal.TTI_DIFF !== undefined) {
+      data.TTI_BEFORE_TOTAL += Number(signal.TTI_BEFORE ?? 0) || 0
+      data.TTI_AFTER_TOTAL += Number(signal.TTI_AFTER ?? 0) || 0
+      data.beforeAfterCount += 1
+    }
   })
+
+  let updatedCount = 0
 
   signalMarkers.forEach((marker, signalId) => {
     const isSelected = selectionStore.isSignalSelected(signalId)
-
-    // Get current marker data to determine category
-    let category = 'green' // Default
     const signalData = signalDataMap.get(signalId)
 
-    if (signalData) {
-      if (props.dataType === 'anomaly') {
-        const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
-        const count = signalData[countColumn] || 0
-        const totalRecords = signalData.RECORD_COUNT || 0
-        const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
-        category = getCategoryFromValue(percentage, 'anomaly')
-      } else {
-        const avgTTI = signalData.ttiCount > 0 ? signalData.TRAVEL_TIME_INDEX / signalData.ttiCount : 0
-        category = getCategoryFromValue(avgTTI, 'travel-time')
+    if (props.dataType === 'anomaly' && signalData) {
+      const countColumn = props.anomalyType === 'Point Source' ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
+      const count = signalData[countColumn] || 0
+      const totalRecords = signalData.RECORD_COUNT || 0
+      const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
+      const category = getCategoryFromValue(percentage, 'anomaly')
+      const dataHash = `${count}_${totalRecords}`
+      if (updateMarkerIcon(signalId, marker, category, isSelected, dataHash)) {
+        updatedCount++
       }
-    }
+    } else if (props.dataType === 'before-after' && signalData && signalData.beforeAfterCount > 0) {
+      const sampleCount = signalData.beforeAfterCount
+      const avgBefore = sampleCount > 0 ? signalData.TTI_BEFORE_TOTAL / sampleCount : 0
+      const avgAfter = sampleCount > 0 ? signalData.TTI_AFTER_TOTAL / sampleCount : 0
+      const diff = avgAfter - avgBefore
+      const absDiff = Math.abs(diff)
 
-    // Only update if state changed
-    if (updateMarkerIcon(signalId, marker, category, isSelected, iconSize)) {
-      updatedCount++
+      let sizeCategory
+      if (absDiff < 0.03) sizeCategory = 'green'
+      else if (absDiff < 0.08) sizeCategory = 'yellow'
+      else sizeCategory = 'red'
+
+      let colorCategory
+      if (diff <= -0.02) {
+        colorCategory = 'green'
+      } else if (diff >= 0.02) {
+        colorCategory = 'red'
+      } else {
+        colorCategory = 'yellow'
+      }
+
+      const customColor = beforeAfterDifferenceColorScale(diff)
+      const iconSizeOverride = getMarkerSize(sizeCategory, false)
+      const markerOptions = { iconSizeOverride, zIndexCategory: sizeCategory, forceCircleIcon: true }
+      const dataHash = `${avgBefore.toFixed(4)}_${avgAfter.toFixed(4)}`
+      if (updateMarkerIcon(signalId, marker, colorCategory, isSelected, dataHash, customColor, markerOptions)) {
+        updatedCount++
+      }
+    } else {
+      const avgTTI = signalData && signalData.ttiCount > 0
+        ? signalData.TRAVEL_TIME_INDEX / signalData.ttiCount
+        : 0
+      const category = getCategoryFromValue(avgTTI, 'travel-time')
+      const dataHash = `${avgTTI.toFixed(4)}_${signalData ? signalData.ttiCount : 0}`
+      if (updateMarkerIcon(signalId, marker, category, isSelected, dataHash)) {
+        updatedCount++
+      }
     }
   })
 
   if (DEBUG_FRONTEND_LOGGING && updatedCount > 0) {
-    console.log(`🔄 updateSelectionStyles: Updated ${updatedCount}/${signalMarkers.size} markers`)
+    console.log(`[SharedMap] updateSelectionStyles: Updated ${updatedCount}/${signalMarkers.size} markers`)
   }
 
-  // Build set of XD values from currently displayed XD segments
   const displayedXDs = new Set(
     props.xdSegments.length > 0
       ? props.xdSegments.map(xd => xd.XD)
       : props.signals.map(signal => signal.XD).filter(xd => xd !== undefined && xd !== null)
   )
 
-  // Update XD layer styles
   const xdDataMap = getXdDataMap()
 
   xdLayers.forEach((layer, xd) => {
@@ -1770,11 +1985,14 @@ function updateSelectionStyles() {
 
     if (isInFilteredSet && dataValue !== undefined && dataValue !== null) {
       if (props.dataType === 'anomaly') {
-        const countColumn = props.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
+        const countColumn = props.anomalyType === 'Point Source' ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
         const count = dataValue[countColumn] || 0
         const totalRecords = dataValue.RECORD_COUNT || 0
         const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
         fillColor = anomalyColorScale(percentage)
+      } else if (props.dataType === 'before-after') {
+        const diff = dataValue.TTI_DIFF || 0
+        fillColor = beforeAfterDifferenceColorScale(diff)
       } else {
         const tti = dataValue.TRAVEL_TIME_INDEX || 0
         fillColor = travelTimeColorScale(tti)
@@ -1785,12 +2003,11 @@ function updateSelectionStyles() {
       color: isSelected ? selectionColor : (isInFilteredSet ? fillColor : '#808080'),
       weight: isSelected ? 3 : 1,
       opacity: isSelected ? 1 : (isInFilteredSet ? 0.8 : 0.3),
-      fillColor: isInFilteredSet ? fillColor : '#cccccc',  // FIX: Consistent with color logic
+      fillColor: isInFilteredSet ? fillColor : '#cccccc',
       fillOpacity: isInFilteredSet ? (isSelected ? 0.7 : 0.6) : 0.2
     }
 
-    // GeoJSON layers are LayerGroups, need to iterate through all child layers
-    layer.eachLayer((childLayer) => {
+    layer.eachLayer(childLayer => {
       if (childLayer.setStyle) {
         childLayer.setStyle(styleUpdate)
       }

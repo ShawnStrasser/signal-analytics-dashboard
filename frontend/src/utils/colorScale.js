@@ -97,3 +97,39 @@ export function anomalyColorScale(percentage) {
   const { floor, ceiling } = THRESHOLDS.anomaly
   return getColorForValue(percentage, floor, ceiling)
 }
+
+/**
+ * Get color for before/after TTI difference
+ * Maps difference to diverging color scale:
+ * -0.25 or less (improvement) = green
+ * 0 (no change) = yellow
+ * +0.25 or more (degradation) = red
+ * @param {number} difference - TTI After - TTI Before
+ * @returns {string} Color hex code
+ */
+export function beforeAfterDifferenceColorScale(difference) {
+  const { green, yellow, red } = COLOR_SCHEME
+
+  // Clamp to range -0.25 to +0.25
+  if (difference <= -0.25) {
+    return `#${green.map(x => x.toString(16).padStart(2, '0')).join('')}`
+  }
+  if (difference >= 0.25) {
+    return `#${red.map(x => x.toString(16).padStart(2, '0')).join('')}`
+  }
+
+  // Normalize difference to 0-1 range
+  // -0.25 → 0, 0 → 0.5, +0.25 → 1
+  const normalized = (difference + 0.25) / 0.5
+
+  // Two-segment gradient: green→yellow→red
+  if (normalized <= 0.5) {
+    // First half: green to yellow (-0.25 to 0)
+    const factor = normalized / 0.5
+    return interpolateColor(green, yellow, factor)
+  } else {
+    // Second half: yellow to red (0 to +0.25)
+    const factor = (normalized - 0.5) / 0.5
+    return interpolateColor(yellow, red, factor)
+  }
+}

@@ -52,10 +52,12 @@ def get_config():
 # Import route modules
 from routes.api_travel_time import travel_time_bp
 from routes.api_anomalies import anomalies_bp
+from routes.api_before_after import before_after_bp
 
 # Register blueprints
 app.register_blueprint(travel_time_bp, url_prefix='/api')
 app.register_blueprint(anomalies_bp, url_prefix='/api')
+app.register_blueprint(before_after_bp, url_prefix='/api')
 
 # Serve Vue.js app in production
 @app.route('/', defaults={'path': ''})

@@ -21,6 +21,7 @@ export const useFiltersStore = defineStore('filters', () => {
   const endMinute = ref(0)
   const timeFilterEnabled = ref(true)  // Time-of-day filter always enabled
   const dayOfWeek = ref([])  // Selected days of week (1=Mon, 2=Tue, ..., 7=Sun)
+  const removeAnomalies = ref(false)  // Filter to remove anomalous data points
 
   // Computed
   const hasSignalFilters = computed(() => selectedSignalIds.value.length > 0)
@@ -58,7 +59,8 @@ export const useFiltersStore = defineStore('filters', () => {
     start_minute: !isDefaultTimeRange.value ? startMinute.value : undefined,
     end_hour: !isDefaultTimeRange.value ? endHour.value : undefined,
     end_minute: !isDefaultTimeRange.value ? endMinute.value : undefined,
-    day_of_week: dayOfWeek.value.length > 0 ? dayOfWeek.value : undefined
+    day_of_week: dayOfWeek.value.length > 0 ? dayOfWeek.value : undefined,
+    remove_anomalies: removeAnomalies.value || undefined
   }))
 
   // Computed property that groups signals by district and filters by maintainedBy
@@ -111,6 +113,10 @@ export const useFiltersStore = defineStore('filters', () => {
 
   function setDayOfWeek(days) {
     dayOfWeek.value = days
+  }
+
+  function setRemoveAnomalies(value) {
+    removeAnomalies.value = value
   }
 
   function selectDistrict(district, signalIds) {
@@ -186,6 +192,7 @@ export const useFiltersStore = defineStore('filters', () => {
     endMinute,
     timeFilterEnabled,
     dayOfWeek,
+    removeAnomalies,
     defaultStartHour,
     defaultEndHour,
 
@@ -206,6 +213,7 @@ export const useFiltersStore = defineStore('filters', () => {
     setTimeOfDayRange,
     setTimeFilterEnabled,
     setDayOfWeek,
+    setRemoveAnomalies,
     selectDistrict,
     deselectDistrict,
     deselectIndividualSignal,

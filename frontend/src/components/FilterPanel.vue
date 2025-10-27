@@ -6,8 +6,9 @@
     </v-card-title>
     
     <v-card-text>
-      <!-- Date Range -->
-      <v-row>
+      <!-- Date Range (conditionally show Before/After selector or standard date range) -->
+      <BeforeAfterDateSelector v-if="$route.name === 'BeforeAfter'" />
+      <v-row v-else>
         <v-col cols="12">
           <v-text-field
             v-model="localStartDate"
@@ -214,13 +215,31 @@
         </v-col>
       </v-row>
 
+      <!-- Remove Anomalies Filter (only shown on Travel Time and Before/After pages) -->
+      <v-row v-if="$route.name === 'TravelTime' || $route.name === 'BeforeAfter'">
+        <v-col cols="12">
+          <v-checkbox
+            v-model="filtersStore.removeAnomalies"
+            label="Remove Anomalies"
+            density="compact"
+            hide-details
+          />
+        </v-col>
+      </v-row>
+
       <!-- Filter Summary -->
       <v-divider class="my-4"></v-divider>
       <v-card variant="tonal" class="mb-2">
         <v-card-text>
           <div class="text-caption">
-            <div><strong>Date Range:</strong> {{ filtersStore.startDate }} to {{ filtersStore.endDate }}</div>
-            <div><strong>Aggregation:</strong> {{ filtersStore.aggregationLevel }}</div>
+            <div v-if="$route.name === 'BeforeAfter'">
+              <div><strong>Before:</strong> {{ beforeAfterFiltersStore.beforeStartDate }} to {{ beforeAfterFiltersStore.beforeEndDate }}</div>
+              <div><strong>After:</strong> {{ beforeAfterFiltersStore.afterStartDate }} to {{ beforeAfterFiltersStore.afterEndDate }}</div>
+            </div>
+            <div v-else>
+              <div><strong>Date Range:</strong> {{ filtersStore.startDate }} to {{ filtersStore.endDate }}</div>
+              <div><strong>Aggregation:</strong> {{ filtersStore.aggregationLevel }}</div>
+            </div>
             <div v-if="filtersStore.maintainedBy !== 'all'"><strong>Maintained By:</strong> {{ maintainedByDisplayText }}</div>
             <div><strong>Signals:</strong> {{ filtersStore.selectedSignalIds.length || 'All' }}</div>
             <div v-if="filtersStore.approach !== null"><strong>Approach:</strong> {{ filtersStore.approach ? 'True' : 'False' }}</div>
@@ -228,6 +247,7 @@
             <div v-if="$route.name === 'Anomalies'"><strong>Anomaly Type:</strong> {{ filtersStore.anomalyType }}</div>
             <div><strong>Time of Day:</strong> {{ formatTimeDetailed(filtersStore.startHour, filtersStore.startMinute) }} - {{ formatTimeDetailed(filtersStore.endHour, filtersStore.endMinute) }}</div>
             <div v-if="filtersStore.dayOfWeek.length > 0"><strong>Days:</strong> {{ dayOfWeekDisplayText }}</div>
+            <div v-if="($route.name === 'TravelTime' || $route.name === 'BeforeAfter') && filtersStore.removeAnomalies"><strong>Remove Anomalies:</strong> Yes</div>
           </div>
         </v-card-text>
       </v-card>
@@ -239,10 +259,13 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useFiltersStore } from '@/stores/filters'
 import { useSignalsStore } from '@/stores/signals'
+import { useBeforeAfterFiltersStore } from '@/stores/beforeAfterFilters'
 import ApiService from '@/services/api'
+import BeforeAfterDateSelector from './BeforeAfterDateSelector.vue'
 
 const filtersStore = useFiltersStore()
 const signalsStore = useSignalsStore()
+const beforeAfterFiltersStore = useBeforeAfterFiltersStore()
 const loadingSignals = ref(false)
 const signals = ref([]) // Keep for backward compat with old DIM_SIGNALS_XD endpoint
 const searchQuery = ref('')
