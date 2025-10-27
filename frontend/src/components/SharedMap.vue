@@ -1328,24 +1328,18 @@ function updateMarkerSizes() {
         const avgBefore = sampleCount > 0 ? signalData.TTI_BEFORE_TOTAL / sampleCount : 0
         const avgAfter = sampleCount > 0 ? signalData.TTI_AFTER_TOTAL / sampleCount : 0
         const diff = avgAfter - avgBefore
-        const absDiff = Math.abs(diff)
 
-        let sizeCategory
-        if (absDiff < 0.03) sizeCategory = 'green'
-        else if (absDiff < 0.08) sizeCategory = 'yellow'
-        else sizeCategory = 'red'
-
-        if (diff <= -0.02) {
-          category = 'green'
-        } else if (diff >= 0.02) {
-          category = 'red'
+        // Categorize based on TTI difference (matching legend: -0.25, 0, +0.25)
+        if (diff < -0.083) {
+          category = 'green'  // Notable improvement (bottom third of range)
+        } else if (diff < 0.083) {
+          category = 'yellow' // Minimal change (middle third)
         } else {
-          category = 'yellow'
+          category = 'red'    // Notable degradation (top third)
         }
 
-        customColor = beforeAfterDifferenceColorScale(diff)
-        const iconSizeOverride = getMarkerSize(sizeCategory, false)
-        markerOptions = { iconSizeOverride, zIndexCategory: sizeCategory, forceCircleIcon: true }
+        // Use continuous color scale for circles (when zoomed out), but categorical for SVG signal heads
+        customColor = shouldUseSvgIcons() ? null : beforeAfterDifferenceColorScale(diff)
         dataHash = `${avgBefore.toFixed(4)}_${avgAfter.toFixed(4)}`
       } else {
         const avgTTI = signalData.ttiCount > 0 ? signalData.TRAVEL_TIME_INDEX / signalData.ttiCount : 0
@@ -1736,29 +1730,23 @@ function applyBeforeAfterStyling() {
     const avgBefore = data.count > 0 ? data.TTI_BEFORE_TOTAL / data.count : 0
     const avgAfter = data.count > 0 ? data.TTI_AFTER_TOTAL / data.count : 0
     const diff = avgAfter - avgBefore
-    const absDiff = Math.abs(diff)
 
-    let sizeCategory
-    if (absDiff < 0.03) sizeCategory = 'green'
-    else if (absDiff < 0.08) sizeCategory = 'yellow'
-    else sizeCategory = 'red'
-
-    let colorCategory
-    if (diff <= -0.02) {
-      colorCategory = 'green'
-    } else if (diff >= 0.02) {
-      colorCategory = 'red'
+    // Categorize based on TTI difference (matching legend: -0.25, 0, +0.25)
+    let category
+    if (diff < -0.083) {
+      category = 'green'  // Notable improvement (bottom third of range)
+    } else if (diff < 0.083) {
+      category = 'yellow' // Minimal change (middle third)
     } else {
-      colorCategory = 'yellow'
+      category = 'red'    // Notable degradation (top third)
     }
 
-    const customColor = beforeAfterDifferenceColorScale(diff)
-    const iconSizeOverride = getMarkerSize(sizeCategory, false)
-    const markerOptions = { iconSizeOverride, zIndexCategory: sizeCategory, forceCircleIcon: true }
+    // Use continuous color scale for circles (when zoomed out), but categorical for SVG signal heads
+    const customColor = shouldUseSvgIcons() ? null : beforeAfterDifferenceColorScale(diff)
     const isSelected = selectionStore.isSignalSelected(signalId)
     const dataHash = `${avgBefore.toFixed(4)}_${avgAfter.toFixed(4)}`
 
-    updateMarkerIcon(signalId, marker, colorCategory, isSelected, dataHash, customColor, markerOptions)
+    updateMarkerIcon(signalId, marker, category, isSelected, dataHash, customColor)
 
     const displayName = data.NAME || `Signal ${signalId}`
     const tooltipContent = `
@@ -1929,27 +1917,21 @@ function updateSelectionStyles() {
       const avgBefore = sampleCount > 0 ? signalData.TTI_BEFORE_TOTAL / sampleCount : 0
       const avgAfter = sampleCount > 0 ? signalData.TTI_AFTER_TOTAL / sampleCount : 0
       const diff = avgAfter - avgBefore
-      const absDiff = Math.abs(diff)
 
-      let sizeCategory
-      if (absDiff < 0.03) sizeCategory = 'green'
-      else if (absDiff < 0.08) sizeCategory = 'yellow'
-      else sizeCategory = 'red'
-
-      let colorCategory
-      if (diff <= -0.02) {
-        colorCategory = 'green'
-      } else if (diff >= 0.02) {
-        colorCategory = 'red'
+      // Categorize based on TTI difference (matching legend: -0.25, 0, +0.25)
+      let category
+      if (diff < -0.083) {
+        category = 'green'  // Notable improvement (bottom third of range)
+      } else if (diff < 0.083) {
+        category = 'yellow' // Minimal change (middle third)
       } else {
-        colorCategory = 'yellow'
+        category = 'red'    // Notable degradation (top third)
       }
 
-      const customColor = beforeAfterDifferenceColorScale(diff)
-      const iconSizeOverride = getMarkerSize(sizeCategory, false)
-      const markerOptions = { iconSizeOverride, zIndexCategory: sizeCategory, forceCircleIcon: true }
+      // Use continuous color scale for circles (when zoomed out), but categorical for SVG signal heads
+      const customColor = shouldUseSvgIcons() ? null : beforeAfterDifferenceColorScale(diff)
       const dataHash = `${avgBefore.toFixed(4)}_${avgAfter.toFixed(4)}`
-      if (updateMarkerIcon(signalId, marker, colorCategory, isSelected, dataHash, customColor, markerOptions)) {
+      if (updateMarkerIcon(signalId, marker, category, isSelected, dataHash, customColor)) {
         updatedCount++
       }
     } else {
