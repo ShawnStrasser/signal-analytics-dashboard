@@ -3,8 +3,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import { useTheme } from 'vuetify'
+import { useThemeStore } from '@/stores/theme'
 import * as echarts from 'echarts'
 
 const props = defineProps({
@@ -25,10 +26,21 @@ const props = defineProps({
 const chartContainer = ref(null)
 let chart = null
 const theme = useTheme()
+const themeStore = useThemeStore()
 
-// Before/After colors
-const BEFORE_COLOR = '#1976D2' // Blue
-const AFTER_COLOR = '#F57C00'  // Orange
+// Before/After colors (colorblind-safe when enabled)
+const BEFORE_COLOR = computed(() => {
+  // Blue is already colorblind-safe, keep consistent
+  return '#1976D2'
+})
+
+const AFTER_COLOR = computed(() => {
+  if (themeStore.colorblindMode) {
+    return '#E69F00' // Colorblind-safe orange
+  } else {
+    return '#F57C00'  // Standard orange
+  }
+})
 
 onMounted(() => {
   initializeChart()
@@ -37,6 +49,11 @@ onMounted(() => {
 
 // Watch for theme changes
 watch(() => theme.global.current.value.dark, () => {
+  updateChart()
+})
+
+// Watch for colorblind mode changes
+watch(() => themeStore.colorblindMode, () => {
   updateChart()
 })
 
@@ -113,8 +130,8 @@ function updateChart() {
         type: 'line',
         data: beforeGroups[group] || [],
         smooth: true,
-        lineStyle: { color: BEFORE_COLOR, width: 2 },
-        itemStyle: { color: BEFORE_COLOR },
+        lineStyle: { color: BEFORE_COLOR.value, width: 2 },
+        itemStyle: { color: BEFORE_COLOR.value },
         symbol: 'circle',
         symbolSize: 3
       })
@@ -125,8 +142,8 @@ function updateChart() {
         type: 'line',
         data: afterGroups[group] || [],
         smooth: true,
-        lineStyle: { color: AFTER_COLOR, width: 2 },
-        itemStyle: { color: AFTER_COLOR },
+        lineStyle: { color: AFTER_COLOR.value, width: 2 },
+        itemStyle: { color: AFTER_COLOR.value },
         symbol: 'circle',
         symbolSize: 3
       })
@@ -149,8 +166,8 @@ function updateChart() {
         type: 'line',
         data: beforeSeries,
         smooth: true,
-        lineStyle: { color: BEFORE_COLOR, width: 2 },
-        itemStyle: { color: BEFORE_COLOR },
+        lineStyle: { color: BEFORE_COLOR.value, width: 2 },
+        itemStyle: { color: BEFORE_COLOR.value },
         symbol: 'circle',
         symbolSize: 4
       },
@@ -159,8 +176,8 @@ function updateChart() {
         type: 'line',
         data: afterSeries,
         smooth: true,
-        lineStyle: { color: AFTER_COLOR, width: 2 },
-        itemStyle: { color: AFTER_COLOR },
+        lineStyle: { color: AFTER_COLOR.value, width: 2 },
+        itemStyle: { color: AFTER_COLOR.value },
         symbol: 'circle',
         symbolSize: 4
       }

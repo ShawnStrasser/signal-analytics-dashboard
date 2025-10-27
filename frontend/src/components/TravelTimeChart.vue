@@ -5,6 +5,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useTheme } from 'vuetify'
+import { useThemeStore } from '@/stores/theme'
 import * as echarts from 'echarts'
 
 const props = defineProps({
@@ -29,6 +30,7 @@ const props = defineProps({
 const chartContainer = ref(null)
 let chart = null
 const theme = useTheme()
+const themeStore = useThemeStore()
 
 onMounted(() => {
   initializeChart()
@@ -37,6 +39,11 @@ onMounted(() => {
 
 // Watch for theme changes
 watch(() => theme.global.current.value.dark, () => {
+  updateChart()
+})
+
+// Watch for colorblind mode changes
+watch(() => themeStore.colorblindMode, () => {
   updateChart()
 })
 
@@ -375,7 +382,7 @@ function updateChart() {
   }
 
   // Build series array with appropriate colors
-  // Use different color palettes for light and dark mode
+  // Use different color palettes for light/dark mode and colorblind mode
   const lightModePalette = [
     '#1976D2', '#388E3C', '#F57C00', '#D32F2F', '#7B1FA2',
     '#00796B', '#C2185B', '#5D4037', '#455A64', '#0097A7'
@@ -386,7 +393,23 @@ function updateChart() {
     '#4DB6AC', '#F06292', '#A1887F', '#90A4AE', '#4DD0E1'
   ]
 
-  const colorPalette = isDark ? darkModePalette : lightModePalette
+  // Colorblind-friendly palettes (based on Wong 2011 / IBM Design / Okabe Ito)
+  const lightModeColorblindPalette = [
+    '#0072B2', '#E69F00', '#009E73', '#D55E00', '#CC79A7',
+    '#56B4E9', '#F0E442', '#999999', '#000000', '#882255'
+  ]
+
+  const darkModeColorblindPalette = [
+    '#56B4E9', '#F0E442', '#009E73', '#E69F00', '#CC79A7',
+    '#0072B2', '#D55E00', '#CCCCCC', '#999999', '#882255'
+  ]
+
+  let colorPalette
+  if (themeStore.colorblindMode) {
+    colorPalette = isDark ? darkModeColorblindPalette : lightModeColorblindPalette
+  } else {
+    colorPalette = isDark ? darkModePalette : lightModePalette
+  }
 
   const series = seriesData.map(([groupName, data], index) => {
     const color = colorPalette[index % colorPalette.length]

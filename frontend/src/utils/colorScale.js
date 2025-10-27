@@ -1,14 +1,30 @@
 /**
  * Color scale utilities for maps and visualizations
- * Uses a colorblind-friendly gradient palette
+ * Supports both standard and colorblind-friendly gradient palettes
  */
 
-// Shared color scheme - colorblind-friendly green to yellow to orange to red
-const COLOR_SCHEME = {
-  green: [76, 175, 80],     // #4caf50 - colorblind-safe green
+import { useThemeStore } from '@/stores/theme'
+
+// Standard color scheme - green to yellow to orange to red
+const STANDARD_COLOR_SCHEME = {
+  green: [76, 175, 80],     // #4caf50 - green
   yellow: [255, 193, 7],    // #ffc107 - amber/yellow
   orange: [255, 87, 34],    // #ff5722 - orange-red
   red: [211, 47, 47]        // #d32f2f - red
+}
+
+// Colorblind-friendly color scheme (based on Wong 2011 / IBM Design)
+const COLORBLIND_COLOR_SCHEME = {
+  green: [0, 114, 178],     // #0072B2 - colorblind-safe blue (replaces green)
+  yellow: [240, 228, 66],   // #F0E442 - colorblind-safe yellow
+  orange: [230, 159, 0],    // #E69F00 - colorblind-safe orange
+  red: [213, 94, 0]         // #D55E00 - colorblind-safe vermillion (replaces red)
+}
+
+// Get the active color scheme based on colorblind mode
+function getColorScheme() {
+  const themeStore = useThemeStore()
+  return themeStore.colorblindMode ? COLORBLIND_COLOR_SCHEME : STANDARD_COLOR_SCHEME
 }
 
 // Thresholds for different metrics
@@ -39,14 +55,15 @@ function interpolateColor(color1, color2, factor) {
 }
 
 /**
- * Generic color scale function using shared color scheme
+ * Generic color scale function using active color scheme
  * @param {number} value - Input value
  * @param {number} floor - Minimum threshold
  * @param {number} ceiling - Maximum threshold
  * @returns {string} Color hex code
  */
 function getColorForValue(value, floor, ceiling) {
-  const { green, yellow, orange, red } = COLOR_SCHEME
+  const colorScheme = getColorScheme()
+  const { green, yellow, orange, red } = colorScheme
   const range = ceiling - floor
 
   // Clamp value to floor and ceiling
@@ -108,7 +125,8 @@ export function anomalyColorScale(percentage) {
  * @returns {string} Color hex code
  */
 export function beforeAfterDifferenceColorScale(difference) {
-  const { green, yellow, red } = COLOR_SCHEME
+  const colorScheme = getColorScheme()
+  const { green, yellow, red } = colorScheme
 
   // Clamp to range -0.25 to +0.25
   if (difference <= -0.25) {

@@ -33,7 +33,7 @@ export default defineConfig({
     },
 
     // Setup files to run before each test file
-    setupFiles: [],
+    setupFiles: ['./src/test-utils/setup.js'],
 
     // Increase timeout for tests that might need more time
     testTimeout: 10000,

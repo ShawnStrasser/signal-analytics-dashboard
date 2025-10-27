@@ -1,8 +1,21 @@
 <template>
   <div class="before-after-date-selector">
     <!-- Before Period -->
-    <v-card variant="outlined" class="before-period-card mb-3">
-      <v-card-title class="py-2 before-header">
+    <v-card
+      variant="outlined"
+      class="period-card mb-3"
+      :style="{
+        borderColor: `${beforeColor} !important`,
+        borderWidth: '2px !important'
+      }"
+    >
+      <v-card-title
+        class="py-2 period-header"
+        :style="{
+          backgroundColor: `${beforeColor}14`,
+          color: beforeColor
+        }"
+      >
         <v-icon class="mr-2">mdi-calendar-clock</v-icon>
         Before Period
       </v-card-title>
@@ -33,8 +46,21 @@
     </v-card>
 
     <!-- After Period -->
-    <v-card variant="outlined" class="after-period-card">
-      <v-card-title class="py-2 after-header">
+    <v-card
+      variant="outlined"
+      class="period-card"
+      :style="{
+        borderColor: `${afterColor} !important`,
+        borderWidth: '2px !important'
+      }"
+    >
+      <v-card-title
+        class="py-2 period-header"
+        :style="{
+          backgroundColor: `${afterColor}14`,
+          color: afterColor
+        }"
+      >
         <v-icon class="mr-2">mdi-calendar-check</v-icon>
         After Period
       </v-card-title>
@@ -67,10 +93,26 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { useBeforeAfterFiltersStore } from '@/stores/beforeAfterFilters'
+import { useThemeStore } from '@/stores/theme'
 
 const beforeAfterFiltersStore = useBeforeAfterFiltersStore()
+const themeStore = useThemeStore()
+
+// Compute colors based on colorblind mode
+const beforeColor = computed(() => {
+  // Blue is already colorblind-safe
+  return '#1976D2'
+})
+
+const afterColor = computed(() => {
+  if (themeStore.colorblindMode) {
+    return '#E69F00' // Colorblind-safe orange
+  } else {
+    return '#F57C00'  // Standard orange
+  }
+})
 
 // Local date state with debouncing
 const localBeforeStartDate = ref(beforeAfterFiltersStore.beforeStartDate)
@@ -130,45 +172,14 @@ watch([localAfterStartDate, localAfterEndDate], ([newStart, newEnd]) => {
   padding: 0;
 }
 
-/* Before Period Styling (Blue theme) */
-.before-period-card {
-  border-color: #1976D2 !important;
-  border-width: 2px !important;
+/* Period card styling */
+.period-card {
+  /* Border colors are applied via inline styles for dynamic colorblind support */
 }
 
-.before-header {
-  background-color: rgba(25, 118, 210, 0.08);
-  color: #1976D2;
+.period-header {
+  /* Colors are applied via inline styles for dynamic colorblind support */
   font-weight: 600;
   font-size: 0.95rem !important;
-}
-
-.before-input :deep(.v-field--focused) {
-  border-color: #1976D2 !important;
-}
-
-.before-input :deep(.v-field) {
-  border-color: rgba(25, 118, 210, 0.3);
-}
-
-/* After Period Styling (Orange theme) */
-.after-period-card {
-  border-color: #F57C00 !important;
-  border-width: 2px !important;
-}
-
-.after-header {
-  background-color: rgba(245, 124, 0, 0.08);
-  color: #F57C00;
-  font-weight: 600;
-  font-size: 0.95rem !important;
-}
-
-.after-input :deep(.v-field--focused) {
-  border-color: #F57C00 !important;
-}
-
-.after-input :deep(.v-field) {
-  border-color: rgba(245, 124, 0, 0.3);
 }
 </style>

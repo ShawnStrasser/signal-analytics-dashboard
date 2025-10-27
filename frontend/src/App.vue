@@ -10,8 +10,21 @@
         🚦 Signal Analytics Dashboard
       </v-app-bar-title>
 
-      <!-- Theme toggle -->
+      <!-- Theme and colorblind toggles -->
       <template v-slot:append>
+        <!-- Colorblind mode toggle button -->
+        <v-tooltip location="bottom">
+          <template v-slot:activator="{ props }">
+            <v-btn
+              v-bind="props"
+              :icon="themeStore.colorblindMode ? 'mdi-eye-check' : 'mdi-eye'"
+              @click="toggleColorblindMode"
+              variant="text"
+            ></v-btn>
+          </template>
+          <span>{{ themeStore.colorblindMode ? 'Disable' : 'Enable' }} colorblind-friendly mode</span>
+        </v-tooltip>
+
         <!-- Theme toggle button -->
         <v-tooltip location="bottom">
           <template v-slot:activator="{ props }">
@@ -158,6 +171,10 @@ watch(() => themeStore.currentTheme, (newTheme) => {
 
 const toggleTheme = () => {
   themeStore.toggleTheme()
+}
+
+const toggleColorblindMode = () => {
+  themeStore.toggleColorblindMode()
 }
 
 const connectionChipColor = computed(() => {

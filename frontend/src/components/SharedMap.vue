@@ -98,6 +98,25 @@ function getZIndexOffset(category) {
   return zIndexOffsets[category] || 0
 }
 
+// Get traffic light colors based on colorblind mode
+function getTrafficLightColors() {
+  if (themeStore.colorblindMode) {
+    // Colorblind-friendly colors (based on Wong 2011 / IBM Design)
+    return {
+      green: '#0072B2',    // Blue (replaces green)
+      yellow: '#F0E442',   // Yellow
+      red: '#D55E00'       // Vermillion (replaces red)
+    }
+  } else {
+    // Standard colors
+    return {
+      green: '#4caf50',
+      yellow: '#ffc107',
+      red: '#d32f2f'
+    }
+  }
+}
+
 // Check if we should use SVG icons based on number of signals visible in current viewport
 // signalData parameter is optional - used during updateMarkers to get accurate count during transition
 function shouldUseSvgIcons(signalData = null) {
@@ -167,12 +186,8 @@ function createCircleIcon(category, isSelected, iconSize, customColor = null) {
     fillColor = customColor
     opacity = 0.9
   } else {
-    // Circle colors matching the traffic light colors
-    const fillColors = {
-      green: '#4caf50',
-      yellow: '#ffc107',
-      red: '#d32f2f'
-    }
+    // Circle colors matching the traffic light colors (colorblind-safe if enabled)
+    const fillColors = getTrafficLightColors()
 
     // Opacity based on severity - less important signals are more transparent
     const opacities = {
@@ -222,15 +237,11 @@ function createTrafficSignalIcon(category, isSelected, iconSize) {
   const isDark = themeStore.currentTheme === 'dark'
   const selectionColor = isDark ? '#FFFFFF' : '#000000'
 
-  // Traffic light colors
-  const activeColors = {
-    green: '#4caf50',
-    yellow: '#ffc107',
-    red: '#d32f2f'
-  }
+  // Traffic light colors (colorblind-safe if enabled)
+  const activeColors = getTrafficLightColors()
 
   const inactiveColor = '#2a2a2a'
-  const backplateColor = '#ffc107' // Yellow backplate (reflectorized)
+  const backplateColor = activeColors.yellow // Yellow backplate (reflectorized)
 
   // Calculate sizes
   const width = iconSize
@@ -516,6 +527,18 @@ watch(() => themeStore.currentTheme, () => {
 
   updateTileLayer()
   updateSelectionStyles()
+})
+
+// Watch for colorblind mode changes to update marker and geometry colors
+watch(() => themeStore.colorblindMode, () => {
+  // Clear SVG cache since colorblind mode affects icon colors
+  svgIconCache.clear()
+  // Clear marker states to force regeneration with new colors
+  markerStates.clear()
+
+  // Update markers and geometry with new color scheme
+  updateMarkerSizes()
+  updateGeometry()
 })
 
 function updateTileLayer() {

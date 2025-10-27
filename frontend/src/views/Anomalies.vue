@@ -11,15 +11,15 @@
         <div class="legend-container d-flex align-center flex-wrap mt-2 mt-sm-0">
           <span class="text-caption font-weight-medium mr-2 d-none d-sm-inline">Legend:</span>
           <div class="legend-item">
-            <div class="legend-circle green-circle"></div>
+            <div class="legend-circle" :style="{ backgroundColor: legendGreenColor }"></div>
             <span class="legend-text"><span class="d-none d-sm-inline">Low </span>0%</span>
           </div>
           <div class="legend-item">
-            <div class="legend-circle yellow-circle"></div>
+            <div class="legend-circle" :style="{ backgroundColor: legendYellowColor }"></div>
             <span class="legend-text"><span class="d-none d-sm-inline">Med </span>5%</span>
           </div>
           <div class="legend-item">
-            <div class="legend-circle red-circle"></div>
+            <div class="legend-circle" :style="{ backgroundColor: legendRedColor }"></div>
             <span class="legend-text"><span class="d-none d-sm-inline">High </span>10%</span>
           </div>
         </div>
@@ -137,6 +137,7 @@ import { useFiltersStore } from '@/stores/filters'
 import { useSelectionStore } from '@/stores/selection'
 import { useSignalDimensionsStore } from '@/stores/signalDimensions'
 import { useXdDimensionsStore } from '@/stores/xdDimensions'
+import { useThemeStore } from '@/stores/theme'
 import ApiService from '@/services/api'
 import SharedMap from '@/components/SharedMap.vue'
 import AnomalyChart from '@/components/AnomalyChart.vue'
@@ -145,6 +146,12 @@ const filtersStore = useFiltersStore()
 const selectionStore = useSelectionStore()
 const signalDimensionsStore = useSignalDimensionsStore()
 const xdDimensionsStore = useXdDimensionsStore()
+const themeStore = useThemeStore()
+
+// Computed legend colors based on colorblind mode
+const legendGreenColor = computed(() => themeStore.colorblindMode ? '#0072B2' : '#4caf50')
+const legendYellowColor = computed(() => themeStore.colorblindMode ? '#F0E442' : '#ffc107')
+const legendRedColor = computed(() => themeStore.colorblindMode ? '#D55E00' : '#d32f2f')
 const mapData = ref([])
 const xdData = ref([])  // XD segment data for map tooltips/coloring
 const chartData = ref([])
@@ -595,17 +602,7 @@ function clearMapSelections() {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
-.green-circle {
-  background-color: #4caf50;
-}
-
-.yellow-circle {
-  background-color: #ffc107;
-}
-
-.red-circle {
-  background-color: #d32f2f;
-}
+/* Legend circle colors are now applied via inline styles for colorblind mode support */
 
 .legend-text {
   font-size: 0.75rem;

@@ -6,9 +6,18 @@ export const useThemeStore = defineStore('theme', () => {
   const savedTheme = localStorage.getItem('theme') || 'light'
   const currentTheme = ref(savedTheme)
 
+  // Load saved colorblind mode from localStorage, default to false
+  const savedColorblindMode = localStorage.getItem('colorblindMode') === 'true'
+  const colorblindMode = ref(savedColorblindMode)
+
   // Persist theme changes to localStorage
   watch(currentTheme, (newTheme) => {
     localStorage.setItem('theme', newTheme)
+  })
+
+  // Persist colorblind mode changes to localStorage
+  watch(colorblindMode, (newMode) => {
+    localStorage.setItem('colorblindMode', String(newMode))
   })
 
   function toggleTheme() {
@@ -21,9 +30,20 @@ export const useThemeStore = defineStore('theme', () => {
     }
   }
 
+  function toggleColorblindMode() {
+    colorblindMode.value = !colorblindMode.value
+  }
+
+  function setColorblindMode(enabled) {
+    colorblindMode.value = Boolean(enabled)
+  }
+
   return {
     currentTheme,
     toggleTheme,
-    setTheme
+    setTheme,
+    colorblindMode,
+    toggleColorblindMode,
+    setColorblindMode
   }
 })

@@ -5,6 +5,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useTheme } from 'vuetify'
+import { useThemeStore } from '@/stores/theme'
 import * as echarts from 'echarts'
 
 const props = defineProps({
@@ -29,6 +30,7 @@ const props = defineProps({
 const chartContainer = ref(null)
 let chart = null
 const theme = useTheme()
+const themeStore = useThemeStore()
 
 function getNiceInterval(range, desiredTicks = 6) {
   if (!Number.isFinite(range) || range <= 0) {
@@ -95,6 +97,11 @@ onMounted(() => {
 
 // Watch for theme changes
 watch(() => theme.global.current.value.dark, () => {
+  updateChart()
+})
+
+// Watch for colorblind mode changes
+watch(() => themeStore.colorblindMode, () => {
   updateChart()
 })
 
@@ -170,7 +177,23 @@ function updateChart() {
     '#4DB6AC', '#F06292', '#A1887F', '#90A4AE', '#4DD0E1'
   ]
 
-  const colorPalette = isDark ? darkModePalette : lightModePalette
+  // Colorblind-friendly palettes (based on Wong 2011 / IBM Design / Okabe Ito)
+  const lightModeColorblindPalette = [
+    '#0072B2', '#E69F00', '#009E73', '#D55E00', '#CC79A7',
+    '#56B4E9', '#F0E442', '#999999', '#000000', '#882255'
+  ]
+
+  const darkModeColorblindPalette = [
+    '#56B4E9', '#F0E442', '#009E73', '#E69F00', '#CC79A7',
+    '#0072B2', '#D55E00', '#CCCCCC', '#999999', '#882255'
+  ]
+
+  let colorPalette
+  if (themeStore.colorblindMode) {
+    colorPalette = isDark ? darkModeColorblindPalette : lightModeColorblindPalette
+  } else {
+    colorPalette = isDark ? darkModePalette : lightModePalette
+  }
 
   let xAxisConfig, tooltipFormatter, title, yAxisName
   let seriesData = []
