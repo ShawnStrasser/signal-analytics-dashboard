@@ -392,9 +392,11 @@ def get_before_after_aggregated():
         if legend_field:
             select_clause = f"t.TIMESTAMP, legend_xd.{legend_field} AS LEGEND_GROUP, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX, 'Before' AS PERIOD"
             group_by = f"GROUP BY t.TIMESTAMP, legend_xd.{legend_field}"
+            order_by = f"ORDER BY TIMESTAMP, LEGEND_GROUP, PERIOD"
         else:
             select_clause = "t.TIMESTAMP, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX, 'Before' AS PERIOD"
             group_by = "GROUP BY t.TIMESTAMP"
+            order_by = "ORDER BY TIMESTAMP, PERIOD"
 
         # UNION query for before and after periods
         query = f"""
@@ -410,7 +412,7 @@ def get_before_after_aggregated():
         WHERE {after_where}
         {group_by}
 
-        ORDER BY TIMESTAMP, PERIOD
+        {order_by}
         """
 
         if DEBUG_BACKEND_TIMING:
@@ -554,9 +556,11 @@ def get_before_after_by_time_of_day():
         if legend_field:
             select_clause = f"t.TIME_15MIN AS TIME_OF_DAY, legend_xd.{legend_field} AS LEGEND_GROUP, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX, 'Before' AS PERIOD"
             group_by = f"GROUP BY t.TIME_15MIN, legend_xd.{legend_field}"
+            order_by = f"ORDER BY TIME_OF_DAY, LEGEND_GROUP, PERIOD"
         else:
             select_clause = "t.TIME_15MIN AS TIME_OF_DAY, AVG(t.TRAVEL_TIME_SECONDS / f.TRAVEL_TIME_SECONDS) as TRAVEL_TIME_INDEX, 'Before' AS PERIOD"
             group_by = "GROUP BY t.TIME_15MIN"
+            order_by = "ORDER BY TIME_OF_DAY, PERIOD"
 
         # UNION query for before and after periods
         query = f"""
@@ -572,7 +576,7 @@ def get_before_after_by_time_of_day():
         WHERE {after_where}
         {group_by}
 
-        ORDER BY TIME_OF_DAY, PERIOD
+        {order_by}
         """
 
         arrow_data = session.sql(query).to_arrow()

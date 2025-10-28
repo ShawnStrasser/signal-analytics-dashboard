@@ -510,7 +510,7 @@ def build_legend_filter(
             FROM TRAVEL_TIME_ANALYTICS
             {where_clause}
             GROUP BY XD
-            ORDER BY COUNT(*) DESC
+            ORDER BY XD
             LIMIT {max_entities}"""
 
         return f" AND t.XD IN ({subquery})"
