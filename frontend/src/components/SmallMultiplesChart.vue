@@ -5,6 +5,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import { useTheme } from 'vuetify'
+import { useThemeStore } from '@/stores/theme'
 import * as echarts from 'echarts'
 
 const props = defineProps({
@@ -25,6 +26,7 @@ const props = defineProps({
 const chartContainer = ref(null)
 let chart = null
 const theme = useTheme()
+const themeStore = useThemeStore()
 
 // Calculate dynamic container height based on number of entities
 const containerHeight = computed(() => {
@@ -32,7 +34,7 @@ const containerHeight = computed(() => {
 
   // Count unique entities
   const entities = new Set(props.data.map(d => String(d.LEGEND_GROUP || 'Unknown')))
-  const numEntities = Math.min(entities.size, 10) // Max 10 entities
+  const numEntities = Math.min(entities.size, 12) // Max 12 entities
   const cols = 2
   const rows = Math.ceil(numEntities / cols)
 
@@ -41,9 +43,19 @@ const containerHeight = computed(() => {
   return `${height}px`
 })
 
-// Before/After colors
-const BEFORE_COLOR = '#1976D2' // Blue
-const AFTER_COLOR = '#F57C00'  // Orange
+// Before/After colors (colorblind-safe when enabled)
+const BEFORE_COLOR = computed(() => {
+  // Blue is already colorblind-safe, keep consistent
+  return '#1976D2'
+})
+
+const AFTER_COLOR = computed(() => {
+  if (themeStore.colorblindMode) {
+    return '#E69F00' // Colorblind-safe orange
+  } else {
+    return '#F57C00'  // Standard orange
+  }
+})
 
 onMounted(() => {
   initializeChart()
@@ -51,6 +63,11 @@ onMounted(() => {
 })
 
 watch(() => theme.global.current.value.dark, () => {
+  updateChart()
+})
+
+// Watch for colorblind mode changes
+watch(() => themeStore.colorblindMode, () => {
   updateChart()
 })
 
@@ -86,6 +103,7 @@ function updateChart() {
 
   const isDark = theme.global.current.value.dark
   const textColor = isDark ? '#E0E0E0' : '#333333'
+  const isMobile = window.innerWidth < 600
 
   // Group data by LEGEND_GROUP and PERIOD
   const entities = {}
@@ -105,7 +123,7 @@ function updateChart() {
     }
   })
 
-  const entityNames = Object.keys(entities).slice(0, 10) // Max 10 entities
+  const entityNames = Object.keys(entities).slice(0, 12) // Max 12 entities
   const numEntities = entityNames.length
 
   // Calculate grid layout (2 columns)
@@ -182,7 +200,7 @@ function updateChart() {
         max: globalMaxX,
         axisLabel: {
           show: row === rows - 1, // Only show on bottom row
-          fontSize: 9,
+          fontSize: isMobile ? 10 : 12,
           color: textColor,
           formatter: (value) => {
             const hours = Math.floor(value / 60)
@@ -200,7 +218,7 @@ function updateChart() {
         max: globalMaxX,
         axisLabel: {
           show: row === rows - 1,
-          fontSize: 9,
+          fontSize: isMobile ? 10 : 12,
           color: textColor
         },
         splitLine: { show: false }
@@ -215,14 +233,14 @@ function updateChart() {
       max: yMax,
       axisLabel: {
         show: col === 0, // Only show on left column
-        fontSize: 9,
+        fontSize: isMobile ? 10 : 12,
         color: textColor,
         formatter: (value) => value.toFixed(1)
       },
       splitLine: { lineStyle: { color: isDark ? '#424242' : '#E0E0E0' } }
     })
 
-    // Before series
+    // Before series (dashed line)
     series.push({
       name: 'Before',
       type: 'line',
@@ -230,13 +248,13 @@ function updateChart() {
       yAxisIndex: gridIndex,
       data: entities[entityName].before,
       smooth: true,
-      lineStyle: { color: BEFORE_COLOR, width: 1.5 },
-      itemStyle: { color: BEFORE_COLOR },
+      lineStyle: { color: BEFORE_COLOR.value, width: 1.5, type: 'dashed' },
+      itemStyle: { color: BEFORE_COLOR.value },
       symbol: 'none',
       showSymbol: false
     })
 
-    // After series
+    // After series (solid line)
     series.push({
       name: 'After',
       type: 'line',
@@ -244,8 +262,8 @@ function updateChart() {
       yAxisIndex: gridIndex,
       data: entities[entityName].after,
       smooth: true,
-      lineStyle: { color: AFTER_COLOR, width: 1.5 },
-      itemStyle: { color: AFTER_COLOR },
+      lineStyle: { color: AFTER_COLOR.value, width: 1.5, type: 'solid' },
+      itemStyle: { color: AFTER_COLOR.value },
       symbol: 'none',
       showSymbol: false
     })

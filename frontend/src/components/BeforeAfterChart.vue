@@ -155,28 +155,32 @@ function updateChart() {
     allGroups.forEach((group, index) => {
       const color = colorPalette[index % colorPalette.length]
 
-      // Before series for this group (solid line)
+      // Before series for this group (dashed line)
       seriesConfig.push({
-        name: `${group} (Before)`,
+        name: group,  // Use just the group name (legend deduplication)
         type: 'line',
         data: beforeGroups[group] || [],
-        smooth: true,
-        lineStyle: { color: color, width: 2, type: 'solid' },
-        itemStyle: { color: color },
-        symbol: 'circle',
-        symbolSize: 3
-      })
-
-      // After series for this group (dashed line, same color)
-      seriesConfig.push({
-        name: `${group} (After)`,
-        type: 'line',
-        data: afterGroups[group] || [],
         smooth: true,
         lineStyle: { color: color, width: 2, type: 'dashed' },
         itemStyle: { color: color },
         symbol: 'circle',
-        symbolSize: 3
+        symbolSize: 3,
+        // Custom property to identify as before
+        _customType: 'before'
+      })
+
+      // After series for this group (solid line, same color)
+      seriesConfig.push({
+        name: group,  // Use just the group name (legend deduplication)
+        type: 'line',
+        data: afterGroups[group] || [],
+        smooth: true,
+        lineStyle: { color: color, width: 2, type: 'solid' },
+        itemStyle: { color: color },
+        symbol: 'circle',
+        symbolSize: 3,
+        // Custom property to identify as after
+        _customType: 'after'
       })
     })
   } else {
@@ -274,6 +278,120 @@ function updateChart() {
   const yAxisMin = Math.floor(rawMin / interval) * interval
   const yAxisMax = Math.ceil(rawMax / interval) * interval
 
+  // Build legend configuration
+  let legendConfig = undefined
+  let graphicElements = []
+
+  if (hasLegend) {
+    // In legend mode, show only unique entity names (not "Before" and "After" for each)
+    const uniqueNames = [...new Set(seriesConfig.map(s => s.name))]
+    legendConfig = {
+      type: 'scroll',
+      orient: isMobile ? 'horizontal' : 'vertical',
+      right: isMobile ? 'auto' : 16,
+      left: isMobile ? 'center' : 'auto',
+      top: isMobile ? 80 : 20,  // More space at top for custom legend on mobile
+      bottom: isMobile ? undefined : 20,
+      align: isMobile ? 'auto' : 'left',
+      backgroundColor: isMobile ? 'transparent' : (isDark ? 'rgba(38,38,38,0.75)' : 'rgba(255,255,255,0.85)'),
+      borderRadius: isMobile ? 0 : 8,
+      padding: isMobile ? 0 : [8, 12],
+      data: uniqueNames,
+      textStyle: { color: textColor, fontSize: isMobile ? 10 : 12 }
+    }
+
+    // Add custom legend showing line type meanings at the top
+    graphicElements = [
+      {
+        type: 'group',
+        left: 'center',
+        top: isMobile ? 35 : 20,
+        children: [
+          {
+            type: 'rect',
+            z: 100,
+            left: 0,
+            top: 0,
+            shape: {
+              width: isMobile ? 200 : 250,
+              height: isMobile ? 35 : 40
+            },
+            style: {
+              fill: isDark ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.8)',
+              stroke: isDark ? '#555' : '#ccc',
+              lineWidth: 1
+            }
+          },
+          {
+            type: 'line',
+            z: 101,
+            left: 10,
+            top: isMobile ? 12 : 15,
+            shape: {
+              x1: 0,
+              y1: 0,
+              x2: 30,
+              y2: 0
+            },
+            style: {
+              stroke: textColor,
+              lineWidth: 2
+            }
+          },
+          {
+            type: 'text',
+            z: 101,
+            left: 45,
+            top: isMobile ? 8 : 10,
+            style: {
+              text: 'After',
+              fill: textColor,
+              fontSize: isMobile ? 10 : 12
+            }
+          },
+          {
+            type: 'line',
+            z: 101,
+            left: isMobile ? 110 : 130,
+            top: isMobile ? 12 : 15,
+            shape: {
+              x1: 0,
+              y1: 0,
+              x2: 30,
+              y2: 0
+            },
+            style: {
+              stroke: textColor,
+              lineWidth: 2,
+              lineDash: [5, 5]
+            }
+          },
+          {
+            type: 'text',
+            z: 101,
+            left: isMobile ? 145 : 165,
+            top: isMobile ? 8 : 10,
+            style: {
+              text: 'Before',
+              fill: textColor,
+              fontSize: isMobile ? 10 : 12
+            }
+          }
+        ]
+      }
+    ]
+  } else {
+    // No legend grouping, show simple Before/After legend
+    legendConfig = {
+      data: ['Before', 'After'],
+      top: isMobile ? 30 : 30,
+      textStyle: {
+        color: textColor,
+        fontSize: isMobile ? 10 : 12
+      }
+    }
+  }
+
   const option = {
     title: {
       text: 'Before/After Comparison',
@@ -296,24 +414,21 @@ function updateChart() {
         }
         let tooltip = `<strong>${timeStr}</strong><br/>`
         params.forEach(param => {
-          tooltip += `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${param.color};margin-right:5px;"></span>${param.seriesName}: ${param.value[1].toFixed(2)}<br/>`
+          // Determine period label based on series configuration
+          let periodLabel = param.seriesName
+          if (hasLegend && param.seriesName !== 'Before' && param.seriesName !== 'After') {
+            // Access the series to check line style type
+            const series = seriesConfig[param.seriesIndex]
+            const period = series?.lineStyle?.type === 'dashed' ? 'Before' : 'After'
+            periodLabel = `${param.seriesName} (${period})`
+          }
+          tooltip += `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${param.color};margin-right:5px;"></span>${periodLabel}: ${param.value[1].toFixed(2)}<br/>`
         })
         return tooltip
       }
     },
-    legend: {
-      type: 'scroll',
-      orient: isMobile ? 'horizontal' : 'vertical',
-      right: isMobile ? 'auto' : 16,
-      left: isMobile ? 'center' : 'auto',
-      top: isMobile ? 35 : 20,
-      bottom: isMobile ? undefined : 20,
-      align: isMobile ? 'auto' : 'left',
-      backgroundColor: isMobile ? 'transparent' : (isDark ? 'rgba(38,38,38,0.75)' : 'rgba(255,255,255,0.85)'),
-      borderRadius: isMobile ? 0 : 8,
-      padding: isMobile ? 0 : [8, 12],
-      textStyle: { color: textColor, fontSize: isMobile ? 10 : 12 }
-    },
+    legend: legendConfig,
+    graphic: graphicElements,
     xAxis: xAxisConfig,
     yAxis: {
       type: 'value',
@@ -337,7 +452,7 @@ function updateChart() {
       left: isMobile ? '60px' : '80px',
       right: hasLegend ? (isMobile ? '20px' : '200px') : (isMobile ? '20px' : '50px'),
       bottom: isMobile ? '70px' : '60px',
-      top: isMobile ? '100px' : '80px'
+      top: hasLegend ? (isMobile ? '120px' : '100px') : (isMobile ? '80px' : '80px')
     },
     dataZoom: [{ type: 'inside', xAxisIndex: 0 }]
   }

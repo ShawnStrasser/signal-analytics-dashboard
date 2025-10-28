@@ -56,7 +56,7 @@ Periodically update CLAUDE.md as needed to keep it accurate and up to date with 
 - **Views**: `frontend/src/views/`
   - `TravelTime.vue` - Responsive grid layout with map above chart, uses CSS Grid with dynamic height
   - `Anomalies.vue` - Responsive grid layout with map, chart, and optional table, uses CSS Grid with dynamic height
-  - `BeforeAfter.vue` - Scrollable layout with map, before/after comparison chart, and small multiples chart (2-column grid, max 10 entities)
+  - `BeforeAfter.vue` - Scrollable layout with map, before/after comparison chart, and small multiples chart (2-column grid, max 12 entities)
 - **Components**: `frontend/src/components/`
   - `SharedMap.vue` - Leaflet map component supporting 'travel-time', 'anomaly', and 'before-after' data types
   - `FilterPanel.vue` - Filter controls with conditional date selectors (standard dates or BeforeAfterDateSelector based on route)
@@ -64,7 +64,7 @@ Periodically update CLAUDE.md as needed to keep it accurate and up to date with 
   - `TravelTimeChart.vue` - ECharts time series visualization
   - `AnomalyChart.vue` - ECharts dual-series chart with anomaly highlighting
   - `BeforeAfterChart.vue` - ECharts chart with hard-coded before/after legend (no dropdown)
-  - `SmallMultiplesChart.vue` - ECharts small multiples grid (2 columns, up to 5 rows, shared axes)
+  - `SmallMultiplesChart.vue` - ECharts small multiples grid (2 columns, up to 6 rows, shared axes)
 
 ### Key Design Patterns
 1. **Two-stage querying**: API endpoints first query `DIM_SIGNALS_XD` to resolve signal IDs → XD segments, then query `TRAVEL_TIME_ANALYTICS` with XD filters
@@ -75,6 +75,58 @@ Periodically update CLAUDE.md as needed to keep it accurate and up to date with 
 6. **Before/After comparison**: CTE-based SQL queries calculate TTI for before and after periods separately, then join/union results with PERIOD column
 7. **Remove anomalies filter**: Available on Travel Time and Before/After pages, adds `WHERE IS_ANOMALY = FALSE` to backend queries
 8. **Color scales**: Shared color scheme (green→yellow→orange→red) with different mappings: TTI (1.0-3.0), Anomaly % (0-10%), Before/After difference (-0.25 to +0.25)
+
+### Chart Styling Standards
+
+All ECharts components follow consistent styling patterns for maintainability and user experience:
+
+**Line Type Conventions:**
+- **Solid lines**: Primary/current/after data (e.g., Actual travel time, After period)
+- **Dashed lines**: Secondary/comparison/before data (e.g., Forecast, Before period)
+- Rationale: Line style provides semantic distinction independent of color, improving accessibility
+
+**Font Sizes (Mobile / Desktop):**
+- Chart titles: 13px / 16px
+- Axis labels: 10px / 12px
+- Axis names: 12px / 13px (bold)
+- Legend text: 10px / 12px
+- Custom legend overlays: 10px / 12px
+
+**Color Usage:**
+- **Primary differentiation**: Color distinguishes different entities (XD segments, signals, etc.)
+- **Secondary differentiation**: Line style distinguishes time periods/types within same entity
+- **Colorblind support**: All charts respect `themeStore.colorblindMode` flag, using scientifically validated palettes (Wong 2011 / IBM Design / Okabe Ito)
+- **Standard palettes**: Defined consistently across all chart components (light mode, dark mode, colorblind variants)
+
+**Grid Layout (Mobile / Desktop):**
+- Left margin: 60px / 80px
+- Right margin: 20px / 50px (no legend), 20px / 200px (with legend)
+- Bottom margin: 70px / 60px
+- Top margin: Varies by chart (80-120px) to accommodate titles and custom legends
+
+**Axis Formatting:**
+- **Time-of-day mode**: Format as `HH:MM` (e.g., "14:30")
+- **Date/time mode**: Show day-of-week at midnight, otherwise just time (e.g., "Mon 01/15\n00:00" or "14:30")
+- **Y-axis precision**: Dynamic based on data range (0.05, 0.1, 0.2, or 0.5 intervals)
+
+**Entity Limits:**
+- **Main charts** (TravelTime, Anomalies, BeforeAfter): 6-10 entities (configurable via `maxLegendEntities`)
+- **Small multiples**: 12 entities (2 columns × 6 rows, hard limit)
+- **Warning display**: Shows at `displayedCount === limit` using v-alert with `compact` density, `outlined` variant, `orange-darken-2` color
+
+**Legend Patterns:**
+- **Standard mode**: Show all series names (one color per series)
+- **Deduplicated mode** (Anomalies forecast, BeforeAfter with groups): Show unique entity names only, use custom graphic overlay to explain line types
+- **Custom legend overlay**: Positioned top-center, shows line type meanings (e.g., "After" solid, "Before" dashed)
+
+**When Adding New Chart Pages:**
+1. Import and use `useThemeStore` for colorblind mode support
+2. Implement responsive font sizes using `isMobile` detection (`window.innerWidth < 600`)
+3. Use standard color palettes (lightModePalette, darkModePalette, colorblind variants)
+4. Follow line type convention (solid=primary, dashed=secondary)
+5. Add warning display when entity limit reached (trigger at `===` limit)
+6. Ensure axis formatting matches existing patterns (time-of-day, date/time)
+7. Use consistent grid margins and spacing
 
 ## Database Schema
 

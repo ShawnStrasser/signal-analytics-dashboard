@@ -135,7 +135,7 @@
         </v-card-title>
         <v-card-subtitle v-if="smallMultiplesClipped" class="py-1">
           <v-alert density="compact" variant="outlined" color="orange-darken-2" icon="mdi-alert-circle-outline">
-            <strong>Maximum entities reached ({{ maxLegendEntities }})</strong> — Only the first {{ maxLegendEntities }} {{ smallMultiplesLabel }} are displayed.
+            <strong>Maximum entities reached ({{ maxSmallMultiplesEntities }})</strong> — Only the first {{ maxSmallMultiplesEntities }} {{ smallMultiplesLabel }} are displayed.
           </v-alert>
         </v-card-subtitle>
         <v-card-text class="small-multiples-container">
@@ -200,7 +200,8 @@ const legendBy = ref('none')
 const smallMultiplesEntity = ref('none')
 const legendClipped = ref(false)
 const smallMultiplesClipped = ref(false)
-const maxLegendEntities = ref(6) // Max legend entities for before/after charts (each entity has 2 lines)
+const maxLegendEntities = ref(6) // Max legend entities for main before/after chart
+const maxSmallMultiplesEntities = 12 // Max entities for small multiples chart
 const shouldAutoZoomMap = ref(true)
 
 const mapIsLoading = computed(() => loading.value || loadingMap.value)
@@ -292,7 +293,7 @@ watch(() => [
 
 onMounted(async () => {
   const config = await ApiService.getConfig()
-  maxLegendEntities.value = config.maxLegendEntities
+  maxLegendEntities.value = config.maxBeforeAfterLegendEntities
 
   await Promise.all([
     signalDimensionsStore.loadDimensions(),
@@ -399,8 +400,15 @@ async function loadChartData() {
     if (data.length > 0 && data[0].LEGEND_GROUP !== undefined) {
       const uniqueGroups = new Set(data.map(row => row.LEGEND_GROUP))
       legendClipped.value = uniqueGroups.size === maxLegendEntities.value
+      console.log('🚨 BeforeAfter legendClipped check:', {
+        uniqueGroupsSize: uniqueGroups.size,
+        maxLegendEntities: maxLegendEntities.value,
+        legendClipped: legendClipped.value,
+        uniqueGroupsSample: Array.from(uniqueGroups).slice(0, 3)
+      })
     } else {
       legendClipped.value = false
+      console.log('🚨 BeforeAfter legendClipped: no LEGEND_GROUP column, legendClipped = false')
     }
 
     chartData.value = data
@@ -436,18 +444,25 @@ async function loadSmallMultiplesData() {
 
     let arrowTable
     if (smallMultiplesTimeOfDay.value === 'true') {
-      arrowTable = await ApiService.getBeforeAfterByTimeOfDay(beforeFilters, afterFilters, filters, smallMultiplesEntity.value)
+      arrowTable = await ApiService.getBeforeAfterByTimeOfDay(beforeFilters, afterFilters, filters, smallMultiplesEntity.value, true)
     } else {
-      arrowTable = await ApiService.getBeforeAfterAggregated(beforeFilters, afterFilters, filters, smallMultiplesEntity.value)
+      arrowTable = await ApiService.getBeforeAfterAggregated(beforeFilters, afterFilters, filters, smallMultiplesEntity.value, true)
     }
 
     const data = ApiService.arrowTableToObjects(arrowTable)
 
     if (data.length > 0 && data[0].LEGEND_GROUP !== undefined) {
       const uniqueGroups = new Set(data.map(row => row.LEGEND_GROUP))
-      smallMultiplesClipped.value = uniqueGroups.size === maxLegendEntities.value
+      smallMultiplesClipped.value = uniqueGroups.size === maxSmallMultiplesEntities
+      console.log('🚨 BeforeAfter SmallMultiples legendClipped check:', {
+        uniqueGroupsSize: uniqueGroups.size,
+        maxSmallMultiplesEntities: maxSmallMultiplesEntities,
+        smallMultiplesClipped: smallMultiplesClipped.value,
+        uniqueGroupsSample: Array.from(uniqueGroups).slice(0, 3)
+      })
     } else {
       smallMultiplesClipped.value = false
+      console.log('🚨 BeforeAfter SmallMultiples legendClipped: no LEGEND_GROUP column, smallMultiplesClipped = false')
     }
 
     smallMultiplesData.value = data

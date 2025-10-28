@@ -468,8 +468,15 @@ async function loadChartData() {
       const uniqueGroups = new Set(data.map(row => row.LEGEND_GROUP))
       // Show warning when we have exactly maxLegendEntities groups (the backend limit from config.py)
       legendClipped.value = uniqueGroups.size === maxLegendEntities.value
+      console.log('🚨 TravelTime legendClipped check:', {
+        uniqueGroupsSize: uniqueGroups.size,
+        maxLegendEntities: maxLegendEntities.value,
+        legendClipped: legendClipped.value,
+        uniqueGroupsSample: Array.from(uniqueGroups).slice(0, 3)
+      })
     } else {
       legendClipped.value = false
+      console.log('🚨 TravelTime legendClipped: no LEGEND_GROUP column, legendClipped = false')
     }
 
     // Filter chart data if legend is Signal ID and signals are selected

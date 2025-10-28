@@ -47,8 +47,12 @@ MAX_LEGEND_ENTITIES = 10
 # Maximum number of entities for Anomaly charts (reduced because each entity has 2 lines)
 MAX_ANOMALY_LEGEND_ENTITIES = 6
 
-# Maximum number of entities for Before/After charts (reduced because each entity has 2 lines)
+# Maximum number of entities for Before/After main chart (reduced because each entity has 2 lines)
 MAX_BEFORE_AFTER_LEGEND_ENTITIES = 6
+
+# Maximum number of entities for Before/After Small Multiples chart
+# Higher limit because each entity gets its own mini-chart (2 columns x 6 rows = 12)
+MAX_BEFORE_AFTER_SMALL_MULTIPLES_ENTITIES = 12
 
 # =============================================================================
 # TIME OF DAY FILTER SETTINGS

@@ -295,7 +295,7 @@ onMounted(async () => {
 
   // Fetch config first
   const config = await ApiService.getConfig()
-  maxLegendEntities.value = config.maxLegendEntities
+  maxLegendEntities.value = config.maxAnomalyLegendEntities
 
   // Load dimension data first (once per session)
   // These are cached and won't be re-queried on filter changes
@@ -494,8 +494,15 @@ async function loadChartData() {
       const uniqueGroups = new Set(data.map(row => row.LEGEND_GROUP))
       // Show warning when we have exactly maxLegendEntities groups
       legendClipped.value = uniqueGroups.size === maxLegendEntities.value
+      console.log('🚨 Anomalies legendClipped check:', {
+        uniqueGroupsSize: uniqueGroups.size,
+        maxLegendEntities: maxLegendEntities.value,
+        legendClipped: legendClipped.value,
+        uniqueGroupsSample: Array.from(uniqueGroups).slice(0, 3)
+      })
     } else {
       legendClipped.value = false
+      console.log('🚨 Anomalies legendClipped: no LEGEND_GROUP column, legendClipped = false')
     }
 
     chartData.value = data

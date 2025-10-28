@@ -310,7 +310,7 @@ class ApiService {
     return this.fetchArrowData('/before-after-summary-xd', params)
   }
 
-  async getBeforeAfterAggregated(beforeFilters, afterFilters, filters, legendBy = null) {
+  async getBeforeAfterAggregated(beforeFilters, afterFilters, filters, legendBy = null, isSmallMultiples = false) {
     const params = {
       before_start_date: beforeFilters.start_date,
       before_end_date: beforeFilters.end_date,
@@ -320,11 +320,14 @@ class ApiService {
     }
     if (legendBy && legendBy !== 'none') {
       params.legend_by = legendBy
+    }
+    if (isSmallMultiples) {
+      params.is_small_multiples = 'true'
     }
     return this.fetchArrowData('/before-after-aggregated', params)
   }
 
-  async getBeforeAfterByTimeOfDay(beforeFilters, afterFilters, filters, legendBy = null) {
+  async getBeforeAfterByTimeOfDay(beforeFilters, afterFilters, filters, legendBy = null, isSmallMultiples = false) {
     const params = {
       before_start_date: beforeFilters.start_date,
       before_end_date: beforeFilters.end_date,
@@ -334,6 +337,9 @@ class ApiService {
     }
     if (legendBy && legendBy !== 'none') {
       params.legend_by = legendBy
+    }
+    if (isSmallMultiples) {
+      params.is_small_multiples = 'true'
     }
     return this.fetchArrowData('/before-after-by-time-of-day', params)
   }

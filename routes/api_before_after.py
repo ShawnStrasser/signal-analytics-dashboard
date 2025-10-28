@@ -6,7 +6,7 @@ Compares travel time metrics between two time periods
 import time
 from flask import Blueprint, request
 
-from config import DEBUG_BACKEND_TIMING, MAX_LEGEND_ENTITIES, MAX_BEFORE_AFTER_LEGEND_ENTITIES
+from config import DEBUG_BACKEND_TIMING, MAX_LEGEND_ENTITIES, MAX_BEFORE_AFTER_LEGEND_ENTITIES, MAX_BEFORE_AFTER_SMALL_MULTIPLES_ENTITIES
 from database import get_snowflake_session, is_auth_error
 from utils.arrow_utils import create_arrow_response, snowflake_result_to_arrow
 from utils.error_handler import handle_auth_error_retry
@@ -293,6 +293,10 @@ def get_before_after_aggregated():
     day_of_week = request.args.getlist('day_of_week')
     legend_by = request.args.get('legend_by')
     remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
+    is_small_multiples = request.args.get('is_small_multiples', 'false').lower() == 'true'
+
+    # Determine which legend limit to use
+    legend_limit = MAX_BEFORE_AFTER_SMALL_MULTIPLES_ENTITIES if is_small_multiples else MAX_BEFORE_AFTER_LEGEND_ENTITIES
 
     # Normalize dates
     before_start_str = normalize_date(before_start)
@@ -335,7 +339,7 @@ def get_before_after_aggregated():
             filter_where = ""
 
         # Build legend join if legend_by is specified
-        legend_join, legend_field = build_legend_join(legend_by, MAX_BEFORE_AFTER_LEGEND_ENTITIES)
+        legend_join, legend_field = build_legend_join(legend_by, legend_limit)
 
         query_start = time.time()
 
@@ -367,7 +371,7 @@ def get_before_after_aggregated():
         if legend_join:
             legend_entity_filter = build_legend_filter(
                 legend_field=legend_field,
-                max_entities=MAX_BEFORE_AFTER_LEGEND_ENTITIES,
+                max_entities=legend_limit,
                 xd_filter=xd_filter,
                 start_date=before_start_str,  # Use before period for entity selection
                 end_date=before_end_str,
@@ -461,6 +465,10 @@ def get_before_after_by_time_of_day():
     end_minute = request.args.get('end_minute')
     legend_by = request.args.get('legend_by')
     remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
+    is_small_multiples = request.args.get('is_small_multiples', 'false').lower() == 'true'
+
+    # Determine which legend limit to use
+    legend_limit = MAX_BEFORE_AFTER_SMALL_MULTIPLES_ENTITIES if is_small_multiples else MAX_BEFORE_AFTER_LEGEND_ENTITIES
 
     # Normalize dates
     before_start_str = normalize_date(before_start)
@@ -499,7 +507,7 @@ def get_before_after_by_time_of_day():
             filter_where = ""
 
         # Build legend join if legend_by is specified
-        legend_join, legend_field = build_legend_join(legend_by, MAX_BEFORE_AFTER_LEGEND_ENTITIES)
+        legend_join, legend_field = build_legend_join(legend_by, legend_limit)
 
         query_start = time.time()
 
@@ -531,7 +539,7 @@ def get_before_after_by_time_of_day():
         if legend_join:
             legend_entity_filter = build_legend_filter(
                 legend_field=legend_field,
-                max_entities=MAX_BEFORE_AFTER_LEGEND_ENTITIES,
+                max_entities=legend_limit,
                 xd_filter=xd_filter,
                 start_date=before_start_str,  # Use before period for entity selection
                 end_date=before_end_str,
