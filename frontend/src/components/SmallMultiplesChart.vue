@@ -1,9 +1,9 @@
 <template>
-  <div ref="chartContainer" style="height: 100%; width: 100%;"></div>
+  <div ref="chartContainer" :style="{ height: containerHeight, width: '100%' }"></div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import { useTheme } from 'vuetify'
 import * as echarts from 'echarts'
 
@@ -25,6 +25,21 @@ const props = defineProps({
 const chartContainer = ref(null)
 let chart = null
 const theme = useTheme()
+
+// Calculate dynamic container height based on number of entities
+const containerHeight = computed(() => {
+  if (!props.data.length) return '500px'
+
+  // Count unique entities
+  const entities = new Set(props.data.map(d => String(d.LEGEND_GROUP || 'Unknown')))
+  const numEntities = Math.min(entities.size, 10) // Max 10 entities
+  const cols = 2
+  const rows = Math.ceil(numEntities / cols)
+
+  // 250px per row + 50px for legend
+  const height = rows * 250 + 50
+  return `${height}px`
+})
 
 // Before/After colors
 const BEFORE_COLOR = '#1976D2' // Blue

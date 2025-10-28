@@ -6,7 +6,7 @@ Compares travel time metrics between two time periods
 import time
 from flask import Blueprint, request
 
-from config import DEBUG_BACKEND_TIMING, MAX_LEGEND_ENTITIES
+from config import DEBUG_BACKEND_TIMING, MAX_LEGEND_ENTITIES, MAX_BEFORE_AFTER_LEGEND_ENTITIES
 from database import get_snowflake_session, is_auth_error
 from utils.arrow_utils import create_arrow_response, snowflake_result_to_arrow
 from utils.error_handler import handle_auth_error_retry
@@ -16,6 +16,7 @@ from utils.query_utils import (
     build_time_of_day_filter,
     build_day_of_week_filter,
     build_legend_join,
+    build_legend_filter,
     build_xd_filter
 )
 
@@ -334,7 +335,7 @@ def get_before_after_aggregated():
             filter_where = ""
 
         # Build legend join if legend_by is specified
-        legend_join, legend_field = build_legend_join(legend_by, MAX_LEGEND_ENTITIES)
+        legend_join, legend_field = build_legend_join(legend_by, MAX_BEFORE_AFTER_LEGEND_ENTITIES)
 
         query_start = time.time()
 
@@ -361,6 +362,20 @@ def get_before_after_aggregated():
 
         before_where = build_where_clause(before_start_str, before_end_str)
         after_where = build_where_clause(after_start_str, after_end_str)
+
+        # Add legend filter to limit number of entities (applies to both periods)
+        if legend_join:
+            legend_entity_filter = build_legend_filter(
+                legend_field=legend_field,
+                max_entities=MAX_BEFORE_AFTER_LEGEND_ENTITIES,
+                xd_filter=xd_filter,
+                start_date=before_start_str,  # Use before period for entity selection
+                end_date=before_end_str,
+                time_filter=time_filter,
+                dow_join=dow_filter
+            )
+            before_where += legend_entity_filter
+            after_where += legend_entity_filter
 
         # Build FROM clause (no aggregation - keep timestamps)
         from_clause_base = f"""FROM TRAVEL_TIME_ANALYTICS t
@@ -482,7 +497,7 @@ def get_before_after_by_time_of_day():
             filter_where = ""
 
         # Build legend join if legend_by is specified
-        legend_join, legend_field = build_legend_join(legend_by, MAX_LEGEND_ENTITIES)
+        legend_join, legend_field = build_legend_join(legend_by, MAX_BEFORE_AFTER_LEGEND_ENTITIES)
 
         query_start = time.time()
 
@@ -509,6 +524,20 @@ def get_before_after_by_time_of_day():
 
         before_where = build_where_clause(before_start_str, before_end_str)
         after_where = build_where_clause(after_start_str, after_end_str)
+
+        # Add legend filter to limit number of entities (applies to both periods)
+        if legend_join:
+            legend_entity_filter = build_legend_filter(
+                legend_field=legend_field,
+                max_entities=MAX_BEFORE_AFTER_LEGEND_ENTITIES,
+                xd_filter=xd_filter,
+                start_date=before_start_str,  # Use before period for entity selection
+                end_date=before_end_str,
+                time_filter=time_filter,
+                dow_join=dow_filter
+            )
+            before_where += legend_entity_filter
+            after_where += legend_entity_filter
 
         # Build FROM clause
         from_clause_base = f"""FROM TRAVEL_TIME_ANALYTICS t

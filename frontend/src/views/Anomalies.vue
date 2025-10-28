@@ -162,7 +162,7 @@ const loading = ref(true) // Global loading state
 const chartMode = ref('forecast') // 'forecast' or 'percent'
 const legendBy = ref('none') // Legend grouping selection
 const legendClipped = ref(false) // Whether legend entities were clipped
-const maxLegendEntities = ref(10) // Max legend entities from backend config
+const maxLegendEntities = ref(6) // Max legend entities for anomaly charts (each entity has 2 lines)
 const shouldAutoZoomMap = ref(true) // Controls whether the map auto-zooms on data refresh
 
 const mapIsLoading = computed(() => loading.value || loadingMap.value)

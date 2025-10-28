@@ -200,7 +200,7 @@ const legendBy = ref('none')
 const smallMultiplesEntity = ref('none')
 const legendClipped = ref(false)
 const smallMultiplesClipped = ref(false)
-const maxLegendEntities = ref(10)
+const maxLegendEntities = ref(6) // Max legend entities for before/after charts (each entity has 2 lines)
 const shouldAutoZoomMap = ref(true)
 
 const mapIsLoading = computed(() => loading.value || loadingMap.value)
@@ -500,9 +500,10 @@ function clearMapSelections() {
 }
 
 .small-multiples-container {
-  height: 600px;
+  min-height: 400px;
   position: relative;
   padding: 12px !important;
+  /* Allow chart to expand to full height - no max-height constraint */
 }
 
 .loading-overlay {
@@ -575,7 +576,7 @@ function clearMapSelections() {
   }
 
   .small-multiples-container {
-    height: 500px;
+    min-height: 350px;
   }
 }
 </style>

@@ -6,6 +6,7 @@ Optimized for low-latency small queries
 import pyarrow as pa
 from flask import Blueprint, request
 
+from config import MAX_ANOMALY_LEGEND_ENTITIES
 from database import get_snowflake_session, is_auth_error
 from utils.error_handler import handle_auth_error_retry
 from utils.arrow_utils import (
@@ -271,8 +272,7 @@ def get_anomaly_aggregated():
             filter_where = ""
 
         # Build legend join if legend_by is specified
-        from config import MAX_LEGEND_ENTITIES
-        legend_join, legend_field = build_legend_join(legend_by, MAX_LEGEND_ENTITIES)
+        legend_join, legend_field = build_legend_join(legend_by, MAX_ANOMALY_LEGEND_ENTITIES)
 
         # Build query based on aggregation level
         if agg_level == "none":
@@ -334,7 +334,7 @@ def get_anomaly_aggregated():
             # Add legend filter to limit number of entities
             legend_entity_filter = build_legend_filter(
                 legend_field=legend_field,
-                max_entities=MAX_LEGEND_ENTITIES,
+                max_entities=MAX_ANOMALY_LEGEND_ENTITIES,
                 xd_filter=xd_filter,
                 start_date=start_date_str,
                 end_date=end_date_str,
@@ -418,8 +418,7 @@ def get_anomaly_by_time_of_day():
             filter_where = ""
 
         # Build legend join if legend_by is specified
-        from config import MAX_LEGEND_ENTITIES
-        legend_join, legend_field = build_legend_join(legend_by, MAX_LEGEND_ENTITIES)
+        legend_join, legend_field = build_legend_join(legend_by, MAX_ANOMALY_LEGEND_ENTITIES)
 
         # Determine SELECT and GROUP BY clauses based on legend
         if legend_field:
@@ -470,7 +469,7 @@ def get_anomaly_by_time_of_day():
             # Add legend filter to limit number of entities
             legend_entity_filter = build_legend_filter(
                 legend_field=legend_field,
-                max_entities=MAX_LEGEND_ENTITIES,
+                max_entities=MAX_ANOMALY_LEGEND_ENTITIES,
                 xd_filter=xd_filter,
                 start_date=start_date_str,
                 end_date=end_date_str,
@@ -557,8 +556,7 @@ def get_anomaly_percent_aggregated():
             filter_where = ""
 
         # Build legend join if legend_by is specified
-        from config import MAX_LEGEND_ENTITIES
-        legend_join, legend_field = build_legend_join(legend_by, MAX_LEGEND_ENTITIES)
+        legend_join, legend_field = build_legend_join(legend_by, MAX_ANOMALY_LEGEND_ENTITIES)
 
         # Build query based on aggregation level
         if agg_level == "none":
@@ -620,7 +618,7 @@ def get_anomaly_percent_aggregated():
             # Add legend filter to limit number of entities
             legend_entity_filter = build_legend_filter(
                 legend_field=legend_field,
-                max_entities=MAX_LEGEND_ENTITIES,
+                max_entities=MAX_ANOMALY_LEGEND_ENTITIES,
                 xd_filter=xd_filter,
                 start_date=start_date_str,
                 end_date=end_date_str,
@@ -704,8 +702,7 @@ def get_anomaly_percent_by_time_of_day():
             filter_where = ""
 
         # Build legend join if legend_by is specified
-        from config import MAX_LEGEND_ENTITIES
-        legend_join, legend_field = build_legend_join(legend_by, MAX_LEGEND_ENTITIES)
+        legend_join, legend_field = build_legend_join(legend_by, MAX_ANOMALY_LEGEND_ENTITIES)
 
         # Determine SELECT and GROUP BY clauses based on legend
         # Calculate anomaly percentage: (anomaly count / total records) * 100
@@ -756,7 +753,7 @@ def get_anomaly_percent_by_time_of_day():
             # Add legend filter to limit number of entities
             legend_entity_filter = build_legend_filter(
                 legend_field=legend_field,
-                max_entities=MAX_LEGEND_ENTITIES,
+                max_entities=MAX_ANOMALY_LEGEND_ENTITIES,
                 xd_filter=xd_filter,
                 start_date=start_date_str,
                 end_date=end_date_str,

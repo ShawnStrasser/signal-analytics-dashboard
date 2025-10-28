@@ -93,6 +93,35 @@ function updateChart() {
   const textColor = isDark ? '#E0E0E0' : '#333333'
   const isMobile = window.innerWidth < 600
 
+  // Color palettes (same as AnomalyChart and TravelTimeChart)
+  const lightModePalette = [
+    '#1976D2', '#388E3C', '#F57C00', '#D32F2F', '#7B1FA2',
+    '#00796B', '#C2185B', '#5D4037', '#455A64', '#0097A7'
+  ]
+
+  const darkModePalette = [
+    '#64B5F6', '#81C784', '#FFB74D', '#E57373', '#BA68C8',
+    '#4DB6AC', '#F06292', '#A1887F', '#90A4AE', '#4DD0E1'
+  ]
+
+  // Colorblind-friendly palettes (based on Wong 2011 / IBM Design / Okabe Ito)
+  const lightModeColorblindPalette = [
+    '#0072B2', '#E69F00', '#009E73', '#D55E00', '#CC79A7',
+    '#56B4E9', '#F0E442', '#999999', '#000000', '#882255'
+  ]
+
+  const darkModeColorblindPalette = [
+    '#56B4E9', '#F0E442', '#009E73', '#E69F00', '#CC79A7',
+    '#0072B2', '#D55E00', '#CCCCCC', '#999999', '#882255'
+  ]
+
+  let colorPalette
+  if (themeStore.colorblindMode) {
+    colorPalette = isDark ? darkModeColorblindPalette : lightModeColorblindPalette
+  } else {
+    colorPalette = isDark ? darkModePalette : lightModePalette
+  }
+
   // Check if data has LEGEND_GROUP column
   const hasLegend = props.data.length > 0 && props.data[0].LEGEND_GROUP !== undefined
 
@@ -121,29 +150,31 @@ function updateChart() {
       afterGroups[group].push([xValue, Number(d.TRAVEL_TIME_INDEX) || 0])
     })
 
-    // Create series for each legend group
-    const allGroups = new Set([...Object.keys(beforeGroups), ...Object.keys(afterGroups)])
-    allGroups.forEach(group => {
-      // Before series for this group
+    // Create series for each legend group with unique colors
+    const allGroups = Array.from(new Set([...Object.keys(beforeGroups), ...Object.keys(afterGroups)]))
+    allGroups.forEach((group, index) => {
+      const color = colorPalette[index % colorPalette.length]
+
+      // Before series for this group (solid line)
       seriesConfig.push({
         name: `${group} (Before)`,
         type: 'line',
         data: beforeGroups[group] || [],
         smooth: true,
-        lineStyle: { color: BEFORE_COLOR.value, width: 2 },
-        itemStyle: { color: BEFORE_COLOR.value },
+        lineStyle: { color: color, width: 2, type: 'solid' },
+        itemStyle: { color: color },
         symbol: 'circle',
         symbolSize: 3
       })
 
-      // After series for this group
+      // After series for this group (dashed line, same color)
       seriesConfig.push({
         name: `${group} (After)`,
         type: 'line',
         data: afterGroups[group] || [],
         smooth: true,
-        lineStyle: { color: AFTER_COLOR.value, width: 2 },
-        itemStyle: { color: AFTER_COLOR.value },
+        lineStyle: { color: color, width: 2, type: 'dashed' },
+        itemStyle: { color: color },
         symbol: 'circle',
         symbolSize: 3
       })

@@ -530,10 +530,11 @@ def build_legend_filter(
         if clean_xd:
             where_clause = f"WHERE {clean_xd}"
 
-    # Build simple subquery - just query DIM_SIGNALS_XD
+    # Build simple subquery - just query DIM_SIGNALS_XD with deterministic ordering
     subquery = f"""SELECT DISTINCT sub_s.{legend_field}
         FROM DIM_SIGNALS_XD sub_s
         {where_clause}
+        ORDER BY sub_s.{legend_field}
         LIMIT {max_entities}"""
 
     return f" AND legend_xd.{legend_field} IN ({subquery})"

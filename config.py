@@ -44,6 +44,12 @@ TIMEZONE = 'America/Los_Angeles'
 # Applies to legend grouping by: XD, BEARING, COUNTY, ROADNAME, ID
 MAX_LEGEND_ENTITIES = 10
 
+# Maximum number of entities for Anomaly charts (reduced because each entity has 2 lines)
+MAX_ANOMALY_LEGEND_ENTITIES = 6
+
+# Maximum number of entities for Before/After charts (reduced because each entity has 2 lines)
+MAX_BEFORE_AFTER_LEGEND_ENTITIES = 6
+
 # =============================================================================
 # TIME OF DAY FILTER SETTINGS
 # =============================================================================
