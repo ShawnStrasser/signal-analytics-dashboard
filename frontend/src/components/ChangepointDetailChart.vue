@@ -188,6 +188,87 @@ function updateChart() {
     }
   }
 
+  // Add custom legend showing line type meanings at the top center
+  const graphicElements = [
+    {
+      type: 'group',
+      left: 'center',
+      top: props.subtitle ? (isMobile ? 60 : 65) : (isMobile ? 50 : 55),
+      children: [
+        {
+          type: 'rect',
+          z: 100,
+          left: 0,
+          top: 0,
+          shape: {
+            width: isMobile ? 200 : 250,
+            height: isMobile ? 35 : 40
+          },
+          style: {
+            fill: isDark ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.8)',
+            stroke: isDark ? '#555' : '#ccc',
+            lineWidth: 1
+          }
+        },
+        {
+          type: 'line',
+          z: 101,
+          left: 10,
+          top: isMobile ? 12 : 15,
+          shape: {
+            x1: 0,
+            y1: 0,
+            x2: 30,
+            y2: 0
+          },
+          style: {
+            stroke: textColor,
+            lineWidth: 2
+          }
+        },
+        {
+          type: 'text',
+          z: 101,
+          left: 45,
+          top: isMobile ? 8 : 10,
+          style: {
+            text: 'After',
+            fill: textColor,
+            fontSize: isMobile ? 10 : 12
+          }
+        },
+        {
+          type: 'line',
+          z: 101,
+          left: isMobile ? 110 : 130,
+          top: isMobile ? 12 : 15,
+          shape: {
+            x1: 0,
+            y1: 0,
+            x2: 30,
+            y2: 0
+          },
+          style: {
+            stroke: textColor,
+            lineWidth: 2,
+            lineDash: [5, 5]
+          }
+        },
+        {
+          type: 'text',
+          z: 101,
+          left: isMobile ? 145 : 165,
+          top: isMobile ? 8 : 10,
+          style: {
+            text: 'Before',
+            fill: textColor,
+            fontSize: isMobile ? 10 : 12
+          }
+        }
+      ]
+    }
+  ]
+
   const option = {
     title: {
       text: props.title,
@@ -202,9 +283,10 @@ function updateChart() {
     },
     legend: {
       data: ['After', 'Before'],
-      top: isMobile ? 60 : 65,
+      top: props.subtitle ? (isMobile ? 105 : 110) : (isMobile ? 95 : 100),
       textStyle: { color: textColor, fontSize: isMobile ? 10 : 12 }
     },
+    graphic: graphicElements,
     xAxis: xAxisConfig,
     yAxis: {
       type: 'value',
@@ -227,7 +309,7 @@ function updateChart() {
       left: isMobile ? '60px' : '80px',
       right: isMobile ? '20px' : '50px',
       bottom: isMobile ? '70px' : '60px',
-      top: props.subtitle ? (isMobile ? '110px' : '115px') : (isMobile ? '80px' : '80px')
+      top: props.subtitle ? (isMobile ? '150px' : '155px') : (isMobile ? '140px' : '145px')
     },
     dataZoom: [
       {

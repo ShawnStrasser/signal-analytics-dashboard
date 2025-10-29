@@ -95,10 +95,12 @@ function getChangepointCategory(avgPctChange) {
   if (!Number.isFinite(avgPctChange)) {
     return 'yellow'
   }
-  if (avgPctChange <= -5) {
+  // avgPctChange is stored as decimal (0.05 = 5%), so multiply by 100 for thresholds
+  const pctAsWholeNumber = avgPctChange * 100
+  if (pctAsWholeNumber <= -5) {
     return 'green'
   }
-  if (avgPctChange >= 5) {
+  if (pctAsWholeNumber >= 5) {
     return 'red'
   }
   return 'yellow'
@@ -153,7 +155,8 @@ function buildChangepointVisualMap(signals) {
 
   processed.forEach(({ signal, absSum, avgPct }) => {
     const category = getChangepointCategory(avgPct)
-    const color = changepointColorScale(avgPct)
+    // avgPct is stored as decimal (0.05 = 5%), multiply by 100 for color scale
+    const color = changepointColorScale(avgPct * 100)
     const iconSize = computeChangepointIconSize(absSum, minAbs, maxAbs)
     const dataHashParts = [
       absSum.toFixed(4),
@@ -935,7 +938,8 @@ function updateGeometry() {
         fillColor = beforeAfterDifferenceColorScale(diff)
       } else if (props.dataType === 'changepoints') {
         const avgPct = dataValue.AVG_PCT_CHANGE || 0
-        fillColor = changepointColorScale(avgPct)
+        // avgPct is stored as decimal (0.05 = 5%), multiply by 100 for color scale
+        fillColor = changepointColorScale(avgPct * 100)
       } else {
         const tti = dataValue.TRAVEL_TIME_INDEX || 0
         fillColor = travelTimeColorScale(tti)
@@ -1468,6 +1472,7 @@ function updateMarkerSizes() {
       }
 
       const isSelected = selectionStore.isSignalSelected(signalId)
+
       const iconUpdated = updateMarkerIcon(
         signalId,
         marker,
@@ -1561,6 +1566,8 @@ function updateMarkerSizes() {
         const totalRecords = signalData.RECORD_COUNT || 0
         const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
         category = getCategoryFromValue(percentage, 'anomaly')
+        // Use continuous color scale for circles (when zoomed out), but categorical for SVG signal heads
+        customColor = shouldUseSvgIcons() ? null : anomalyColorScale(percentage)
         dataHash = `${count}_${totalRecords}`
       } else if (props.dataType === 'before-after' && signalData.beforeAfterCount > 0) {
         const sampleCount = signalData.beforeAfterCount
@@ -1583,6 +1590,8 @@ function updateMarkerSizes() {
       } else {
         const avgTTI = signalData.ttiCount > 0 ? signalData.TRAVEL_TIME_INDEX / signalData.ttiCount : 0
         category = getCategoryFromValue(avgTTI, 'travel-time')
+        // Use continuous color scale for circles (when zoomed out), but categorical for SVG signal heads
+        customColor = shouldUseSvgIcons() ? null : travelTimeColorScale(avgTTI)
         dataHash = `${avgTTI.toFixed(4)}_${signalData.ttiCount}`
       }
     }
@@ -1685,11 +1694,15 @@ function updateMarkers() {
       const category = getCategoryFromValue(percentage, 'anomaly')
       const isSelected = selectionStore.isSignalSelected(signal.ID)
 
+      // Use continuous color scale for circles (when zoomed out), but categorical for SVG signal heads
+      const customColor = useSvgForAll ? null : anomalyColorScale(percentage)
+      const dataHash = `${count}_${totalRecords}`
+
       const existingMarker = signalMarkers.get(signal.ID)
 
       if (existingMarker) {
         // Update existing marker icon only if state changed
-        updateMarkerIcon(signal.ID, existingMarker, category, isSelected)
+        updateMarkerIcon(signal.ID, existingMarker, category, isSelected, dataHash, customColor)
 
         // Update tooltip content immediately so it reflects new data
         const tooltipContent = `
@@ -1709,7 +1722,7 @@ function updateMarkers() {
         const iconSize = getMarkerSize(category, useSvgForAll)
         const iconUrl = useSvgForAll
           ? createTrafficSignalIcon(category, isSelected, iconSize)
-          : createCircleIcon(category, isSelected, iconSize)
+          : createCircleIcon(category, isSelected, iconSize, null, customColor)
         const iconHeight = useSvgForAll ? iconSize * 1.4 : iconSize
         const icon = L.divIcon({
           html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconHeight}px;">`,
@@ -1940,11 +1953,15 @@ function updateMarkers() {
       const category = getCategoryFromValue(avgTTI, 'travel-time')
       const isSelected = selectionStore.isSignalSelected(signal.ID)
 
+      // Use continuous color scale for circles (when zoomed out), but categorical for SVG signal heads
+      const customColor = useSvgForAll ? null : travelTimeColorScale(avgTTI)
+      const dataHash = `${avgTTI.toFixed(4)}_${signal.ttiCount}`
+
       const existingMarker = signalMarkers.get(signal.ID)
 
       if (existingMarker) {
         // Update existing marker icon only if state changed
-        updateMarkerIcon(signal.ID, existingMarker, category, isSelected)
+        updateMarkerIcon(signal.ID, existingMarker, category, isSelected, dataHash, customColor)
 
         // Update tooltip content immediately so it reflects new data
         // Skip for before-after mode - applyBeforeAfterStyling() handles it
@@ -1966,7 +1983,7 @@ function updateMarkers() {
         const iconSize = getMarkerSize(category, useSvgForAll)
         const iconUrl = useSvgForAll
           ? createTrafficSignalIcon(category, isSelected, iconSize)
-          : createCircleIcon(category, isSelected, iconSize)
+          : createCircleIcon(category, isSelected, iconSize, null, customColor)
         const iconHeight = useSvgForAll ? iconSize * 1.4 : iconSize
         const icon = L.divIcon({
           html: `<img src="${iconUrl}" style="width: ${iconSize}px; height: ${iconHeight}px;">`,
