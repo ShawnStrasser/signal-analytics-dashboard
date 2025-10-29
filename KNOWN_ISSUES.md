@@ -50,4 +50,3 @@ Medium - Current workarounds prevent critical failures, but may cause confusion 
 ### Some XD segments show 0 for TTI
 
 
-### Snowflake connection expires and then the app fails, needs to reconnect automatically
