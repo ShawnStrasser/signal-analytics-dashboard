@@ -128,6 +128,12 @@ CREATE TABLE FREEFLOW (
 - **Detailed Analysis**: Downloadable anomaly data table with timestamps and predictions
 - **Cross-Page State**: All filters persist when switching between pages
 
+#### Changepoints Page
+- **Changepoint Map & Table**: Surfaces the most significant changepoints from the [`CHANGEPOINTS` schema](#changepoints) with geography-aware filtering, sortable table (Top 100 rows), and synchronized selections
+- **Percent Change Filter**: Default focus on events where `PCT_CHANGE` is less than -1% or greater than +1%, adjustable by the analyst
+- **Visual Encoding**: Map bubble size reflects the absolute sum of `PCT_CHANGE` while color tracks the mean `PCT_CHANGE`, aligned with the rest of the app's light/dark/colorblind themes
+- **Detail Drilldown**: Selecting a single changepoint reveals a before/after travel time comparison chart using the same styling conventions as the dedicated Before/After page
+
 ### Project Structure
 ```
 signal-analytics-dashboard/

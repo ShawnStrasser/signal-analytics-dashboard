@@ -344,6 +344,23 @@ class ApiService {
     return this.fetchArrowData('/before-after-by-time-of-day', params)
   }
 
+  // Changepoints API Methods
+  async getChangepointMapSignals(filters) {
+    return this.fetchArrowData('/changepoints-map-signals', filters)
+  }
+
+  async getChangepointMapXd(filters) {
+    return this.fetchArrowData('/changepoints-map-xd', filters)
+  }
+
+  async getChangepointTable(filters) {
+    return this.fetchArrowData('/changepoints-table', filters)
+  }
+
+  async getChangepointDetail(params) {
+    return this.fetchArrowData('/changepoints-detail', params)
+  }
+
   async getConfig() {
     try {
       const response = await fetch(`${this.baseURL}/config`)

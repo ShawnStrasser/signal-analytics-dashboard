@@ -124,6 +124,11 @@ const routes = [
     title: 'Before/After',
     icon: 'mdi-compare',
   },
+  {
+    path: '/changepoints',
+    title: 'Changepoints',
+    icon: 'mdi-chart-bell-curve-cumulative',
+  },
 ]
 
 const geometryStore = useGeometryStore()

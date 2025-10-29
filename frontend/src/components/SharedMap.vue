@@ -12,7 +12,12 @@ import { useGeometryStore } from '@/stores/geometry'
 import { useMapStateStore } from '@/stores/mapState'
 import { useSelectionStore } from '@/stores/selection'
 import { useThemeStore } from '@/stores/theme'
-import { travelTimeColorScale, anomalyColorScale, beforeAfterDifferenceColorScale } from '@/utils/colorScale'
+import {
+  travelTimeColorScale,
+  anomalyColorScale,
+  beforeAfterDifferenceColorScale,
+  changepointColorScale
+} from '@/utils/colorScale'
 import { DEBUG_FRONTEND_LOGGING } from '@/config'
 
 const props = defineProps({
@@ -26,8 +31,8 @@ const props = defineProps({
   },
   dataType: {
     type: String,
-    default: 'travel-time', // 'travel-time', 'anomaly', or 'before-after'
-    validator: (value) => ['travel-time', 'anomaly', 'before-after'].includes(value)
+    default: 'travel-time', // 'travel-time', 'anomaly', 'before-after', or 'changepoints'
+    validator: (value) => ['travel-time', 'anomaly', 'before-after', 'changepoints'].includes(value)
   },
   anomalyType: {
     type: String,
@@ -79,6 +84,128 @@ const MARKER_SIZES = {
 
 // SVG icon base size (used when zoomed in)
 const SVG_ICON_SIZE = 30
+
+// Changepoint marker sizing bounds (in pixels)
+const CHANGEPOINT_ICON_SIZE_RANGE = {
+  min: 18,
+  max: 44
+}
+
+function getChangepointCategory(avgPctChange) {
+  if (!Number.isFinite(avgPctChange)) {
+    return 'yellow'
+  }
+  if (avgPctChange <= -5) {
+    return 'green'
+  }
+  if (avgPctChange >= 5) {
+    return 'red'
+  }
+  return 'yellow'
+}
+
+function computeChangepointIconSize(absPctSum, minAbs, maxAbs) {
+  const value = Number.isFinite(absPctSum) ? Math.abs(absPctSum) : 0
+  const min = CHANGEPOINT_ICON_SIZE_RANGE.min
+  const max = CHANGEPOINT_ICON_SIZE_RANGE.max
+
+  if (!Number.isFinite(minAbs) || minAbs === Infinity) {
+    minAbs = 0
+  }
+  if (!Number.isFinite(maxAbs) || maxAbs === -Infinity || maxAbs <= 0) {
+    return (min + max) / 2
+  }
+  if (maxAbs === minAbs) {
+    return Math.min(max, Math.max(min, min + (max - min) * 0.5))
+  }
+
+  const normalized = (value - minAbs) / (maxAbs - minAbs)
+  const clamped = Math.min(1, Math.max(0, normalized))
+  const size = min + clamped * (max - min)
+  return Math.min(max, Math.max(min, size))
+}
+
+function buildChangepointVisualMap(signals) {
+  let minAbs = Infinity
+  let maxAbs = -Infinity
+
+  const processed = signals
+    .map(signal => {
+      if (!signal || signal.ID === undefined || signal.ID === null) {
+        return null
+      }
+      const absSumRaw = Number(signal.ABS_PCT_SUM ?? 0)
+      const absSum = Number.isFinite(absSumRaw) ? Math.abs(absSumRaw) : 0
+      const avgPctRaw = Number(signal.AVG_PCT_CHANGE ?? 0)
+      const avgPct = Number.isFinite(avgPctRaw) ? avgPctRaw : 0
+
+      minAbs = Math.min(minAbs, absSum)
+      maxAbs = Math.max(maxAbs, absSum)
+
+      return { signal, absSum, avgPct }
+    })
+    .filter(Boolean)
+
+  if (minAbs === Infinity) minAbs = 0
+  if (maxAbs === -Infinity) maxAbs = 0
+
+  const visualMap = new Map()
+
+  processed.forEach(({ signal, absSum, avgPct }) => {
+    const category = getChangepointCategory(avgPct)
+    const color = changepointColorScale(avgPct)
+    const iconSize = computeChangepointIconSize(absSum, minAbs, maxAbs)
+    const dataHashParts = [
+      absSum.toFixed(4),
+      avgPct.toFixed(4),
+      Number(signal.CHANGEPOINT_COUNT ?? 0).toFixed(0),
+      Number(signal.TOP_PCT_CHANGE ?? 0).toFixed(4),
+      Number(signal.TOP_AVG_DIFF ?? 0).toFixed(4)
+    ]
+
+    visualMap.set(signal.ID, {
+      signal,
+      absSum,
+      avgPct,
+      category,
+      color,
+      iconSize,
+      dataHash: dataHashParts.join('|')
+    })
+  })
+
+  return { visualMap, minAbs, maxAbs }
+}
+
+function buildChangepointSignalTooltip(visual) {
+  if (!visual) {
+    return '<div><em>No changepoint data</em></div>'
+  }
+
+  const { signal } = visual
+  const signalName = signal.NAME || `Signal ${signal.ID}`
+  const count = Number(signal.CHANGEPOINT_COUNT ?? 0)
+  const topTimestamp = signal.TOP_TIMESTAMP ? new Date(signal.TOP_TIMESTAMP).toLocaleString() : 'N/A'
+  const topRoad = signal.TOP_ROADNAME || 'Unknown road'
+  const topBearing = signal.TOP_BEARING || 'N/A'
+  const topPctChangeRaw = Number(signal.TOP_PCT_CHANGE ?? 0)
+  const topAvgDiffRaw = Number(signal.TOP_AVG_DIFF ?? 0)
+  const topPctDisplay = Number.isFinite(topPctChangeRaw) ? `${topPctChangeRaw.toFixed(2)}%` : 'N/A'
+  const topAvgDiffDisplay = Number.isFinite(topAvgDiffRaw) ? `${topAvgDiffRaw.toFixed(1)} s` : 'N/A'
+
+  return `
+    <div>
+      <h4>${signalName}</h4>
+      <p><strong>Changepoints:</strong> ${count}</p>
+      <hr />
+      <p><strong>Top Changepoint:</strong></p>
+      <p>${topRoad} &middot; Bearing ${topBearing}</p>
+      <p><strong>Percent Change:</strong> ${topPctDisplay}</p>
+      <p><strong>Avg Diff:</strong> ${topAvgDiffDisplay}</p>
+      <p><strong>Timestamp:</strong> ${topTimestamp}</p>
+    </div>
+  `
+}
 
 // Get marker icon size based on category and icon type
 function getMarkerSize(category, useSvg = false) {
@@ -157,6 +284,10 @@ function getCategoryFromValue(value, dataType) {
     if (value < 5) return 'green'
     if (value < 10) return 'yellow'
     return 'red'
+  } else if (dataType === 'changepoints') {
+    if (value <= -5) return 'green'
+    if (value >= 5) return 'red'
+    return 'yellow'
   } else {
     // Travel Time Index thresholds: 1, 2, 3
     if (value < 2) return 'green'
@@ -802,6 +933,9 @@ function updateGeometry() {
       } else if (props.dataType === 'before-after') {
         const diff = dataValue.TTI_DIFF || 0
         fillColor = beforeAfterDifferenceColorScale(diff)
+      } else if (props.dataType === 'changepoints') {
+        const avgPct = dataValue.AVG_PCT_CHANGE || 0
+        fillColor = changepointColorScale(avgPct)
       } else {
         const tti = dataValue.TRAVEL_TIME_INDEX || 0
         fillColor = travelTimeColorScale(tti)
@@ -963,6 +1097,23 @@ function getXdDataMap() {
           MILES: xd.MILES,
           APPROACH: xd.APPROACH
         })
+      } else if (props.dataType === 'changepoints') {
+        // Changepoint mode - include percent change metrics and top changepoint details
+        xdMap.set(xd.XD, {
+          AVG_PCT_CHANGE: Number(xd.AVG_PCT_CHANGE ?? 0) || 0,
+          ABS_PCT_SUM: Number(xd.ABS_PCT_SUM ?? 0) || 0,
+          CHANGEPOINT_COUNT: Number(xd.CHANGEPOINT_COUNT ?? 0) || 0,
+          TOP_TIMESTAMP: xd.TOP_TIMESTAMP,
+          TOP_PCT_CHANGE: Number(xd.TOP_PCT_CHANGE ?? 0) || 0,
+          TOP_AVG_DIFF: Number(xd.TOP_AVG_DIFF ?? 0) || 0,
+          TOP_ROADNAME: xd.TOP_ROADNAME ?? xd.ROADNAME,
+          TOP_BEARING: xd.TOP_BEARING ?? xd.BEARING,
+          SIGNAL_ID: xd.SIGNAL_ID ?? xd.ID,
+          BEARING: xd.BEARING,
+          ROADNAME: xd.ROADNAME,
+          MILES: xd.MILES,
+          APPROACH: xd.APPROACH
+        })
       } else {
         // Anomaly mode - include dimensions + anomaly metrics
         xdMap.set(xd.XD, {
@@ -1030,6 +1181,27 @@ function createXdTooltip(xd, dataValue) {
         <strong>TTI Before:</strong> ${ttiBefore.toFixed(2)}<br>
         <strong>TTI After:</strong> ${ttiAfter.toFixed(2)}<br>
         <strong>Difference:</strong> ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}
+      </div>
+    `
+  } else if (props.dataType === 'changepoints') {
+    const count = Number(dataValue.CHANGEPOINT_COUNT ?? 0) || 0
+    const topPct = Number(dataValue.TOP_PCT_CHANGE ?? 0) || 0
+    const topAvgDiff = Number(dataValue.TOP_AVG_DIFF ?? 0) || 0
+    const topTimestamp = dataValue.TOP_TIMESTAMP ? new Date(dataValue.TOP_TIMESTAMP).toLocaleString() : 'N/A'
+    const bearing = dataValue.TOP_BEARING || dataValue.BEARING || 'N/A'
+    const roadname = dataValue.TOP_ROADNAME || dataValue.ROADNAME || 'N/A'
+
+    return `
+      <div>
+        <strong>XD:</strong> ${xd}<br>
+        <strong>Road:</strong> ${roadname}<br>
+        <strong>Bearing:</strong> ${bearing}<br>
+        <strong>Changepoints:</strong> ${count}<br>
+        <hr />
+        <strong>Top Changepoint:</strong><br>
+        <strong>Percent Change:</strong> ${topPct.toFixed(2)}%<br>
+        <strong>Avg Diff:</strong> ${topAvgDiff.toFixed(1)} s<br>
+        <strong>Timestamp:</strong> ${topTimestamp}
       </div>
     `
   } else {
@@ -1285,6 +1457,50 @@ function updateMarkerSizes() {
   })
 
   if (!map || !markersLayer) return
+
+  if (props.dataType === 'changepoints') {
+    const { visualMap } = buildChangepointVisualMap(props.signals)
+
+    signalMarkers.forEach((marker, signalId) => {
+      const visuals = visualMap.get(signalId)
+      if (!visuals) {
+        return
+      }
+
+      const isSelected = selectionStore.isSignalSelected(signalId)
+      const iconUpdated = updateMarkerIcon(
+        signalId,
+        marker,
+        visuals.category,
+        isSelected,
+        visuals.dataHash,
+        visuals.color,
+        {
+          iconSizeOverride: visuals.iconSize,
+          forceCircleIcon: true,
+          zIndexCategory: visuals.category
+        }
+      )
+
+      if (iconUpdated || !marker.getTooltip()) {
+        const tooltip = buildChangepointSignalTooltip(visuals)
+        if (marker.getTooltip()) {
+          marker.setTooltipContent(tooltip)
+        } else {
+          marker.bindTooltip(tooltip, {
+            direction: 'top',
+            offset: [0, -10]
+          })
+        }
+      }
+    })
+
+    const perfEnd = performance.now()
+    console.log(`�sT�,? updateMarkerSizes: changepoints COMPLETE in ${(perfEnd - perfStart).toFixed(2)}ms`, {
+      totalMarkers: signalMarkers.size
+    })
+    return
+  }
 
   const iconSize = getMarkerSize()
   console.log(`⚙️ updateMarkerSizes: iconSize = ${iconSize}`)
@@ -1555,7 +1771,111 @@ function updateMarkers() {
         signalMarkers.set(signal.ID, marker)
       }
     })
+  } else if (props.dataType === 'changepoints') {
+    const signalsWithCoords = props.signals.filter(signal => {
+      const lat = Number(signal.LATITUDE)
+      const lng = Number(signal.LONGITUDE)
+      return Number.isFinite(lat) && Number.isFinite(lng)
+    })
 
+    if (signalsWithCoords.length === 0) {
+      markersLayer.clearLayers()
+      signalMarkers.clear()
+      markerStates.clear()
+      return
+    }
+
+    const { visualMap } = buildChangepointVisualMap(signalsWithCoords)
+    const newSignalIds = new Set([...visualMap.keys()])
+
+    const markersToRemove = []
+    signalMarkers.forEach((marker, signalId) => {
+      if (!newSignalIds.has(signalId)) {
+        markersToRemove.push(signalId)
+      }
+    })
+
+    markersToRemove.forEach(signalId => {
+      const marker = signalMarkers.get(signalId)
+      if (marker) {
+        markersLayer.removeLayer(marker)
+        signalMarkers.delete(signalId)
+        markerStates.delete(signalId)
+      }
+    })
+
+    visualMap.forEach((visuals, signalId) => {
+      const signal = visuals.signal
+      bounds.push([signal.LATITUDE, signal.LONGITUDE])
+      const isSelected = selectionStore.isSignalSelected(signalId)
+      const tooltipContent = buildChangepointSignalTooltip(visuals)
+      const existingMarker = signalMarkers.get(signalId)
+
+      if (existingMarker) {
+        updateMarkerIcon(
+          signalId,
+          existingMarker,
+          visuals.category,
+          isSelected,
+          visuals.dataHash,
+          visuals.color,
+          {
+            iconSizeOverride: visuals.iconSize,
+            forceCircleIcon: true,
+            zIndexCategory: visuals.category
+          }
+        )
+
+        if (existingMarker.getTooltip()) {
+          existingMarker.setTooltipContent(tooltipContent)
+        } else {
+          existingMarker.bindTooltip(tooltipContent, {
+            direction: 'top',
+            offset: [0, -10]
+          })
+        }
+      } else {
+        const placeholderIcon = L.divIcon({
+          html: '<div></div>',
+          className: 'traffic-signal-icon',
+          iconSize: [visuals.iconSize, visuals.iconSize],
+          iconAnchor: [visuals.iconSize / 2, visuals.iconSize / 2]
+        })
+
+        const marker = L.marker([signal.LATITUDE, signal.LONGITUDE], {
+          icon: placeholderIcon,
+          interactive: true
+        })
+
+        updateMarkerIcon(
+          signalId,
+          marker,
+          visuals.category,
+          isSelected,
+          visuals.dataHash,
+          visuals.color,
+          {
+            iconSizeOverride: visuals.iconSize,
+            forceCircleIcon: true,
+            zIndexCategory: visuals.category
+          }
+        )
+
+        marker.bindTooltip(tooltipContent, {
+          direction: 'top',
+          offset: [0, -10]
+        })
+
+        marker.on('click', (e) => {
+          L.DomEvent.stopPropagation(e)
+          selectionStore.toggleSignal(signalId)
+          emit('selection-changed')
+        })
+
+        markersLayer.addLayer(marker)
+        signalMarkers.set(signalId, marker)
+      }
+    })
   } else {
     // Travel time mode: group signals by ID first, then aggregate
     const signalGroups = new Map()
@@ -1892,38 +2212,66 @@ function updateSelectionStyles() {
 
   // Build aggregated data map for quick lookups
   const signalDataMap = new Map()
-  props.signals.forEach(signal => {
-    if (!signalDataMap.has(signal.ID)) {
-      signalDataMap.set(signal.ID, {
-        ANOMALY_COUNT: 0,
-        POINT_SOURCE_COUNT: 0,
-        TRAVEL_TIME_INDEX: 0,
-        RECORD_COUNT: 0,
-        ttiCount: 0,
-        TTI_BEFORE_TOTAL: 0,
-        TTI_AFTER_TOTAL: 0,
-        beforeAfterCount: 0
-      })
-    }
-    const data = signalDataMap.get(signal.ID)
-    data.ANOMALY_COUNT += (signal.ANOMALY_COUNT || 0)
-    data.POINT_SOURCE_COUNT += (signal.POINT_SOURCE_COUNT || 0)
-    data.TRAVEL_TIME_INDEX += (signal.TRAVEL_TIME_INDEX || 0)
-    data.RECORD_COUNT += (signal.RECORD_COUNT || 0)
-    data.ttiCount += 1
+  let changepointVisualMap = null
 
-    if (signal.TTI_BEFORE !== undefined || signal.TTI_AFTER !== undefined || signal.TTI_DIFF !== undefined) {
-      data.TTI_BEFORE_TOTAL += Number(signal.TTI_BEFORE ?? 0) || 0
-      data.TTI_AFTER_TOTAL += Number(signal.TTI_AFTER ?? 0) || 0
-      data.beforeAfterCount += 1
-    }
-  })
+  if (props.dataType === 'changepoints') {
+    changepointVisualMap = buildChangepointVisualMap(props.signals).visualMap
+  } else {
+    props.signals.forEach(signal => {
+      if (!signalDataMap.has(signal.ID)) {
+        signalDataMap.set(signal.ID, {
+          ANOMALY_COUNT: 0,
+          POINT_SOURCE_COUNT: 0,
+          TRAVEL_TIME_INDEX: 0,
+          RECORD_COUNT: 0,
+          ttiCount: 0,
+          TTI_BEFORE_TOTAL: 0,
+          TTI_AFTER_TOTAL: 0,
+          beforeAfterCount: 0
+        })
+      }
+      const data = signalDataMap.get(signal.ID)
+      data.ANOMALY_COUNT += (signal.ANOMALY_COUNT || 0)
+      data.POINT_SOURCE_COUNT += (signal.POINT_SOURCE_COUNT || 0)
+      data.TRAVEL_TIME_INDEX += (signal.TRAVEL_TIME_INDEX || 0)
+      data.RECORD_COUNT += (signal.RECORD_COUNT || 0)
+      data.ttiCount += 1
+
+      if (signal.TTI_BEFORE !== undefined || signal.TTI_AFTER !== undefined || signal.TTI_DIFF !== undefined) {
+        data.TTI_BEFORE_TOTAL += Number(signal.TTI_BEFORE ?? 0) || 0
+        data.TTI_AFTER_TOTAL += Number(signal.TTI_AFTER ?? 0) || 0
+        data.beforeAfterCount += 1
+      }
+    })
+  }
 
   let updatedCount = 0
 
   signalMarkers.forEach((marker, signalId) => {
     const isSelected = selectionStore.isSignalSelected(signalId)
     const signalData = signalDataMap.get(signalId)
+
+    if (props.dataType === 'changepoints' && changepointVisualMap) {
+      const visuals = changepointVisualMap.get(signalId)
+      if (visuals) {
+        if (updateMarkerIcon(
+          signalId,
+          marker,
+          visuals.category,
+          isSelected,
+          visuals.dataHash,
+          visuals.color,
+          {
+            iconSizeOverride: visuals.iconSize,
+            forceCircleIcon: true,
+            zIndexCategory: visuals.category
+          }
+        )) {
+          updatedCount++
+        }
+      }
+      return
+    }
 
     if (props.dataType === 'anomaly' && signalData) {
       const countColumn = props.anomalyType === 'Point Source' ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'

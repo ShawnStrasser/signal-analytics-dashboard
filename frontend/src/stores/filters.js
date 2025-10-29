@@ -6,9 +6,30 @@ export const useFiltersStore = defineStore('filters', () => {
   const defaultStartHour = ref(6)   // Default from config.py
   const defaultEndHour = ref(19)    // Default from config.py
 
+  function formatDateOnly(date) {
+    return date.toISOString().split('T')[0]
+  }
+
+  function getChangepointDefaultDates() {
+    const today = new Date()
+    const end = new Date(today)
+    end.setDate(end.getDate() - 7) // One week before today
+    const start = new Date(end)
+    start.setDate(start.getDate() - 21) // Three additional weeks prior
+
+    return {
+      start: formatDateOnly(start),
+      end: formatDateOnly(end)
+    }
+  }
+
+  const { start: changepointStartDefault, end: changepointEndDefault } = getChangepointDefaultDates()
+
   // State
   const startDate = ref(new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]) // 2 days ago
   const endDate = ref(new Date().toISOString().split('T')[0]) // Today
+  const changepointStartDate = ref(changepointStartDefault)
+  const changepointEndDate = ref(changepointEndDefault)
   const selectedSignalIds = ref([])
   const selectedDistricts = ref([]) // Districts with all signals selected
   const approach = ref(null)
@@ -22,6 +43,8 @@ export const useFiltersStore = defineStore('filters', () => {
   const timeFilterEnabled = ref(true)  // Time-of-day filter always enabled
   const dayOfWeek = ref([])  // Selected days of week (1=Mon, 2=Tue, ..., 7=Sun)
   const removeAnomalies = ref(false)  // Filter to remove anomalous data points
+  const pctChangeImprovement = ref(1.0) // Percent threshold for improvements (positive number)
+  const pctChangeDegradation = ref(1.0) // Percent threshold for degradations (positive number)
 
   // Computed
   const hasSignalFilters = computed(() => selectedSignalIds.value.length > 0)
@@ -63,6 +86,17 @@ export const useFiltersStore = defineStore('filters', () => {
     remove_anomalies: removeAnomalies.value || undefined
   }))
 
+  const changepointFilterParams = computed(() => ({
+    start_date: changepointStartDate.value,
+    end_date: changepointEndDate.value,
+    signal_ids: selectedSignalIds.value,
+    approach: approach.value,
+    valid_geometry: validGeometry.value !== 'all' ? validGeometry.value : undefined,
+    maintained_by: maintainedBy.value !== 'all' ? maintainedBy.value : undefined,
+    pct_change_improvement: pctChangeImprovement.value,
+    pct_change_degradation: pctChangeDegradation.value
+  }))
+
   // Computed property that groups signals by district and filters by maintainedBy
   // This would normally fetch from an API, but for testing we return an empty object
   const filteredSignalsByDistrict = computed(() => {
@@ -78,6 +112,11 @@ export const useFiltersStore = defineStore('filters', () => {
   function setDateRange(start, end) {
     startDate.value = start
     endDate.value = end
+  }
+
+  function setChangepointDateRange(start, end) {
+    changepointStartDate.value = start
+    changepointEndDate.value = end
   }
 
   function setSelectedSignalIds(ids) {
@@ -117,6 +156,24 @@ export const useFiltersStore = defineStore('filters', () => {
 
   function setRemoveAnomalies(value) {
     removeAnomalies.value = value
+  }
+
+  function setPctChangeImprovement(value) {
+    const numeric = Number(value)
+    if (!Number.isFinite(numeric)) {
+      pctChangeImprovement.value = 0
+      return
+    }
+    pctChangeImprovement.value = Math.max(0, numeric)
+  }
+
+  function setPctChangeDegradation(value) {
+    const numeric = Number(value)
+    if (!Number.isFinite(numeric)) {
+      pctChangeDegradation.value = 0
+      return
+    }
+    pctChangeDegradation.value = Math.max(0, numeric)
   }
 
   function selectDistrict(district, signalIds) {
@@ -180,6 +237,8 @@ export const useFiltersStore = defineStore('filters', () => {
     // State
     startDate,
     endDate,
+    changepointStartDate,
+    changepointEndDate,
     selectedSignalIds,
     selectedDistricts,
     approach,
@@ -195,16 +254,20 @@ export const useFiltersStore = defineStore('filters', () => {
     removeAnomalies,
     defaultStartHour,
     defaultEndHour,
+    pctChangeImprovement,
+    pctChangeDegradation,
 
     // Computed
     hasSignalFilters,
     isDefaultTimeRange,
     aggregationLevel,
     filterParams,
+    changepointFilterParams,
     filteredSignalsByDistrict,
 
     // Actions
     setDateRange,
+    setChangepointDateRange,
     setSelectedSignalIds,
     setApproach,
     setValidGeometry,
@@ -214,6 +277,8 @@ export const useFiltersStore = defineStore('filters', () => {
     setTimeFilterEnabled,
     setDayOfWeek,
     setRemoveAnomalies,
+    setPctChangeImprovement,
+    setPctChangeDegradation,
     selectDistrict,
     deselectDistrict,
     deselectIndividualSignal,

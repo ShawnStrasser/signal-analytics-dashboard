@@ -219,3 +219,6 @@ frontend/coverage/
 
 .claude/
 .vscode/
+
+# random files
+test_email.py

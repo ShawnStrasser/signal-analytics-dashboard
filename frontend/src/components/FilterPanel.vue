@@ -162,6 +162,48 @@
         </v-col>
       </v-row>
 
+      <!-- Percent Change Filter (Changepoints only) -->
+      <v-row v-if="isChangepointsRoute">
+        <v-col cols="12">
+          <v-card variant="outlined" class="pct-change-card">
+            <v-card-title class="py-2">
+              Percent Change Thresholds
+            </v-card-title>
+            <v-card-text>
+              <div class="text-caption text-medium-emphasis mb-2">
+                Include changepoints where PCT_CHANGE is at or beyond these thresholds. Defaults capture |PCT_CHANGE| ≥ 1%.
+              </div>
+              <v-row dense>
+                <v-col cols="12" sm="6">
+                  <v-text-field
+                    v-model.number="pctChangeImprovementLocal"
+                    type="number"
+                    label="Improvement threshold (≤ -%)"
+                    suffix="%"
+                    density="compact"
+                    variant="outlined"
+                    step="0.1"
+                    min="0"
+                  />
+                </v-col>
+                <v-col cols="12" sm="6">
+                  <v-text-field
+                    v-model.number="pctChangeDegradationLocal"
+                    type="number"
+                    label="Degradation threshold (≥ +%)"
+                    suffix="%"
+                    density="compact"
+                    variant="outlined"
+                    step="0.1"
+                    min="0"
+                  />
+                </v-col>
+              </v-row>
+            </v-card-text>
+          </v-card>
+        </v-col>
+      </v-row>
+
       <!-- Anomaly Type Filter (only shown on anomalies page) -->
       <v-row v-if="$route.name === 'Anomalies'">
         <v-col cols="12">
@@ -176,7 +218,7 @@
       </v-row>
 
       <!-- Time of Day Filter -->
-      <v-row>
+      <v-row v-if="!isChangepointsRoute">
         <v-col cols="12">
           <fieldset style="border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); border-radius: 4px; padding: 32px 12px 12px 12px;">
             <legend style="padding: 0 4px; margin-left: 8px; font-size: 0.75rem; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));">Time of Day</legend>
@@ -200,7 +242,7 @@
       </v-row>
 
       <!-- Day of Week Filter -->
-      <v-row>
+      <v-row v-if="!isChangepointsRoute">
         <v-col cols="12">
           <v-select
             v-model="filtersStore.dayOfWeek"
@@ -237,15 +279,16 @@
               <div><strong>After:</strong> {{ beforeAfterFiltersStore.afterStartDate }} to {{ beforeAfterFiltersStore.afterEndDate }}</div>
             </div>
             <div v-else>
-              <div><strong>Date Range:</strong> {{ filtersStore.startDate }} to {{ filtersStore.endDate }}</div>
-              <div><strong>Aggregation:</strong> {{ filtersStore.aggregationLevel }}</div>
+              <div><strong>Date Range:</strong> {{ currentStartDate }} to {{ currentEndDate }}</div>
+              <div v-if="!isChangepointsRoute"><strong>Aggregation:</strong> {{ filtersStore.aggregationLevel }}</div>
             </div>
             <div v-if="filtersStore.maintainedBy !== 'all'"><strong>Maintained By:</strong> {{ maintainedByDisplayText }}</div>
             <div><strong>Signals:</strong> {{ filtersStore.selectedSignalIds.length || 'All' }}</div>
             <div v-if="filtersStore.approach !== null"><strong>Approach:</strong> {{ filtersStore.approach ? 'True' : 'False' }}</div>
             <div v-if="filtersStore.validGeometry !== null"><strong>Valid Geometry:</strong> {{ validGeometryDisplayText }}</div>
             <div v-if="$route.name === 'Anomalies'"><strong>Anomaly Type:</strong> {{ filtersStore.anomalyType }}</div>
-            <div><strong>Time of Day:</strong> {{ formatTimeDetailed(filtersStore.startHour, filtersStore.startMinute) }} - {{ formatTimeDetailed(filtersStore.endHour, filtersStore.endMinute) }}</div>
+            <div v-if="!isChangepointsRoute"><strong>Time of Day:</strong> {{ formatTimeDetailed(filtersStore.startHour, filtersStore.startMinute) }} - {{ formatTimeDetailed(filtersStore.endHour, filtersStore.endMinute) }}</div>
+            <div v-if="isChangepointsRoute"><strong>Percent Change:</strong> {{ percentChangeSummaryText }}</div>
             <div v-if="filtersStore.dayOfWeek.length > 0"><strong>Days:</strong> {{ dayOfWeekDisplayText }}</div>
             <div v-if="($route.name === 'TravelTime' || $route.name === 'BeforeAfter') && filtersStore.removeAnomalies"><strong>Remove Anomalies:</strong> Yes</div>
           </div>
@@ -256,7 +299,8 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch, watchEffect } from 'vue'
+import { useRoute } from 'vue-router'
 import { useFiltersStore } from '@/stores/filters'
 import { useSignalsStore } from '@/stores/signals'
 import { useBeforeAfterFiltersStore } from '@/stores/beforeAfterFilters'
@@ -270,22 +314,37 @@ const loadingSignals = ref(false)
 const signals = ref([]) // Keep for backward compat with old DIM_SIGNALS_XD endpoint
 const searchQuery = ref('')
 const signalSelectorExpanded = ref(true) // Start expanded by default
+const route = useRoute()
+const isChangepointsRoute = computed(() => route.name === 'Changepoints')
+const pctChangeImprovementLocal = ref(filtersStore.pctChangeImprovement)
+const pctChangeDegradationLocal = ref(filtersStore.pctChangeDegradation)
+
+const activeStartDate = computed(() =>
+  isChangepointsRoute.value ? filtersStore.changepointStartDate : filtersStore.startDate
+)
+const activeEndDate = computed(() =>
+  isChangepointsRoute.value ? filtersStore.changepointEndDate : filtersStore.endDate
+)
+const currentStartDate = computed(() => activeStartDate.value || '--')
+const currentEndDate = computed(() => activeEndDate.value || '--')
 
 // Local date state with debouncing
-const localStartDate = ref(filtersStore.startDate)
-const localEndDate = ref(filtersStore.endDate)
+const localStartDate = ref(activeStartDate.value)
+const localEndDate = ref(activeEndDate.value)
 let dateDebounceTimer = null
 
-// Watch for external changes to store (e.g., programmatic updates)
-watch(() => filtersStore.startDate, (newVal) => {
-  if (newVal !== localStartDate.value) {
-    localStartDate.value = newVal
+// Keep local date fields in sync with the active store values
+watchEffect(() => {
+  const start = activeStartDate.value
+  if (start !== localStartDate.value) {
+    localStartDate.value = start
   }
 })
 
-watch(() => filtersStore.endDate, (newVal) => {
-  if (newVal !== localEndDate.value) {
-    localEndDate.value = newVal
+watchEffect(() => {
+  const end = activeEndDate.value
+  if (end !== localEndDate.value) {
+    localEndDate.value = end
   }
 })
 
@@ -293,10 +352,54 @@ watch(() => filtersStore.endDate, (newVal) => {
 watch([localStartDate, localEndDate], ([newStart, newEnd]) => {
   clearTimeout(dateDebounceTimer)
   dateDebounceTimer = setTimeout(() => {
-    if (newStart !== filtersStore.startDate || newEnd !== filtersStore.endDate) {
-      filtersStore.setDateRange(newStart, newEnd)
+    const storeStart = activeStartDate.value
+    const storeEnd = activeEndDate.value
+    if (newStart !== storeStart || newEnd !== storeEnd) {
+      if (isChangepointsRoute.value) {
+        filtersStore.setChangepointDateRange(newStart, newEnd)
+      } else {
+        filtersStore.setDateRange(newStart, newEnd)
+      }
     }
   }, 500) // 500ms debounce delay
+})
+
+watch(() => filtersStore.pctChangeImprovement, (newVal) => {
+  if (newVal !== pctChangeImprovementLocal.value) {
+    pctChangeImprovementLocal.value = newVal
+  }
+})
+
+watch(() => filtersStore.pctChangeDegradation, (newVal) => {
+  if (newVal !== pctChangeDegradationLocal.value) {
+    pctChangeDegradationLocal.value = newVal
+  }
+})
+
+watch(pctChangeImprovementLocal, (newVal) => {
+  const numeric = Number(newVal)
+  if (!Number.isFinite(numeric)) {
+    if (filtersStore.pctChangeImprovement !== 0) {
+      filtersStore.setPctChangeImprovement(0)
+    }
+    return
+  }
+  if (numeric !== filtersStore.pctChangeImprovement) {
+    filtersStore.setPctChangeImprovement(numeric)
+  }
+})
+
+watch(pctChangeDegradationLocal, (newVal) => {
+  const numeric = Number(newVal)
+  if (!Number.isFinite(numeric)) {
+    if (filtersStore.pctChangeDegradation !== 0) {
+      filtersStore.setPctChangeDegradation(0)
+    }
+    return
+  }
+  if (numeric !== filtersStore.pctChangeDegradation) {
+    filtersStore.setPctChangeDegradation(numeric)
+  }
 })
 
 // Slider min/max in quarter-hour units (computed from config)
@@ -483,6 +586,18 @@ const dayOfWeekDisplayText = computed(() => {
   return filtersStore.dayOfWeek
     .map(d => dayNames[d - 1])
     .join(', ')
+})
+
+const percentChangeSummaryText = computed(() => {
+  const improvement = Number(filtersStore.pctChangeImprovement ?? 0)
+  const degradation = Number(filtersStore.pctChangeDegradation ?? 0)
+  const improvementText = improvement > 0
+    ? `≤ -${improvement.toFixed(1)}%`
+    : '≤ 0%'
+  const degradationText = degradation > 0
+    ? `≥ +${degradation.toFixed(1)}%`
+    : '≥ 0%'
+  return `${improvementText} or ${degradationText}`
 })
 
 onMounted(async () => {

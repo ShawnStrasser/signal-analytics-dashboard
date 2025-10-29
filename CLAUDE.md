@@ -128,6 +128,12 @@ All ECharts components follow consistent styling patterns for maintainability an
 6. Ensure axis formatting matches existing patterns (time-of-day, date/time)
 7. Use consistent grid margins and spacing
 
+### Styling Consistency
+
+- Treat new views (e.g., the Changepoints page) as peers to existing pages—reuse the shared layout patterns, Vuetify components, and theme-aware color scales so the app feels cohesive.
+- Map legends, filters, and selection states should mirror established UX (signal chips, selection counters, auto-zoom behavior).
+- When introducing a new visualization or interaction, cross-check TravelTime, Anomalies, and BeforeAfter implementations to keep typography, spacing, and iconography aligned.
+
 ## Database Schema
 
 Full schema definitions are in README.md reference when needed.

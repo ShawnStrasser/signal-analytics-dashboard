@@ -151,3 +151,38 @@ export function beforeAfterDifferenceColorScale(difference) {
     return interpolateColor(yellow, red, factor)
   }
 }
+
+/**
+ * Get color for changepoint percent change (average).
+ * Uses diverging scale:
+ *   <= -5%  → green (improvement)
+ *    0%     → yellow (neutral)
+ *   >= +5% → red (degradation)
+ *
+ * Intermediate values are interpolated to keep gradients smooth and
+ * responsive to the active color theme / colorblind mode.
+ * @param {number} pctChange - Average percent change value
+ * @returns {string} Color hex code
+ */
+export function changepointColorScale(pctChange) {
+  const colorScheme = getColorScheme()
+  const { green, yellow, red } = colorScheme
+  const value = Number.isFinite(pctChange) ? pctChange : 0
+  const improvementThreshold = -5
+  const degradationThreshold = 5
+
+  if (value <= improvementThreshold) {
+    return `#${green.map(x => x.toString(16).padStart(2, '0')).join('')}`
+  }
+  if (value >= degradationThreshold) {
+    return `#${red.map(x => x.toString(16).padStart(2, '0')).join('')}`
+  }
+
+  if (value < 0) {
+    const factor = (value - improvementThreshold) / (0 - improvementThreshold)
+    return interpolateColor(green, yellow, factor)
+  }
+
+  const factor = value / degradationThreshold
+  return interpolateColor(yellow, red, factor)
+}
