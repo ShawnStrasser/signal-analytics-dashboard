@@ -36,13 +36,17 @@ const BEFORE_COLOR = computed(() => '#1976D2')
 const AFTER_COLOR = computed(() => (themeStore.colorblindMode ? '#E69F00' : '#F57C00'))
 
 function initializeChart() {
-  if (!chartContainer.value) return
+  if (!chartContainer.value) {
+    return
+  }
+
   chart = echarts.init(chartContainer.value)
   window.addEventListener('resize', handleResize)
 }
 
 function handleResize() {
   chart?.resize()
+  updateChart()
 }
 
 onMounted(() => {
@@ -83,6 +87,7 @@ function updateChart() {
   const isDark = theme.global.current.value.dark
   const textColor = isDark ? '#E0E0E0' : '#333333'
   const splitLineColor = isDark ? '#424242' : '#E0E0E0'
+  const isMobile = window.innerWidth < 600
 
   const beforeColor = BEFORE_COLOR.value
   const afterColor = AFTER_COLOR.value
@@ -92,21 +97,21 @@ function updateChart() {
       name: 'After',
       type: 'line',
       data: afterSeries,
-      smooth: false,
+      smooth: true,
       lineStyle: { color: afterColor, width: 2 },
       itemStyle: { color: afterColor },
       symbol: 'circle',
-      symbolSize: 6
+      symbolSize: 4
     },
     {
       name: 'Before',
       type: 'line',
       data: beforeSeries,
-      smooth: false,
+      smooth: true,
       lineStyle: { color: beforeColor, width: 2, type: 'dashed' },
       itemStyle: { color: beforeColor },
       symbol: 'circle',
-      symbolSize: 6
+      symbolSize: 4
     }
   ]
 
@@ -131,16 +136,18 @@ function updateChart() {
       type: 'value',
       name: 'Time of Day',
       nameLocation: 'middle',
-      nameGap: 40,
+      nameGap: isMobile ? 40 : 35,
       min: minMinutes,
       max: maxMinutes,
       axisLabel: {
         color: textColor,
+        fontSize: isMobile ? 10 : 12,
+        rotate: isMobile ? 45 : 0,
         formatter: (value) => formatMinutes(value)
       },
       axisLine: { lineStyle: { color: textColor } },
       splitLine: { lineStyle: { color: splitLineColor } },
-      nameTextStyle: { color: textColor, fontWeight: 'bold' }
+      nameTextStyle: { color: textColor, fontSize: isMobile ? 12 : 13, fontWeight: 'bold' }
     }
 
     tooltipFormatter = (params) => {
@@ -156,15 +163,17 @@ function updateChart() {
   } else {
     xAxisConfig = {
       type: 'time',
-      name: 'Timestamp',
+      name: 'Date & Time',
       nameLocation: 'middle',
-      nameGap: 40,
+      nameGap: isMobile ? 40 : 35,
       axisLabel: {
-        color: textColor
+        color: textColor,
+        fontSize: isMobile ? 10 : 12,
+        rotate: isMobile ? 45 : 0
       },
       axisLine: { lineStyle: { color: textColor } },
       splitLine: { lineStyle: { color: splitLineColor } },
-      nameTextStyle: { color: textColor, fontWeight: 'bold' }
+      nameTextStyle: { color: textColor, fontSize: isMobile ? 12 : 13, fontWeight: 'bold' }
     }
 
     tooltipFormatter = (params) => {
@@ -184,40 +193,41 @@ function updateChart() {
       text: props.title,
       subtext: props.subtitle,
       left: 'center',
-      textStyle: { color: textColor, fontSize: 16 },
-      subtextStyle: { color: textColor, fontSize: 12 }
+      textStyle: { color: textColor, fontSize: isMobile ? 13 : 16 },
+      subtextStyle: { color: textColor, fontSize: isMobile ? 10 : 11 }
     },
     tooltip: {
       trigger: 'axis',
       formatter: tooltipFormatter
     },
     legend: {
-      data: ['Before', 'After'],
-      top: 32,
-      textStyle: { color: textColor }
+      data: ['After', 'Before'],
+      top: isMobile ? 60 : 65,
+      textStyle: { color: textColor, fontSize: isMobile ? 10 : 12 }
     },
     xAxis: xAxisConfig,
     yAxis: {
       type: 'value',
       name: 'Travel Time (seconds)',
       nameLocation: 'middle',
-      nameGap: 50,
+      nameGap: isMobile ? 45 : 55,
       min: yAxisMin,
       max: yAxisMax,
       axisLabel: {
         color: textColor,
+        fontSize: isMobile ? 10 : 12,
         formatter: (value) => Number(value).toFixed(1)
       },
       axisLine: { lineStyle: { color: textColor } },
       splitLine: { lineStyle: { color: splitLineColor } },
-      nameTextStyle: { color: textColor, fontWeight: 'bold' }
+      nameTextStyle: { color: textColor, fontSize: isMobile ? 12 : 13, fontWeight: 'bold' }
     },
     series: combinedSeries,
     grid: {
-      left: '60px',
-      right: '30px',
-      bottom: '60px',
-      top: props.subtitle ? '100px' : '80px'
+      left: isMobile ? '60px' : '80px',
+      right: isMobile ? '20px' : '50px',
+      bottom: isMobile ? '70px' : '60px',
+      top: props.subtitle ? (isMobile ? '110px' : '115px') : (isMobile ? '80px' : '80px')
     },
     dataZoom: [
       {

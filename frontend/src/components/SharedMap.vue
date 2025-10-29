@@ -190,7 +190,7 @@ function buildChangepointSignalTooltip(visual) {
   const topBearing = signal.TOP_BEARING || 'N/A'
   const topPctChangeRaw = Number(signal.TOP_PCT_CHANGE ?? 0)
   const topAvgDiffRaw = Number(signal.TOP_AVG_DIFF ?? 0)
-  const topPctDisplay = Number.isFinite(topPctChangeRaw) ? `${topPctChangeRaw.toFixed(2)}%` : 'N/A'
+  const topPctDisplay = Number.isFinite(topPctChangeRaw) ? `${(topPctChangeRaw * 100).toFixed(1)}%` : 'N/A'
   const topAvgDiffDisplay = Number.isFinite(topAvgDiffRaw) ? `${topAvgDiffRaw.toFixed(1)} s` : 'N/A'
 
   return `
@@ -1176,11 +1176,11 @@ function createXdTooltip(xd, dataValue) {
         <strong>XD:</strong> ${xd}<br>
         <strong>Bearing:</strong> ${bearing}<br>
         <strong>Road:</strong> ${roadname}<br>
-        <strong>Miles:</strong> ${miles !== undefined && miles !== null ? miles.toFixed(2) : 'N/A'}<br>
+        <strong>Miles:</strong> ${miles !== undefined && miles !== null ? miles.toFixed(1) : 'N/A'}<br>
         <strong>Approach:</strong> ${approach ? 'Yes' : 'No'}<br>
-        <strong>TTI Before:</strong> ${ttiBefore.toFixed(2)}<br>
-        <strong>TTI After:</strong> ${ttiAfter.toFixed(2)}<br>
-        <strong>Difference:</strong> ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}
+        <strong>TTI Before:</strong> ${ttiBefore.toFixed(1)}<br>
+        <strong>TTI After:</strong> ${ttiAfter.toFixed(1)}<br>
+        <strong>Difference:</strong> ${diff >= 0 ? '+' : ''}${diff.toFixed(1)}
       </div>
     `
   } else if (props.dataType === 'changepoints') {
@@ -1199,7 +1199,7 @@ function createXdTooltip(xd, dataValue) {
         <strong>Changepoints:</strong> ${count}<br>
         <hr />
         <strong>Top Changepoint:</strong><br>
-        <strong>Percent Change:</strong> ${topPct.toFixed(2)}%<br>
+        <strong>Percent Change:</strong> ${(topPct * 100).toFixed(1)}%<br>
         <strong>Avg Diff:</strong> ${topAvgDiff.toFixed(1)} s<br>
         <strong>Timestamp:</strong> ${topTimestamp}
       </div>
@@ -1217,9 +1217,9 @@ function createXdTooltip(xd, dataValue) {
         <strong>XD:</strong> ${xd}<br>
         <strong>Bearing:</strong> ${bearing}<br>
         <strong>Road:</strong> ${roadname}<br>
-        <strong>Miles:</strong> ${miles !== undefined && miles !== null ? miles.toFixed(2) : 'N/A'}<br>
+        <strong>Miles:</strong> ${miles !== undefined && miles !== null ? miles.toFixed(1) : 'N/A'}<br>
         <strong>Approach:</strong> ${approach ? 'Yes' : 'No'}<br>
-        <strong>TTI:</strong> ${tti.toFixed(2)}
+        <strong>TTI:</strong> ${tti.toFixed(1)}
       </div>
     `
   }

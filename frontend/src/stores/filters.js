@@ -43,8 +43,8 @@ export const useFiltersStore = defineStore('filters', () => {
   const timeFilterEnabled = ref(true)  // Time-of-day filter always enabled
   const dayOfWeek = ref([])  // Selected days of week (1=Mon, 2=Tue, ..., 7=Sun)
   const removeAnomalies = ref(false)  // Filter to remove anomalous data points
-  const pctChangeImprovement = ref(1.0) // Percent threshold for improvements (positive number)
-  const pctChangeDegradation = ref(1.0) // Percent threshold for degradations (positive number)
+  const pctChangeImprovement = ref(1.0) // Percent threshold for improvements (displayed as whole number, sent as decimal)
+  const pctChangeDegradation = ref(1.0) // Percent threshold for degradations (displayed as whole number, sent as decimal)
 
   // Computed
   const hasSignalFilters = computed(() => selectedSignalIds.value.length > 0)
@@ -93,8 +93,8 @@ export const useFiltersStore = defineStore('filters', () => {
     approach: approach.value,
     valid_geometry: validGeometry.value !== 'all' ? validGeometry.value : undefined,
     maintained_by: maintainedBy.value !== 'all' ? maintainedBy.value : undefined,
-    pct_change_improvement: pctChangeImprovement.value,
-    pct_change_degradation: pctChangeDegradation.value
+    pct_change_improvement: pctChangeImprovement.value / 100, // Convert from whole number to decimal
+    pct_change_degradation: pctChangeDegradation.value / 100  // Convert from whole number to decimal
   }))
 
   // Computed property that groups signals by district and filters by maintainedBy

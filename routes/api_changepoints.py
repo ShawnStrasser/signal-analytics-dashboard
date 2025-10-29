@@ -54,11 +54,11 @@ def _sanitize_int_list(values):
 
 def _build_percent_change_condition(improvement, degradation):
     """
-    Build SQL condition for percent-change thresholds.
+    Build SQL condition for percent-change thresholds (decimal values).
 
     Returns a string like:
-      "(t.PCT_CHANGE <= -1.0 OR t.PCT_CHANGE >= 1.5)"
-    Falls back to "t.PCT_CHANGE IS NOT NULL" if both thresholds are zero.
+      "(t.PCT_CHANGE <= -0.01 OR t.PCT_CHANGE >= 0.01)"
+    Falls back to "1=1" (no filtering) if both thresholds are zero.
     """
     conditions = []
 
@@ -68,7 +68,7 @@ def _build_percent_change_condition(improvement, degradation):
         conditions.append(f"t.PCT_CHANGE >= {degradation}")
 
     if not conditions:
-        return "t.PCT_CHANGE IS NOT NULL"
+        return "1=1"
 
     joined = " OR ".join(conditions)
     return f"({joined})"
@@ -86,7 +86,6 @@ def _assemble_where_clause(
     """Compose WHERE clause for changepoint queries."""
     where_parts = [
         f"DATE(t.TIMESTAMP) BETWEEN '{start_date}' AND '{end_date}'",
-        "t.PCT_CHANGE IS NOT NULL",
         _build_percent_change_condition(improvement, degradation)
     ]
 
@@ -96,7 +95,7 @@ def _assemble_where_clause(
     sanitized_signals = _sanitize_string_list(selected_signals)
     if sanitized_signals:
         ids_str = "', '".join(sanitized_signals)
-        where_parts.append(f"xd.ID IN ('{ids_str}')")
+        where_parts.append(f"t.XD IN (SELECT DISTINCT XD FROM DIM_SIGNALS_XD WHERE ID IN ('{ids_str}'))")
 
     sanitized_xds = _sanitize_int_list(selected_xds)
     if sanitized_xds:
@@ -131,8 +130,8 @@ def get_changepoints_map_signals():
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
 
-    improvement = _parse_positive_float(request.args.get('pct_change_improvement'), 1.0)
-    degradation = _parse_positive_float(request.args.get('pct_change_degradation'), 1.0)
+    improvement = _parse_positive_float(request.args.get('pct_change_improvement'), 0.01)
+    degradation = _parse_positive_float(request.args.get('pct_change_degradation'), 0.01)
 
     _, filter_where = build_filter_joins_and_where(
         signal_ids,
@@ -162,7 +161,6 @@ def get_changepoints_map_signals():
             xd.BEARING
         FROM CHANGEPOINTS t
         INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD
-        INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID
         WHERE {where_clause}
     ),
     signal_stats AS (
@@ -238,8 +236,8 @@ def get_changepoints_map_xd():
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
 
-    improvement = _parse_positive_float(request.args.get('pct_change_improvement'), 1.0)
-    degradation = _parse_positive_float(request.args.get('pct_change_degradation'), 1.0)
+    improvement = _parse_positive_float(request.args.get('pct_change_improvement'), 0.01)
+    degradation = _parse_positive_float(request.args.get('pct_change_degradation'), 0.01)
 
     _, filter_where = build_filter_joins_and_where(
         signal_ids,
@@ -264,18 +262,15 @@ def get_changepoints_map_xd():
             t.PCT_CHANGE,
             t.AVG_DIFF,
             t.SCORE,
-            xd.ID AS SIGNAL_ID,
             xd.ROADNAME,
             xd.BEARING
         FROM CHANGEPOINTS t
-        INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD
-        INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID
+        INNER JOIN (SELECT DISTINCT XD, ROADNAME, BEARING FROM DIM_SIGNALS_XD) xd ON t.XD = xd.XD
         WHERE {where_clause}
     ),
     xd_stats AS (
         SELECT
             XD,
-            MIN(SIGNAL_ID) AS SIGNAL_ID,
             SUM(ABS(PCT_CHANGE)) AS ABS_PCT_SUM,
             AVG(PCT_CHANGE) AS AVG_PCT_CHANGE,
             COUNT(*) AS CHANGEPOINT_COUNT
@@ -285,7 +280,6 @@ def get_changepoints_map_xd():
     top_cp AS (
         SELECT
             XD,
-            SIGNAL_ID,
             TIMESTAMP,
             PCT_CHANGE,
             AVG_DIFF,
@@ -299,7 +293,6 @@ def get_changepoints_map_xd():
     )
     SELECT
         stats.XD,
-        stats.SIGNAL_ID,
         stats.ABS_PCT_SUM,
         stats.AVG_PCT_CHANGE,
         stats.CHANGEPOINT_COUNT,
@@ -347,8 +340,8 @@ def get_changepoints_table():
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
 
-    improvement = _parse_positive_float(request.args.get('pct_change_improvement'), 1.0)
-    degradation = _parse_positive_float(request.args.get('pct_change_degradation'), 1.0)
+    improvement = _parse_positive_float(request.args.get('pct_change_improvement'), 0.01)
+    degradation = _parse_positive_float(request.args.get('pct_change_degradation'), 0.01)
 
     selected_signals = request.args.getlist('selected_signals')
     selected_xds = request.args.getlist('selected_xds')
@@ -384,7 +377,6 @@ def get_changepoints_table():
 
     query = f"""
     SELECT
-        xd.ID AS ID,
         t.XD AS XD,
         t.TIMESTAMP,
         t.PCT_CHANGE,
@@ -395,10 +387,9 @@ def get_changepoints_table():
         xd.ROADNAME,
         xd.BEARING
     FROM CHANGEPOINTS t
-    INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD
-    INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID
+    INNER JOIN (SELECT DISTINCT XD, ROADNAME, BEARING FROM DIM_SIGNALS_XD) xd ON t.XD = xd.XD
     WHERE {where_clause}
-    ORDER BY {sort_column} {sort_direction}, t.TIMESTAMP DESC
+    ORDER BY {sort_column} {sort_direction}
     LIMIT 100
     """
 

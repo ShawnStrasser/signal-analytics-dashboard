@@ -99,7 +99,8 @@
             :loading="tableIsLoading"
             :items-per-page="100"
             :sort-by="tableSortBy"
-            :item-class="getRowClass"
+            :row-props="getRowProps"
+            height="250"
             hide-default-footer
             @update:sort-by="onSortByChange"
             @click:row="onRowClick"
@@ -211,7 +212,7 @@ const shouldAutoZoomMap = ref(true)
 const tableRows = ref([])
 const tableTotal = ref(0)
 const tableIsLoading = ref(true)
-const tableSortBy = ref([{ key: 'timestamp', order: 'desc' }])
+const tableSortBy = ref([{ key: 'pct_change', order: 'desc' }])
 
 const selectedRow = ref(null)
 const detailRows = ref([])
@@ -354,6 +355,28 @@ watch(
   }
 )
 
+// Auto-select first row when table loads or changes
+watch(
+  tableRows,
+  (newRows) => {
+    // Always select first row if no selection or if current selection is not in the new rows
+    if (newRows.length > 0) {
+      if (!selectedRow.value) {
+        // No selection, select first row
+        selectedRow.value = { ...newRows[0] }
+      } else {
+        // Check if current selection still exists in new rows
+        const currentKey = selectedRow.value.rowKey
+        const stillExists = newRows.find(row => getRowKey(row) === currentKey)
+        if (!stillExists) {
+          // Current selection is gone, select first row
+          selectedRow.value = { ...newRows[0] }
+        }
+      }
+    }
+  }
+)
+
 onMounted(async () => {
   try {
     await ensureDimensions()
@@ -451,7 +474,7 @@ function buildMapParams() {
 
 function buildTableParams() {
   const params = buildBaseFilterParams()
-  const sort = tableSortBy.value[0] || { key: 'timestamp', order: 'desc' }
+  const sort = tableSortBy.value[0] || { key: 'pct_change', order: 'desc' }
   params.sort_by = sort.key
   params.sort_dir = sort.order === 'asc' ? 'asc' : 'desc'
 
@@ -601,7 +624,7 @@ function onSelectionChanged(payload) {
 }
 
 function onSortByChange(sortBy) {
-    tableSortBy.value = sortBy.length > 0 ? sortBy : [{ key: 'timestamp', order: 'desc' }]
+    tableSortBy.value = sortBy.length > 0 ? sortBy : [{ key: 'pct_change', order: 'desc' }]
     loadTableData()
 }
 
@@ -613,11 +636,12 @@ function onRowClick(event, row) {
 
   const clickedKey = getRowKey(clicked)
 
+  // Don't deselect if clicking on already-selected row
   if (selectedRow.value && selectedRow.value.rowKey === clickedKey) {
-    selectedRow.value = null
-  } else {
-    selectedRow.value = { ...clicked, rowKey: clickedKey }
+    return
   }
+
+  selectedRow.value = { ...clicked, rowKey: clickedKey }
 }
 
 function getRowKey(item) {
@@ -628,15 +652,34 @@ function getRowKey(item) {
   return `${xdPart}-${timestampPart}`
 }
 
-function getRowClass({ item }) {
+function getRowProps({ item }) {
   if (!item) {
-    return ''
+    return {}
   }
   const key = getRowKey(item)
   if (!key) {
-    return ''
+    return {}
   }
-  return selectedRow.value && selectedRow.value.rowKey === key ? 'selected-row' : ''
+  const isSelected = selectedRow.value && selectedRow.value.rowKey === key
+
+  if (isSelected) {
+    // Use inline styles following Vuetify theme colors
+    const primaryColor = themeStore.isDark ? 'rgba(144, 202, 249, 0.16)' : 'rgba(25, 118, 210, 0.12)'
+    const borderColor = themeStore.isDark ? '#90caf9' : '#1976d2'
+
+    return {
+      style: {
+        backgroundColor: primaryColor,
+        borderLeft: `4px solid ${borderColor}`,
+        fontWeight: '500',
+        cursor: 'pointer'
+      }
+    }
+  }
+
+  return {
+    style: { cursor: 'pointer' }
+  }
 }
 
 function normalizeDetailRow(row) {
@@ -719,7 +762,7 @@ function formatTimestamp(value) {
 
 function formatPercent(value) {
   if (value === null || value === undefined) return '--'
-  return `${value.toFixed(2)}%`
+  return `${(value * 100).toFixed(1)}%`
 }
 
 function formatSeconds(value) {
@@ -729,7 +772,7 @@ function formatSeconds(value) {
 
 function formatScore(value) {
   if (value === null || value === undefined) return '--'
-  return value.toFixed(2)
+  return value.toFixed(1)
 }
 </script>
 
@@ -737,24 +780,32 @@ function formatScore(value) {
 .changepoints-view {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  height: 100%;
 }
 
 .content-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr auto 1fr;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
 }
 
 .map-card,
 .table-card,
 .chart-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   position: relative;
 }
 
 .map-container {
+  flex: 1;
   position: relative;
-  height: 420px;
+  min-height: 0;
   padding: 0;
 }
 
@@ -793,6 +844,10 @@ function formatScore(value) {
   font-size: 0.9rem;
 }
 
+.table-card .v-card-text {
+  padding: 12px !important;
+}
+
 .changepoints-table {
   --v-data-table-header-height: 44px;
 }
@@ -802,38 +857,26 @@ function formatScore(value) {
   flex-direction: column;
 }
 
-.selected-row {
-  background-color: rgba(var(--v-theme-primary), 0.12) !important;
-}
 
 .chart-container {
-  min-height: 300px;
+  flex: 1;
   position: relative;
+  min-height: 0;
+  padding: 12px !important;
 }
 
 .chart-shell {
   height: 100%;
-  min-height: 320px;
 }
 
-@media (min-width: 1280px) {
+@media (max-width: 960px) {
   .content-grid {
-    display: grid;
-    grid-template-columns: repeat(12, 1fr);
-    grid-auto-rows: minmax(120px, auto);
-    gap: 16px;
+    grid-template-rows: auto auto auto;
   }
 
-  .map-card {
-    grid-column: 1 / span 12;
-  }
-
-  .table-card {
-    grid-column: 1 / span 12;
-  }
-
-  .chart-card {
-    grid-column: 1 / span 12;
+  .map-container,
+  .chart-container {
+    min-height: 250px;
   }
 }
 </style>
