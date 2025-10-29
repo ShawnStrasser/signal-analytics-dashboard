@@ -11,15 +11,15 @@
           <span class="text-caption font-weight-medium mr-2 d-none d-sm-inline">Legend:</span>
           <div class="legend-item">
             <div class="legend-circle" :style="{ backgroundColor: legendBetterColor }"></div>
-            <span class="legend-text"><span class="d-none d-sm-inline">Better </span>&le; -5%</span>
+            <span class="legend-text">Decrease -5%</span>
           </div>
           <div class="legend-item">
             <div class="legend-circle" :style="{ backgroundColor: legendNeutralColor }"></div>
-            <span class="legend-text"><span class="d-none d-sm-inline">Neutral </span>~0%</span>
+            <span class="legend-text">No Change 0%</span>
           </div>
           <div class="legend-item">
             <div class="legend-circle" :style="{ backgroundColor: legendWorseColor }"></div>
-            <span class="legend-text"><span class="d-none d-sm-inline">Worse </span>&ge; +5%</span>
+            <span class="legend-text">Increase +5%</span>
           </div>
         </div>
       </v-card-title>

@@ -332,34 +332,41 @@ const currentEndDate = computed(() => activeEndDate.value || '--')
 const localStartDate = ref(activeStartDate.value)
 const localEndDate = ref(activeEndDate.value)
 let dateDebounceTimer = null
+let isUpdatingFromStore = false
 
 // Keep local date fields in sync with the active store values
-watchEffect(() => {
-  const start = activeStartDate.value
-  if (start !== localStartDate.value) {
-    localStartDate.value = start
+watch(activeStartDate, (newStart) => {
+  if (!isUpdatingFromStore && newStart !== localStartDate.value) {
+    localStartDate.value = newStart
   }
 })
 
-watchEffect(() => {
-  const end = activeEndDate.value
-  if (end !== localEndDate.value) {
-    localEndDate.value = end
+watch(activeEndDate, (newEnd) => {
+  if (!isUpdatingFromStore && newEnd !== localEndDate.value) {
+    localEndDate.value = newEnd
   }
 })
 
 // Debounced update of store when local values change
 watch([localStartDate, localEndDate], ([newStart, newEnd]) => {
+  if (isUpdatingFromStore) {
+    return
+  }
   clearTimeout(dateDebounceTimer)
   dateDebounceTimer = setTimeout(() => {
     const storeStart = activeStartDate.value
     const storeEnd = activeEndDate.value
     if (newStart !== storeStart || newEnd !== storeEnd) {
+      isUpdatingFromStore = true
       if (isChangepointsRoute.value) {
         filtersStore.setChangepointDateRange(newStart, newEnd)
       } else {
         filtersStore.setDateRange(newStart, newEnd)
       }
+      // Reset flag after Vue's next tick to allow store updates to propagate
+      setTimeout(() => {
+        isUpdatingFromStore = false
+      }, 0)
     }
   }, 500) // 500ms debounce delay
 })
