@@ -133,12 +133,15 @@ def get_changepoints_map_signals():
     improvement = _parse_positive_float(request.args.get('pct_change_improvement'), 0.01)
     degradation = _parse_positive_float(request.args.get('pct_change_degradation'), 0.01)
 
-    _, filter_where = build_filter_joins_and_where(
+    filter_join, filter_where = build_filter_joins_and_where(
         signal_ids,
         maintained_by,
         approach,
         valid_geometry
     )
+
+    needs_signal_join = "DIM_SIGNALS s" in filter_join
+    join_signal_clause = "\n        INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID" if needs_signal_join else ""
 
     where_clause = _assemble_where_clause(
         start_date,
@@ -160,7 +163,7 @@ def get_changepoints_map_signals():
             xd.ROADNAME,
             xd.BEARING
         FROM CHANGEPOINTS t
-        INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD
+        INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD{join_signal_clause}
         WHERE {where_clause}
     ),
     signal_stats AS (
@@ -239,12 +242,15 @@ def get_changepoints_map_xd():
     improvement = _parse_positive_float(request.args.get('pct_change_improvement'), 0.01)
     degradation = _parse_positive_float(request.args.get('pct_change_degradation'), 0.01)
 
-    _, filter_where = build_filter_joins_and_where(
+    filter_join, filter_where = build_filter_joins_and_where(
         signal_ids,
         maintained_by,
         approach,
         valid_geometry
     )
+
+    needs_signal_join = "DIM_SIGNALS s" in filter_join
+    join_signal_clause = "\n        INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID" if needs_signal_join else ""
 
     where_clause = _assemble_where_clause(
         start_date,
@@ -265,7 +271,10 @@ def get_changepoints_map_xd():
             xd.ROADNAME,
             xd.BEARING
         FROM CHANGEPOINTS t
-        INNER JOIN (SELECT DISTINCT XD, ROADNAME, BEARING FROM DIM_SIGNALS_XD) xd ON t.XD = xd.XD
+        INNER JOIN (
+            SELECT DISTINCT XD, ID, ROADNAME, BEARING, APPROACH, VALID_GEOMETRY
+            FROM DIM_SIGNALS_XD
+        ) xd ON t.XD = xd.XD{join_signal_clause}
         WHERE {where_clause}
     ),
     xd_stats AS (
@@ -346,12 +355,15 @@ def get_changepoints_table():
     selected_signals = request.args.getlist('selected_signals')
     selected_xds = request.args.getlist('selected_xds')
 
-    _, filter_where = build_filter_joins_and_where(
+    filter_join, filter_where = build_filter_joins_and_where(
         signal_ids,
         maintained_by,
         approach,
         valid_geometry
     )
+
+    needs_signal_join = "DIM_SIGNALS s" in filter_join
+    join_signal_clause = "\n    INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID" if needs_signal_join else ""
 
     where_clause = _assemble_where_clause(
         start_date,
@@ -387,7 +399,10 @@ def get_changepoints_table():
         xd.ROADNAME,
         xd.BEARING
     FROM CHANGEPOINTS t
-    INNER JOIN (SELECT DISTINCT XD, ROADNAME, BEARING FROM DIM_SIGNALS_XD) xd ON t.XD = xd.XD
+    INNER JOIN (
+        SELECT DISTINCT XD, ID, ROADNAME, BEARING, APPROACH, VALID_GEOMETRY
+        FROM DIM_SIGNALS_XD
+    ) xd ON t.XD = xd.XD{join_signal_clause}
     WHERE {where_clause}
     ORDER BY {sort_column} {sort_direction}
     LIMIT 100
