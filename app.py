@@ -9,6 +9,14 @@ import pyarrow as pa
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from database import get_snowflake_session, get_connection_status
+from routes.api_auth import auth_bp
+from routes.api_before_after import before_after_bp
+from routes.api_anomalies import anomalies_bp
+from routes.api_changepoints import changepoints_bp
+from routes.api_travel_time import travel_time_bp
+from routes.api_subscriptions import subscriptions_bp
+from services import subscription_store
+from services.scheduler import start_scheduler
 
 # Download timezone database on Windows if needed
 if sys.platform == 'win32':
@@ -20,6 +28,11 @@ if sys.platform == 'win32':
 
 app = Flask(__name__, static_folder='static/dist')
 CORS(app)
+
+subscription_store.initialize()
+
+if os.environ.get("PYTEST_CURRENT_TEST") is None:
+    start_scheduler()
 
 @app.route('/api/health')
 def health_check():
@@ -51,17 +64,13 @@ def get_config():
         'defaultEndHour': DEFAULT_END_HOUR
     })
 
-# Import route modules
-from routes.api_travel_time import travel_time_bp
-from routes.api_anomalies import anomalies_bp
-from routes.api_before_after import before_after_bp
-from routes.api_changepoints import changepoints_bp
-
 # Register blueprints
 app.register_blueprint(travel_time_bp, url_prefix='/api')
 app.register_blueprint(anomalies_bp, url_prefix='/api')
 app.register_blueprint(before_after_bp, url_prefix='/api')
 app.register_blueprint(changepoints_bp, url_prefix='/api')
+app.register_blueprint(auth_bp, url_prefix='/api')
+app.register_blueprint(subscriptions_bp, url_prefix='/api')
 
 # Serve Vue.js app in production
 @app.route('/', defaults={'path': ''})
@@ -82,4 +91,4 @@ if __name__ == '__main__':
     else:
         print("⚠️  Database connection failed - will retry on first request")
 
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='127.0.0.1', port=5000)

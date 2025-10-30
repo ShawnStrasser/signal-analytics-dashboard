@@ -3,6 +3,12 @@ Application Configuration
 Controls debugging, caching, and performance logging
 """
 
+import os
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+
+
 # =============================================================================
 # DEBUG SETTINGS
 # =============================================================================
@@ -62,6 +68,44 @@ MAX_BEFORE_AFTER_SMALL_MULTIPLES_ENTITIES = 12
 # Data collection window (24-hour format)
 DEFAULT_START_HOUR = 6   # 06:00
 DEFAULT_END_HOUR = 19    # 19:00
+
+# =============================================================================
+# SUBSCRIPTION & AUTH SETTINGS
+# =============================================================================
+
+def _default_subscription_path() -> str:
+    data_dir = Path('/data')
+    if data_dir.is_dir():
+        return str(data_dir / 'subscriptions.db')
+    return str(BASE_DIR / 'subscriptions.db')
+
+
+SUBSCRIPTION_DB_PATH = os.environ.get(
+    'SUBSCRIPTION_DB_PATH',
+    _default_subscription_path()
+)
+
+LOGIN_TOKEN_TTL_MINUTES = 60
+SESSION_TTL_DAYS = None
+
+PUBLIC_BASE_URL = os.environ.get('PUBLIC_BASE_URL')
+
+# =============================================================================
+# EMAIL SETTINGS
+# =============================================================================
+
+BREVO_API_KEY = os.environ.get('BREVO_API_KEY')
+BREVO_DISABLE_SSL_VERIFY = os.environ.get('BREVO_DISABLE_SSL_VERIFY', 'true').lower() != 'false'
+
+EMAIL_SENDER_ADDRESS = os.environ.get('EMAIL_SENDER_EMAIL', os.environ.get('BREVO_SENDER_EMAIL', 'no-reply@example.com'))
+EMAIL_SENDER_NAME = "Signal Analytics Reports"
+
+# =============================================================================
+# SCHEDULER SETTINGS
+# =============================================================================
+
+ENABLE_DAILY_REPORTS = True
+DAILY_REPORT_SEND_HOUR = 6
 
 # =============================================================================
 # PRODUCTION SETTINGS

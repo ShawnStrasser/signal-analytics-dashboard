@@ -118,6 +118,18 @@ CREATE TABLE FREEFLOW (
 - **Interactive Map**: Visualize traffic signals with bubble size representing total travel time and color indicating average travel time
 - **Time Series Chart**: Analyze travel time trends over time with anomaly highlighting
 - **Filters**: Date range, approach type, valid geometry, and signal selection
+
+#### Monitoring Email Subscriptions
+- Simple magic-link authentication—users enter an email address on the Monitoring page and receive a sign-in link (no password).
+- After signing in, users can subscribe, unsubscribe, and trigger a one-off "Send Test Email" that delivers the current report as an attached PDF.
+- The backend stores subscriptions (email + filter selections) in a SQLite database and automatically sends daily reports at 6:00 AM when alerts are detected.
+- Required environment/setup:
+  - `BREVO_API_KEY` – transactional email API key (Brevo/Sendinblue).
+  - `EMAIL_SENDER_EMAIL` – sender address used in outgoing messages (display name is fixed to "Signal Analytics Reports").
+- Optional environment overrides:
+  - `SUBSCRIPTION_DB_PATH` - change where the SQLite file lives; defaults to `/data/subscriptions.db` when that directory exists, otherwise the project root.
+  - `PUBLIC_BASE_URL` – set a public hostname for production magic links; when omitted we assume a local/dev environment and fall back to the request host.
+  - `BREVO_DISABLE_SSL_VERIFY` – defaults to `true`; set to `false` only if you need strict TLS verification for Brevo’s API.
 - **Interactive Selection**: Click on map markers to filter the time series chart
 - **Summary Statistics**: Key metrics including averages, anomaly counts, and record counts
 

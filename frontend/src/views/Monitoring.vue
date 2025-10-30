@@ -1,5 +1,131 @@
 <template>
   <div class="monitoring-view">
+    <v-card class="auth-card">
+      <v-card-text>
+        <div class="auth-heading">Email Monitoring Reports</div>
+        <template v-if="!authStore.isAuthenticated">
+          <p class="auth-description">
+            Sign in with your email to subscribe to daily monitoring summaries. We will email you a link—no password required.
+          </p>
+          <v-text-field
+            v-model="emailInput"
+            label="Email address"
+            type="email"
+            density="comfortable"
+            variant="outlined"
+            autocomplete="email"
+            :disabled="isSendingLink || verifyingToken"
+            class="mb-3"
+          />
+          <div class="auth-actions">
+            <v-btn
+              color="primary"
+              :loading="isSendingLink"
+              :disabled="isSendingLink || verifyingToken"
+              @click="sendLoginLink"
+            >
+              Send Sign-In Link
+            </v-btn>
+            <v-progress-circular
+              v-if="verifyingToken"
+              indeterminate
+              size="22"
+              class="ml-3"
+            ></v-progress-circular>
+          </div>
+          <v-alert
+            v-if="loginMessage"
+            type="success"
+            variant="tonal"
+            class="mt-3"
+          >
+            {{ loginMessage }}
+          </v-alert>
+          <v-alert
+            v-if="loginError"
+            type="error"
+            variant="tonal"
+            class="mt-3"
+          >
+            {{ loginError }}
+          </v-alert>
+        </template>
+        <template v-else>
+          <p class="auth-description">
+            Signed in as <strong>{{ authStore.email }}</strong>. We'll use your current filter selections when sending reports.
+          </p>
+          <div class="auth-status-row">
+            <v-chip
+              v-if="authStore.subscribed"
+              size="small"
+              color="success"
+              variant="tonal"
+            >
+              Subscribed to daily alerts
+            </v-chip>
+            <v-chip
+              v-else
+              size="small"
+              color="warning"
+              variant="tonal"
+            >
+              Not currently subscribed
+            </v-chip>
+          </div>
+          <div class="auth-actions mt-3">
+            <v-btn
+              color="primary"
+              :loading="isSavingSubscription"
+              :disabled="isSavingSubscription || verifyingToken"
+              @click="subscribeToReport"
+            >
+              {{ authStore.subscribed ? 'Update Subscription' : 'Subscribe' }}
+            </v-btn>
+            <v-btn
+              color="secondary"
+              variant="outlined"
+              :loading="isSendingTestEmail"
+              :disabled="isSendingTestEmail || verifyingToken"
+              @click="sendTestEmail"
+            >
+              Send Test Email
+            </v-btn>
+            <v-btn
+              color="error"
+              variant="text"
+              :disabled="!authStore.subscribed || isSavingSubscription || verifyingToken"
+              @click="unsubscribeFromReport"
+            >
+              Unsubscribe
+            </v-btn>
+          </div>
+          <v-alert
+            v-if="verifyingToken"
+            type="info"
+            variant="outlined"
+            class="mt-3"
+          >
+            Completing sign-in&hellip;
+          </v-alert>
+          <v-alert
+            v-if="subscriptionMessage"
+            type="success"
+            variant="tonal"
+            class="mt-3"
+          >
+            {{ subscriptionMessage }}
+          </v-alert>
+          <v-alert
+            v-if="subscriptionError"
+            type="error"
+            variant="tonal"
+            class="mt-3"
+          >
+            {{ subscriptionError }}
+          </v-alert>
+        </template>
+      </v-card-text>
+    </v-card>
     <div class="toolbar">
       <v-btn
         color="primary"
@@ -140,10 +266,12 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import ApiService from '@/services/api'
 import ChangepointDetailChart from '@/components/ChangepointDetailChart.vue'
 import { useFiltersStore } from '@/stores/filters'
+import { useAuthStore } from '@/stores/auth'
 import {
   buildChangepointDateSeries,
   buildChangepointTimeOfDaySeries,
@@ -152,6 +280,19 @@ import {
 import { getMonitoringDateStrings } from '@/utils/monitoringDate'
 
 const filtersStore = useFiltersStore()
+const authStore = useAuthStore()
+const router = useRouter()
+const route = useRoute()
+
+const emailInput = ref('')
+const loginMessage = ref('')
+const loginError = ref('')
+const subscriptionMessage = ref('')
+const subscriptionError = ref('')
+const isSendingLink = ref(false)
+const isSavingSubscription = ref(false)
+const isSendingTestEmail = ref(false)
+const verifyingToken = ref(false)
 
 const reportRef = ref(null)
 const loading = ref(false)
@@ -212,6 +353,126 @@ const filterSignature = computed(() => JSON.stringify({
 watch(filterSignature, () => {
   void loadReport()
 }, { immediate: true })
+
+watch(() => authStore.email, (value) => {
+  if (typeof value === 'string' && value.length > 0) {
+    emailInput.value = value
+  }
+})
+
+onMounted(async () => {
+  await authStore.fetchSession()
+  if (authStore.email) {
+    emailInput.value = authStore.email
+    if (authStore.subscribed) {
+      subscriptionMessage.value = 'Subscription active. Reports are sent at 6:00 AM when alerts are detected.'
+    }
+  }
+
+  const tokenParam = route.query.loginToken
+  if (typeof tokenParam === 'string' && tokenParam.trim().length > 0) {
+    verifyingToken.value = true
+    try {
+      const session = await authStore.verifyToken(tokenParam.trim())
+      loginMessage.value = `Signed in as ${session.email}`
+      loginError.value = ''
+    } catch (err) {
+      console.error('Failed to verify login token:', err)
+      loginError.value = err instanceof Error ? err.message : 'Login link is invalid or expired.'
+      loginMessage.value = ''
+    } finally {
+      verifyingToken.value = false
+      const nextQuery = { ...route.query }
+      delete nextQuery.loginToken
+      void router.replace({ query: nextQuery })
+    }
+  }
+})
+
+function isValidEmail(value) {
+  return typeof value === 'string' && /\S+@\S+\.\S+/.test(value)
+}
+
+function buildSubscriptionSettings() {
+  const params = buildRequestParams()
+  if (Array.isArray(params.signal_ids) && params.signal_ids.length > 0) {
+    params.selected_signals = params.signal_ids.slice()
+  }
+  return params
+}
+
+async function sendLoginLink() {
+  loginMessage.value = ''
+  loginError.value = ''
+
+  if (!isValidEmail(emailInput.value)) {
+    loginError.value = 'Enter a valid email address.'
+    return
+  }
+
+  isSendingLink.value = true
+  try {
+    await authStore.requestLoginLink(emailInput.value.trim())
+    loginMessage.value = 'Check your inbox for a sign-in link.'
+  } catch (err) {
+    console.error('Failed to send login email:', err)
+    loginError.value = err instanceof Error ? err.message : 'Failed to send login email.'
+  } finally {
+    isSendingLink.value = false
+  }
+}
+
+async function subscribeToReport() {
+  subscriptionMessage.value = ''
+  subscriptionError.value = ''
+  isSavingSubscription.value = true
+
+  try {
+    await authStore.subscribe(buildSubscriptionSettings())
+    subscriptionMessage.value = 'Subscription saved. We will email reports at 6:00 AM when alerts are detected.'
+  } catch (err) {
+    console.error('Failed to save subscription:', err)
+    subscriptionError.value = err instanceof Error ? err.message : 'Failed to save subscription.'
+  } finally {
+    isSavingSubscription.value = false
+  }
+}
+
+async function unsubscribeFromReport() {
+  subscriptionMessage.value = ''
+  subscriptionError.value = ''
+  isSavingSubscription.value = true
+
+  try {
+    await authStore.unsubscribe()
+    subscriptionMessage.value = 'You have been unsubscribed from monitoring emails.'
+  } catch (err) {
+    console.error('Failed to unsubscribe:', err)
+    subscriptionError.value = err instanceof Error ? err.message : 'Failed to unsubscribe.'
+  } finally {
+    isSavingSubscription.value = false
+  }
+}
+
+async function sendTestEmail() {
+  subscriptionMessage.value = ''
+  subscriptionError.value = ''
+  isSendingTestEmail.value = true
+
+  try {
+    const result = await authStore.sendTestEmail(buildSubscriptionSettings())
+    if (result && result.message && result.message.includes('No changepoints')) {
+      subscriptionMessage.value = result.message
+    } else {
+      subscriptionMessage.value = 'Test email sent. Check your inbox for the PDF report.'
+    }
+  } catch (err) {
+    console.error('Failed to send test email:', err)
+    subscriptionError.value = err instanceof Error ? err.message : 'Failed to send test email.'
+  } finally {
+    isSendingTestEmail.value = false
+  }
+}
 
 async function loadReport() {
   const currentRequest = ++requestId
@@ -407,6 +668,7 @@ function buildRequestParams() {
 
   if (Array.isArray(filtersStore.selectedSignalIds) && filtersStore.selectedSignalIds.length > 0) {
     params.signal_ids = filtersStore.selectedSignalIds.slice()
+    params.selected_signals = filtersStore.selectedSignalIds.slice()
   }
 
   if (filtersStore.approach !== null && filtersStore.approach !== undefined) {
@@ -464,6 +726,33 @@ function formatSeconds(value) {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.auth-card {
+  border-radius: 12px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+}
+
+.auth-heading {
+  font-weight: 600;
+  font-size: 1.1rem;
+  margin-bottom: 4px;
+}
+
+.auth-description {
+  margin-bottom: 12px;
+  color: rgba(var(--v-theme-on-surface), 0.7);
+}
+
+.auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.auth-status-row {
+  margin-top: 4px;
 }
 
 .toolbar {

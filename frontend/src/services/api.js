@@ -374,6 +374,109 @@ class ApiService {
       return { maxLegendEntities: 10 }
     }
   }
+
+  async requestLoginLink(email) {
+    const response = await fetch(`${this.baseURL}/auth/request-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email })
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.error || 'Failed to send login link')
+    }
+
+    return response.json()
+  }
+
+  async verifyLoginToken(token) {
+    const response = await fetch(`${this.baseURL}/auth/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ token })
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.error || 'Login link is invalid or expired')
+    }
+
+    return response.json()
+  }
+
+  async getCurrentSession() {
+    const response = await fetch(`${this.baseURL}/auth/session`, {
+      method: 'GET',
+      credentials: 'include'
+    })
+
+    if (response.status === 401) {
+      return { error: 'unauthenticated' }
+    }
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.error || 'Failed to fetch session')
+    }
+
+    return response.json()
+  }
+
+  async logout() {
+    await fetch(`${this.baseURL}/auth/session`, {
+      method: 'DELETE',
+      credentials: 'include'
+    })
+  }
+
+  async saveSubscription(settings) {
+    const response = await fetch(`${this.baseURL}/subscriptions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ settings })
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.error || 'Failed to save subscription')
+    }
+
+    return response.json()
+  }
+
+  async deleteSubscription() {
+    const response = await fetch(`${this.baseURL}/subscriptions`, {
+      method: 'DELETE',
+      credentials: 'include'
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.error || 'Failed to delete subscription')
+    }
+
+    return response.json()
+  }
+
+  async sendTestReport(settings) {
+    const response = await fetch(`${this.baseURL}/reports/send-test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ settings })
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.error || 'Failed to send test email')
+    }
+
+    return response.json()
+  }
 }
 
 export default new ApiService()

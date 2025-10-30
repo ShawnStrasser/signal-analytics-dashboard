@@ -17,3 +17,7 @@ pytest-xdist
 
 # For sending emails
 brevo-python
+
+# Reporting utilities
+fpdf2
+APScheduler
