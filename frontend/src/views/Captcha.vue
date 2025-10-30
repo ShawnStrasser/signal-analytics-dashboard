@@ -52,6 +52,7 @@ let detachCanvasListeners = () => {}
 let detachResetHandler = () => {}
 let cancelAnimation = () => {}
 let clearRedirectTimer = () => {}
+let detachResizeListener = () => {}
 
 onMounted(() => {
   document.title = "Please Verify You're a Human who Likes to Solve Traffic Signal Puzzles"
@@ -75,20 +76,52 @@ onMounted(() => {
     return
   }
 
-  const LIGHT_RADIUS = 25
-  const PADDING = 20
-  const BACKPLATE_MARGIN = 12
-  const SLOT_TOP_OFFSET = 55
-  const SLOT_GAP = 70
+  const BASE_CANVAS_WIDTH = 630
+  const BASE_CANVAS_HEIGHT = 480
+  const MIN_CANVAS_WIDTH = 220
+
+  const BASE_LIGHT_RADIUS = 25
+  const BASE_PADDING = 20
+  const BASE_BACKPLATE_MARGIN = 12
+  const BASE_SLOT_TOP_OFFSET = 55
+  const BASE_SLOT_GAP = 70
+  const BASE_SIGNAL_PADDING = 10
+  const BASE_SIGNAL_WIDTH = 90
+  const BASE_SIGNAL_HEIGHT = 250
+  const BASE_SIGNAL_MOVE = 2
+
+  const BASE_SIGNAL_SPEED_MULTIPLIER = 1.5
   const BASE_ROTATION_SPEED = 0.02
-  const FAST_ROTATION_SPEED = 0.04
+  const BASE_FAST_ROTATION_SPEED = 0.04
+  const BASE_BACKPLATE_CORNER_RADIUS = 12
+  const BASE_SIGNAL_CORNER_RADIUS = 8
+  const BASE_LIGHT_START_POSITIONS = [100, 240, 380]
+  const LIGHT_OFFSET_EXTRA = 10
+  const LIGHT_HIGHLIGHT_OFFSET_RATIO = 0.28
+  const LIGHT_HIGHLIGHT_RADIUS_RATIO = 0.4
+
   const MOVEMENT_DELAY_MS = 2000
   const BASE_SPIN_TRIGGER_MS = 4000
   const FAST_SPIN_TRIGGER_MS = 9000
   const ESCAPE_TRIGGER_MS = 14000
-  const signalSpeedMultiplier = 1.5
-  const signalPadding = 10
   const touchOptions = { passive: false }
+
+  let scale = 1
+  let geometryScale = 1
+  let heightScale = 1
+  let LIGHT_RADIUS = BASE_LIGHT_RADIUS
+  let PADDING = BASE_PADDING
+  let BACKPLATE_MARGIN = BASE_BACKPLATE_MARGIN
+  let SLOT_TOP_OFFSET = BASE_SLOT_TOP_OFFSET
+  let SLOT_GAP = BASE_SLOT_GAP
+  let signalPadding = BASE_SIGNAL_PADDING
+  let signalSpeedMultiplier = BASE_SIGNAL_SPEED_MULTIPLIER
+  let baseRotationSpeed = BASE_ROTATION_SPEED
+  let fastRotationSpeed = BASE_FAST_ROTATION_SPEED
+  let signalWidth = BASE_SIGNAL_WIDTH
+  let signalHeight = BASE_SIGNAL_HEIGHT
+  let scaledSignalMove = BASE_SIGNAL_MOVE
+  let resizeFrameId = 0
 
   let signalHead
   let backplate
@@ -118,13 +151,62 @@ onMounted(() => {
   let isMovementPending = false
   let movementStartDeadline = 0
 
+  function applyResponsiveScaling() {
+    const container = canvas.parentElement
+    const viewportWidth = Math.max(window.innerWidth || MIN_CANVAS_WIDTH, MIN_CANVAS_WIDTH)
+    const fallbackWidth = Math.max(viewportWidth - 32, MIN_CANVAS_WIDTH)
+    let availableWidth = fallbackWidth
+
+    if (container && container.clientWidth > 0) {
+      const styles = window.getComputedStyle(container)
+      const horizontalPadding =
+        parseFloat(styles.paddingLeft || '0') + parseFloat(styles.paddingRight || '0')
+      const innerWidth = container.clientWidth - horizontalPadding
+      if (innerWidth > 0) {
+        availableWidth = innerWidth
+      }
+    }
+    const desiredWidth = Math.min(BASE_CANVAS_WIDTH, Math.max(availableWidth, MIN_CANVAS_WIDTH))
+    const constrainedWidth = availableWidth < MIN_CANVAS_WIDTH ? availableWidth : desiredWidth
+    const targetWidth = Math.round(constrainedWidth)
+
+    scale = targetWidth / BASE_CANVAS_WIDTH
+    geometryScale = Math.min(1, Math.pow(scale, 0.7))
+    heightScale = scale < 0.9 ? 1 + (0.9 - scale) * 0.35 : 1
+
+    const targetHeight = Math.round(BASE_CANVAS_HEIGHT * scale * heightScale)
+
+    canvas.width = targetWidth
+    canvas.height = targetHeight
+    canvas.style.width = `${targetWidth}px`
+    canvas.style.height = `${targetHeight}px`
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+
+    const movementScale = Math.max(geometryScale * 0.85, 0.32)
+    const speedFactor = 0.3 + 0.7 * scale * scale
+
+    LIGHT_RADIUS = BASE_LIGHT_RADIUS * geometryScale
+    PADDING = BASE_PADDING * geometryScale
+    BACKPLATE_MARGIN = BASE_BACKPLATE_MARGIN * geometryScale
+    SLOT_TOP_OFFSET = BASE_SLOT_TOP_OFFSET * geometryScale
+    SLOT_GAP = BASE_SLOT_GAP * geometryScale
+    signalPadding = Math.max(BASE_SIGNAL_PADDING * geometryScale, 6)
+    signalWidth = BASE_SIGNAL_WIDTH * geometryScale
+    signalHeight = BASE_SIGNAL_HEIGHT * geometryScale
+    scaledSignalMove = BASE_SIGNAL_MOVE * movementScale
+    signalSpeedMultiplier = BASE_SIGNAL_SPEED_MULTIPLIER * speedFactor
+    baseRotationSpeed = BASE_ROTATION_SPEED * speedFactor
+    fastRotationSpeed = BASE_FAST_ROTATION_SPEED * Math.max(speedFactor, 0.45)
+  }
+
   if (challengeColorEl) {
     challengeColorEl.textContent = ''
   }
 
   function defineComponents() {
-    const initialSignalWidth = 90
-    const initialSignalHeight = 250
+    const initialSignalWidth = signalWidth
+    const initialSignalHeight = signalHeight
     const initialSignalX = canvas.width / 2 - initialSignalWidth / 2
     const initialSignalY = canvas.height / 2 - initialSignalHeight / 2
 
@@ -144,38 +226,28 @@ onMounted(() => {
       color: '#facc15'
     }
 
-    lights = [
-      {
-        id: 'red',
-        x: PADDING + LIGHT_RADIUS + 10,
-        y: 100,
+    const lightConfigs = [
+      { id: 'red', color: '#ef4444' },
+      { id: 'yellow', color: '#f59e0b' },
+      { id: 'green', color: '#22c55e' }
+    ]
+
+    const lightOffsetX = PADDING + LIGHT_RADIUS + LIGHT_OFFSET_EXTRA * geometryScale
+
+    lights = lightConfigs.map((config, index) => {
+      const baseY = BASE_LIGHT_START_POSITIONS[index] ?? BASE_LIGHT_START_POSITIONS[BASE_LIGHT_START_POSITIONS.length - 1]
+      const lightY = baseY * geometryScale
+      return {
+        id: config.id,
+        x: lightOffsetX,
+        y: lightY,
         r: LIGHT_RADIUS,
-        color: '#ef4444',
-        origX: PADDING + LIGHT_RADIUS + 10,
-        origY: 100,
-        isPlaced: false
-      },
-      {
-        id: 'yellow',
-        x: PADDING + LIGHT_RADIUS + 10,
-        y: 240,
-        r: LIGHT_RADIUS,
-        color: '#f59e0b',
-        origX: PADDING + LIGHT_RADIUS + 10,
-        origY: 240,
-        isPlaced: false
-      },
-      {
-        id: 'green',
-        x: PADDING + LIGHT_RADIUS + 10,
-        y: 380,
-        r: LIGHT_RADIUS,
-        color: '#22c55e',
-        origX: PADDING + LIGHT_RADIUS + 10,
-        origY: 380,
+        color: config.color,
+        origX: lightOffsetX,
+        origY: lightY,
         isPlaced: false
       }
-    ]
+    })
   }
 
   function drawBackplate() {
@@ -187,7 +259,13 @@ onMounted(() => {
 
     ctx.fillStyle = backplate.color
     ctx.beginPath()
-    ctx.roundRect(-backplate.width / 2, -backplate.height / 2, backplate.width, backplate.height, 12)
+    ctx.roundRect(
+      -backplate.width / 2,
+      -backplate.height / 2,
+      backplate.width,
+      backplate.height,
+      Math.max(BASE_BACKPLATE_CORNER_RADIUS * geometryScale, 4)
+    )
     ctx.fill()
 
     ctx.restore()
@@ -202,7 +280,13 @@ onMounted(() => {
 
     ctx.fillStyle = signalHead.color
     ctx.beginPath()
-    ctx.roundRect(-signalHead.width / 2, -signalHead.height / 2, signalHead.width, signalHead.height, 8)
+    ctx.roundRect(
+      -signalHead.width / 2,
+      -signalHead.height / 2,
+      signalHead.width,
+      signalHead.height,
+      Math.max(BASE_SIGNAL_CORNER_RADIUS * geometryScale, 3)
+    )
     ctx.fill()
 
     ctx.fillStyle = '#111827'
@@ -230,11 +314,19 @@ onMounted(() => {
       ctx.arc(light.x, light.y, light.r, 0, Math.PI * 2)
       ctx.fillStyle = light.color
       ctx.shadowColor = light.color
-      ctx.shadowBlur = light.isPlaced ? 15 : 5
+      const glowMultiplier = Math.max(geometryScale, 0.6)
+      ctx.shadowBlur = (light.isPlaced ? 15 : 5) * glowMultiplier
       ctx.fill()
 
       ctx.beginPath()
-      ctx.arc(light.x - 7, light.y - 7, light.r * 0.4, 0, Math.PI * 2)
+      const highlightOffset = light.r * LIGHT_HIGHLIGHT_OFFSET_RATIO
+      ctx.arc(
+        light.x - highlightOffset,
+        light.y - highlightOffset,
+        light.r * LIGHT_HIGHLIGHT_RADIUS_RATIO,
+        0,
+        Math.PI * 2
+      )
       ctx.fillStyle = 'rgba(255, 255, 255, 0.4)'
       ctx.fill()
       ctx.shadowBlur = 0
@@ -294,20 +386,20 @@ onMounted(() => {
       }
       fastSpinMessageShown = true
       isSpinning = true
-      currentRotationSpeed = FAST_ROTATION_SPEED
+      currentRotationSpeed = fastRotationSpeed
     } else if (elapsedTime >= FAST_SPIN_TRIGGER_MS) {
       if (!fastSpinMessageShown && !hasEscaped) {
         //updateStatus('Rotation Speed Increased!', 'warning')
         fastSpinMessageShown = true
       }
       isSpinning = true
-      currentRotationSpeed = FAST_ROTATION_SPEED
+      currentRotationSpeed = fastRotationSpeed
     } else if (elapsedTime >= BASE_SPIN_TRIGGER_MS) {
       if (!isSpinning) {
         isSpinning = true
         //updateStatus('Signal is starting to spin!', 'warning')
       }
-      currentRotationSpeed = BASE_ROTATION_SPEED
+      currentRotationSpeed = baseRotationSpeed
     }
 
     if (isSpinning) {
@@ -330,7 +422,7 @@ onMounted(() => {
         backplate.x = signalHead.x - BACKPLATE_MARGIN
       }
     } else {
-      const maxDistance = 200
+      const maxDistance = Math.max(canvas.width, canvas.height) * 0.25
       const cx = signalHead.x + signalHead.width / 2
       if (cx < -maxDistance || cx > canvas.width + maxDistance) {
         handleOffPageEscape()
@@ -354,7 +446,7 @@ onMounted(() => {
         backplate.y = signalHead.y - BACKPLATE_MARGIN
       }
     } else {
-      const maxDistance = 200
+      const maxDistance = Math.max(canvas.width, canvas.height) * 0.25
       const cy = signalHead.y + signalHead.height / 2
       if (cy < -maxDistance || cy > canvas.height + maxDistance) {
         handleOffPageEscape()
@@ -581,7 +673,20 @@ onMounted(() => {
     canvas.removeEventListener('touchend', onUp)
   }
 
+  function handleResize() {
+    if (resizeFrameId) {
+      window.cancelAnimationFrame(resizeFrameId)
+    }
+    resizeFrameId = window.requestAnimationFrame(() => {
+      resizeFrameId = 0
+      init()
+    })
+  }
+
   function init() {
+    applyResponsiveScaling()
+    canvas.classList.remove('dragging')
+
     isVerified = false
     redirected = false
     isDragging = false
@@ -594,8 +699,8 @@ onMounted(() => {
     signalRotation = 0
     gameStartTime = 0
     placedLights = { red: false, yellow: false, green: false }
-    signalMoveX = 2
-    signalMoveY = 2
+    signalMoveX = scaledSignalMove
+    signalMoveY = scaledSignalMove
     isMovementPending = false
     movementStartDeadline = 0
     clearRedirectTimer()
@@ -616,6 +721,9 @@ onMounted(() => {
 
   resetButton.addEventListener('click', init)
   detachResetHandler = () => resetButton.removeEventListener('click', init)
+
+  window.addEventListener('resize', handleResize)
+  detachResizeListener = () => window.removeEventListener('resize', handleResize)
 
   detachCanvasListeners = removeListeners
   cancelAnimation = () => {
@@ -639,6 +747,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   detachCanvasListeners()
   detachResetHandler()
+  detachResizeListener()
   cancelAnimation()
   clearRedirectTimer()
 })
@@ -647,8 +756,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .captcha-page {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
   min-height: 100vh;
   background-color: #f3f4f6;
   color: #1f2937;
@@ -656,19 +767,21 @@ onBeforeUnmount(() => {
   user-select: none;
   -webkit-user-select: none;
   -ms-user-select: none;
-  padding: 16px;
+  padding: clamp(16px, 4vw, 32px);
   box-sizing: border-box;
+  width: 100%;
 }
 
 .captcha-container {
   background-color: #ffffff;
   border-radius: 12px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
-  padding: 28px;
+  padding: clamp(24px, 4vw, 32px);
   text-align: center;
-  width: 95%;
-  max-width: 650px;
+  width: min(100%, 650px);
   border: 1px solid #e5e7eb;
+  box-sizing: border-box;
+  margin: 0 auto;
 }
 
 h2 {
@@ -692,10 +805,12 @@ h2 {
   border: 1px solid #d1d5db;
   border-radius: 8px;
   cursor: grab;
-  max-width: 100%;
+  width: 100%;
+  max-width: 630px;
   height: auto;
-  width: 630px;
-  height: 480px;
+  display: block;
+  margin: 0 auto;
+  aspect-ratio: 21 / 16;
 }
 
 #trafficCanvas.dragging {
@@ -706,7 +821,7 @@ h2 {
   font-size: 1.1rem;
   font-weight: 600;
   margin-top: 20px;
-  height: 24px;
+  min-height: 24px;
   transition: color 0.2s;
 }
 
@@ -743,5 +858,52 @@ h2 {
 #reset-button:active {
   transform: translateY(2px);
   box-shadow: 0 2px #3730a3;
+}
+
+@media (max-width: 640px) {
+  .captcha-page {
+    justify-content: flex-start;
+  }
+
+  .captcha-container {
+    padding: 20px;
+  }
+
+  h2 {
+    font-size: 1.3rem;
+  }
+
+  #challenge-text {
+    font-size: 1rem;
+  }
+
+  #status-message {
+    font-size: 1rem;
+  }
+
+  #reset-button {
+    width: 100%;
+    padding: 12px;
+    font-size: 0.95rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .captcha-page {
+    justify-content: flex-start;
+  }
+
+  .captcha-container {
+    padding: 16px;
+  }
+
+  h2 {
+    font-size: 1.1rem;
+  }
+
+  #challenge-text,
+  #status-message {
+    font-size: 0.95rem;
+  }
 }
 </style>
