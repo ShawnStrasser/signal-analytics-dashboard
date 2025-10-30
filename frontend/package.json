@@ -23,7 +23,9 @@
     "@vue-leaflet/vue-leaflet": "*",
     "leaflet": "*",
     "leaflet-draw": "*",
-    "apache-arrow": "*"
+    "apache-arrow": "*",
+    "html2canvas": "*",
+    "jspdf": "*"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "*",

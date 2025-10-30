@@ -8,7 +8,7 @@
     <v-card-text>
       <!-- Date Range (conditionally show Before/After selector or standard date range) -->
       <BeforeAfterDateSelector v-if="$route.name === 'BeforeAfter'" />
-      <v-row v-else>
+      <v-row v-else-if="!isMonitoringRoute">
         <v-col cols="12">
           <v-text-field
             v-model="localStartDate"
@@ -162,8 +162,8 @@
         </v-col>
       </v-row>
 
-      <!-- Percent Change Filter (Changepoints only) -->
-      <v-row v-if="isChangepointsRoute">
+      <!-- Percent Change Filter (Changepoints & Monitoring) -->
+      <v-row v-if="showsPercentChangeFilter">
         <v-col cols="12">
           <v-card variant="outlined" class="pct-change-card">
             <v-card-title class="py-2">
@@ -218,7 +218,7 @@
       </v-row>
 
       <!-- Time of Day Filter -->
-      <v-row v-if="!isChangepointsRoute">
+      <v-row v-if="showsTimeOfDayFilter">
         <v-col cols="12">
           <fieldset style="border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); border-radius: 4px; padding: 32px 12px 12px 12px;">
             <legend style="padding: 0 4px; margin-left: 8px; font-size: 0.75rem; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));">Time of Day</legend>
@@ -242,7 +242,7 @@
       </v-row>
 
       <!-- Day of Week Filter -->
-      <v-row v-if="!isChangepointsRoute">
+      <v-row v-if="showsTimeOfDayFilter">
         <v-col cols="12">
           <v-select
             v-model="filtersStore.dayOfWeek"
@@ -278,17 +278,20 @@
               <div><strong>Before:</strong> {{ beforeAfterFiltersStore.beforeStartDate }} to {{ beforeAfterFiltersStore.beforeEndDate }}</div>
               <div><strong>After:</strong> {{ beforeAfterFiltersStore.afterStartDate }} to {{ beforeAfterFiltersStore.afterEndDate }}</div>
             </div>
-            <div v-else>
-              <div><strong>Date Range:</strong> {{ currentStartDate }} to {{ currentEndDate }}</div>
-              <div v-if="!isChangepointsRoute"><strong>Aggregation:</strong> {{ filtersStore.aggregationLevel }}</div>
-            </div>
-            <div v-if="filtersStore.maintainedBy !== 'all'"><strong>Maintained By:</strong> {{ maintainedByDisplayText }}</div>
-            <div><strong>Signals:</strong> {{ filtersStore.selectedSignalIds.length || 'All' }}</div>
-            <div v-if="filtersStore.approach !== null"><strong>Approach:</strong> {{ filtersStore.approach ? 'True' : 'False' }}</div>
-            <div v-if="filtersStore.validGeometry !== null"><strong>Valid Geometry:</strong> {{ validGeometryDisplayText }}</div>
-            <div v-if="$route.name === 'Anomalies'"><strong>Anomaly Type:</strong> {{ filtersStore.anomalyType }}</div>
-            <div v-if="!isChangepointsRoute"><strong>Time of Day:</strong> {{ formatTimeDetailed(filtersStore.startHour, filtersStore.startMinute) }} - {{ formatTimeDetailed(filtersStore.endHour, filtersStore.endMinute) }}</div>
-            <div v-if="isChangepointsRoute"><strong>Percent Change:</strong> {{ percentChangeSummaryText }}</div>
+              <div v-else-if="!isMonitoringRoute">
+                <div><strong>Date Range:</strong> {{ currentStartDate }} to {{ currentEndDate }}</div>
+                <div v-if="showsTimeOfDayFilter"><strong>Aggregation:</strong> {{ filtersStore.aggregationLevel }}</div>
+              </div>
+              <div v-else>
+                <div><strong>Date Range:</strong> {{ monitoringDateLabel }}</div>
+              </div>
+              <div v-if="filtersStore.maintainedBy !== 'all'"><strong>Maintained By:</strong> {{ maintainedByDisplayText }}</div>
+              <div><strong>Signals:</strong> {{ filtersStore.selectedSignalIds.length || 'All' }}</div>
+              <div v-if="filtersStore.approach !== null"><strong>Approach:</strong> {{ filtersStore.approach ? 'True' : 'False' }}</div>
+              <div v-if="filtersStore.validGeometry !== null"><strong>Valid Geometry:</strong> {{ validGeometryDisplayText }}</div>
+              <div v-if="$route.name === 'Anomalies'"><strong>Anomaly Type:</strong> {{ filtersStore.anomalyType }}</div>
+              <div v-if="showsTimeOfDayFilter"><strong>Time of Day:</strong> {{ formatTimeDetailed(filtersStore.startHour, filtersStore.startMinute) }} - {{ formatTimeDetailed(filtersStore.endHour, filtersStore.endMinute) }}</div>
+              <div v-if="showsPercentChangeFilter"><strong>Percent Change:</strong> {{ percentChangeSummaryText }}</div>
             <div v-if="filtersStore.dayOfWeek.length > 0"><strong>Days:</strong> {{ dayOfWeekDisplayText }}</div>
             <div v-if="($route.name === 'TravelTime' || $route.name === 'BeforeAfter') && filtersStore.removeAnomalies"><strong>Remove Anomalies:</strong> Yes</div>
           </div>
@@ -306,6 +309,7 @@ import { useSignalsStore } from '@/stores/signals'
 import { useBeforeAfterFiltersStore } from '@/stores/beforeAfterFilters'
 import ApiService from '@/services/api'
 import BeforeAfterDateSelector from './BeforeAfterDateSelector.vue'
+import { getMonitoringDateStrings } from '@/utils/monitoringDate'
 
 const filtersStore = useFiltersStore()
 const signalsStore = useSignalsStore()
@@ -316,6 +320,9 @@ const searchQuery = ref('')
 const signalSelectorExpanded = ref(true) // Start expanded by default
 const route = useRoute()
 const isChangepointsRoute = computed(() => route.name === 'Changepoints')
+const isMonitoringRoute = computed(() => route.name === 'Monitoring')
+const showsPercentChangeFilter = computed(() => isChangepointsRoute.value || isMonitoringRoute.value)
+const showsTimeOfDayFilter = computed(() => !isChangepointsRoute.value && !isMonitoringRoute.value)
 const pctChangeImprovementLocal = ref(filtersStore.pctChangeImprovement)
 const pctChangeDegradationLocal = ref(filtersStore.pctChangeDegradation)
 
@@ -327,6 +334,13 @@ const activeEndDate = computed(() =>
 )
 const currentStartDate = computed(() => activeStartDate.value || '--')
 const currentEndDate = computed(() => activeEndDate.value || '--')
+const monitoringDateLabel = computed(() => {
+  if (!isMonitoringRoute.value) {
+    return ''
+  }
+  const { start, end } = getMonitoringDateStrings()
+  return `${start} to ${end}`
+})
 
 // Local date state with debouncing
 const localStartDate = ref(activeStartDate.value)
@@ -453,6 +467,7 @@ function formatTimeDetailed(hour, minute) {
 function formatTime(hour) {
   return `${String(hour).padStart(2, '0')}:00`
 }
+
 
 // Filter district groups by search query
 const filteredDistrictGroups = computed(() => {

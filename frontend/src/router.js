@@ -3,6 +3,7 @@ import TravelTime from './views/TravelTime.vue'
 import Anomalies from './views/Anomalies.vue'
 import BeforeAfter from './views/BeforeAfter.vue'
 import Changepoints from './views/Changepoints.vue'
+import Monitoring from './views/Monitoring.vue'
 
 const routes = [
   {
@@ -28,6 +29,11 @@ const routes = [
     path: '/changepoints',
     name: 'Changepoints',
     component: Changepoints
+  },
+  {
+    path: '/monitoring',
+    name: 'Monitoring',
+    component: Monitoring
   }
 ]
 

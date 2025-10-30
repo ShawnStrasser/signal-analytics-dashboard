@@ -129,6 +129,11 @@ const routes = [
     title: 'Changepoints',
     icon: 'mdi-chart-bell-curve-cumulative',
   },
+  {
+    path: '/monitoring',
+    title: 'Monitoring',
+    icon: 'mdi-monitor-dashboard',
+  },
 ]
 
 const geometryStore = useGeometryStore()

@@ -196,6 +196,11 @@ import { useSignalDimensionsStore } from '@/stores/signalDimensions'
 import { useXdDimensionsStore } from '@/stores/xdDimensions'
 import { useThemeStore } from '@/stores/theme'
 import { changepointColorScale } from '@/utils/colorScale'
+import {
+  normalizeChangepointDetailRow,
+  buildChangepointDateSeries,
+  buildChangepointTimeOfDaySeries
+} from '@/utils/changepointSeries'
 
 const filtersStore = useFiltersStore()
 const selectionStore = useSelectionStore()
@@ -259,8 +264,8 @@ const chartSeries = computed(() => {
     return { before: [], after: [] }
   }
   return chartMode.value === 'tod'
-    ? buildTimeOfDaySeries(detailRows.value)
-    : buildDateSeries(detailRows.value)
+    ? buildChangepointTimeOfDaySeries(detailRows.value)
+    : buildChangepointDateSeries(detailRows.value)
 })
 
 const chartTitle = computed(() => {
@@ -337,7 +342,7 @@ watch(
         return
       }
 
-      const records = ApiService.arrowTableToObjects(arrowTable).map(normalizeDetailRow)
+      const records = ApiService.arrowTableToObjects(arrowTable).map(normalizeChangepointDetailRow)
       detailRows.value = records
       chartSeriesEmpty.value = records.length === 0
     } catch (error) {
@@ -679,79 +684,6 @@ function getRowProps({ item }) {
 
   return {
     style: { cursor: 'pointer' }
-  }
-}
-
-function normalizeDetailRow(row) {
-  return {
-    timestamp: row.TIMESTAMP ?? row.timestamp,
-    travel_time_seconds: Number(row.TRAVEL_TIME_SECONDS ?? row.travel_time_seconds ?? 0),
-    period: String(row.PERIOD ?? row.period ?? '').toLowerCase()
-  }
-}
-
-function buildDateSeries(rows) {
-  const before = []
-  const after = []
-
-  rows.forEach(row => {
-    if (!row.timestamp) {
-      return
-    }
-    const y = Number(row.travel_time_seconds)
-    if (!Number.isFinite(y)) {
-      return
-    }
-    const x = new Date(row.timestamp).getTime()
-    if (!Number.isFinite(x)) {
-      return
-    }
-
-    const point = [x, Number(y.toFixed(2))]
-    if (row.period === 'before') {
-      before.push(point)
-    } else if (row.period === 'after') {
-      after.push(point)
-    }
-  })
-
-  before.sort((a, b) => a[0] - b[0])
-  after.sort((a, b) => a[0] - b[0])
-
-  return { before, after }
-}
-
-function buildTimeOfDaySeries(rows) {
-  const beforeBuckets = new Map()
-  const afterBuckets = new Map()
-
-  rows.forEach(row => {
-    if (!row.timestamp) {
-      return
-    }
-    const value = Number(row.travel_time_seconds)
-    if (!Number.isFinite(value)) {
-      return
-    }
-    const date = new Date(row.timestamp)
-    const minutes = date.getHours() * 60 + date.getMinutes()
-    const target = row.period === 'before' ? beforeBuckets : afterBuckets
-    const entry = target.get(minutes) || { sum: 0, count: 0 }
-    entry.sum += value
-    entry.count += 1
-    target.set(minutes, entry)
-  })
-
-  const toSeries = (bucketMap) => Array.from(bucketMap.entries())
-    .map(([minutes, stats]) => {
-      const avg = stats.count > 0 ? stats.sum / stats.count : 0
-      return [minutes, Number(avg.toFixed(2))]
-    })
-    .sort((a, b) => a[0] - b[0])
-
-  return {
-    before: toSeries(beforeBuckets),
-    after: toSeries(afterBuckets)
   }
 }
 

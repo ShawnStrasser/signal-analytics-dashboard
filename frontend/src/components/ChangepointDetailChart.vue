@@ -24,6 +24,14 @@ const props = defineProps({
   subtitle: {
     type: String,
     default: ''
+  },
+  showLegend: {
+    type: Boolean,
+    default: true
+  },
+  showTitle: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -63,7 +71,7 @@ onUnmounted(() => {
 })
 
 watch(
-  () => [props.series, props.isTimeOfDay, props.title, props.subtitle],
+  () => [props.series, props.isTimeOfDay, props.title, props.subtitle, props.showLegend, props.showTitle],
   () => nextTick(updateChart),
   { deep: true }
 )
@@ -188,23 +196,46 @@ function updateChart() {
     }
   }
 
+  const titleOption = props.showTitle
+    ? {
+        text: props.title,
+        subtext: props.subtitle,
+        left: 'center',
+        textStyle: { color: textColor, fontSize: isMobile ? 13 : 16 },
+        subtextStyle: { color: textColor, fontSize: isMobile ? 10 : 11 }
+      }
+    : { show: false }
+
+  const legendTop = props.showLegend
+    ? (props.showTitle
+        ? (props.subtitle ? (isMobile ? 105 : 110) : (isMobile ? 95 : 100))
+        : (isMobile ? 20 : 24))
+    : 0
+
+  const legendOption = {
+    show: props.showLegend,
+    data: ['After', 'Before'],
+    top: legendTop,
+    textStyle: { color: textColor, fontSize: isMobile ? 10 : 12 }
+  }
+
+  const gridTop = (() => {
+    if (props.showTitle) {
+      return props.subtitle ? (isMobile ? '150px' : '155px') : (isMobile ? '140px' : '145px')
+    }
+    if (props.showLegend) {
+      return props.isTimeOfDay ? (isMobile ? '80px' : '85px') : (isMobile ? '90px' : '95px')
+    }
+    return isMobile ? '35px' : '45px'
+  })()
+
   const option = {
-    title: {
-      text: props.title,
-      subtext: props.subtitle,
-      left: 'center',
-      textStyle: { color: textColor, fontSize: isMobile ? 13 : 16 },
-      subtextStyle: { color: textColor, fontSize: isMobile ? 10 : 11 }
-    },
+    title: titleOption,
     tooltip: {
       trigger: 'axis',
       formatter: tooltipFormatter
     },
-    legend: {
-      data: ['After', 'Before'],
-      top: props.subtitle ? (isMobile ? 105 : 110) : (isMobile ? 95 : 100),
-      textStyle: { color: textColor, fontSize: isMobile ? 10 : 12 }
-    },
+    legend: legendOption,
     xAxis: xAxisConfig,
     yAxis: {
       type: 'value',
@@ -227,7 +258,7 @@ function updateChart() {
       left: isMobile ? '60px' : '80px',
       right: isMobile ? '20px' : '50px',
       bottom: isMobile ? '70px' : '60px',
-      top: props.subtitle ? (isMobile ? '150px' : '155px') : (isMobile ? '140px' : '145px')
+      top: gridTop
     },
     dataZoom: [
       {
