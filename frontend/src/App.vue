@@ -76,7 +76,7 @@
       <v-divider class="my-4"></v-divider>
 
       <!-- Filters Section -->
-      <FilterPanel />
+      <FilterPanel v-if="showFilterPanel" />
     </v-navigation-drawer>
 
     <v-main>
@@ -101,6 +101,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useTheme, useDisplay } from 'vuetify'
 import FilterPanel from './components/FilterPanel.vue'
 import ConnectionStatus from './components/ConnectionStatus.vue'
@@ -136,6 +137,7 @@ const routes = [
   },
 ]
 
+const route = useRoute()
 const geometryStore = useGeometryStore()
 const themeStore = useThemeStore()
 const vuetifyTheme = useTheme()
@@ -186,6 +188,8 @@ const toggleTheme = () => {
 const toggleColorblindMode = () => {
   themeStore.toggleColorblindMode()
 }
+
+const showFilterPanel = computed(() => route.meta?.showFilters !== false)
 
 const connectionChipColor = computed(() => {
   switch (connectionStatus.value) {
