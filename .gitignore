@@ -222,3 +222,4 @@ frontend/coverage/
 
 # random files
 test_email.py
+subscriptions.db

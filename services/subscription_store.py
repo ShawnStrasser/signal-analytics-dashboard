@@ -143,7 +143,6 @@ def store_login_token(email: str, token: str, expires_at: Optional[datetime] = N
             },
         )
 
-
 def consume_login_token(token: str) -> Optional[str]:
     """Mark a login token as used and return the associated email."""
     now = _utcnow()

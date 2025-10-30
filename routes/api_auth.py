@@ -15,10 +15,22 @@ from config import (
     SESSION_TTL_DAYS,
 )
 from services import email_service, subscription_store
+from services.rate_limiter import rate_limiter
 
 auth_bp = Blueprint("auth", __name__)
 
 SESSION_COOKIE_NAME = "monitoring_session"
+EMAIL_REQUESTS_PER_DAY = 3
+EMAIL_DAILY_WINDOW_SECONDS = 24 * 60 * 60
+EMAIL_SHORT_WINDOW_LIMIT = 1
+EMAIL_SHORT_WINDOW_SECONDS = 60
+
+
+def _client_ip() -> str:
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.remote_addr or "unknown"
 
 
 def _validate_email(email: Optional[str]) -> str:
@@ -27,7 +39,10 @@ def _validate_email(email: Optional[str]) -> str:
     parsed = parseaddr(email)[1]
     if not parsed or "@" not in parsed:
         raise ValueError("Invalid email address")
-    return parsed.lower()
+    normalized = parsed.lower()
+    if not normalized.endswith(".gov"):
+        raise ValueError("Only .gov email addresses are allowed")
+    return normalized
 
 
 def _build_login_link(token: str) -> str:
@@ -76,6 +91,35 @@ def request_magic_link():
         email = _validate_email(payload.get("email", ""))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+    # Daily per-email limit (in-memory, resets on restart)
+    daily_key = f"magic-link-email-daily:{email}"
+    allowed_daily, retry_after_daily = rate_limiter.allow(
+        daily_key, EMAIL_REQUESTS_PER_DAY, EMAIL_DAILY_WINDOW_SECONDS
+    )
+    if not allowed_daily:
+        wait_seconds = max(1, int(retry_after_daily or EMAIL_DAILY_WINDOW_SECONDS))
+        response = jsonify({"error": "Too many login link requests today. Please try again tomorrow."})
+        response.headers["Retry-After"] = str(wait_seconds)
+        return response, 429
+
+    # Short burst protection per email address
+    email_key = f"magic-link-email:{email}"
+    allowed, retry_after = rate_limiter.allow(email_key, EMAIL_SHORT_WINDOW_LIMIT, EMAIL_SHORT_WINDOW_SECONDS)
+    if not allowed:
+        wait_seconds = max(1, int(retry_after or EMAIL_SHORT_WINDOW_SECONDS))
+        response = jsonify({"error": "Too many login link requests. Please wait before trying again."})
+        response.headers["Retry-After"] = str(wait_seconds)
+        return response, 429
+
+    # Throttle repeated attempts from the same client IP
+    ip_key = f"magic-link-ip:{_client_ip()}"
+    allowed_ip, retry_after_ip = rate_limiter.allow(ip_key, 5, 60)
+    if not allowed_ip:
+        wait_seconds = max(1, int(retry_after_ip or EMAIL_SHORT_WINDOW_SECONDS))
+        response = jsonify({"error": "Too many requests from this client. Please slow down."})
+        response.headers["Retry-After"] = str(wait_seconds)
+        return response, 429
 
     token = secrets.token_urlsafe(32)
     subscription_store.store_login_token(email, token)

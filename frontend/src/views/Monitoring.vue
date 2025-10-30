@@ -5,7 +5,7 @@
         <div class="auth-heading">Email Monitoring Reports</div>
         <template v-if="!authStore.isAuthenticated">
           <p class="auth-description">
-            Sign in with your email to subscribe to daily monitoring summaries. We will email you a link—no password required.
+            Sign in with your .gov email to subscribe to daily monitoring summaries. You can request up to three sign-in links per day—we will email you a link, no password required.
           </p>
           <v-text-field
             v-model="emailInput"
@@ -390,7 +390,13 @@ onMounted(async () => {
 })
 
 function isValidEmail(value) {
-  return typeof value === 'string' && /\S+@\S+\.\S+/.test(value)
+  if (typeof value !== 'string') return false
+
+  const trimmed = value.trim()
+  if (trimmed.length === 0) return false
+  const basicPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  if (!basicPattern.test(trimmed)) return false
+  return trimmed.toLowerCase().endsWith('.gov')
 }
 
 function buildSubscriptionSettings() {
@@ -406,7 +412,7 @@ async function sendLoginLink() {
   loginError.value = ''
 
   if (!isValidEmail(emailInput.value)) {
-    loginError.value = 'Enter a valid email address.'
+    loginError.value = 'Enter a valid .gov email address.'
     return
   }
 

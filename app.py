@@ -17,6 +17,7 @@ from routes.api_travel_time import travel_time_bp
 from routes.api_subscriptions import subscriptions_bp
 from services import subscription_store
 from services.scheduler import start_scheduler
+from services.rate_limiter import rate_limiter
 
 # Download timezone database on Windows if needed
 if sys.platform == 'win32':
@@ -33,6 +34,46 @@ subscription_store.initialize()
 
 if os.environ.get("PYTEST_CURRENT_TEST") is None:
     start_scheduler()
+
+GENERAL_RATE_LIMITS = [
+    ("minute", 120, 60),
+    ("hour", 2000, 3600),
+]
+GENERAL_RATE_LIMIT_ENDPOINT_EXEMPTIONS = {"health_check", "connection_status"}
+GENERAL_RATE_LIMIT_PATH_PREFIX_EXEMPTIONS = ("/static/", "/favicon.ico")
+
+
+def _get_client_ip() -> str:
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+
+
+@app.before_request
+def apply_global_rate_limit():
+    if request.method == "OPTIONS":
+        return None
+
+    endpoint = request.endpoint or ""
+    if endpoint in GENERAL_RATE_LIMIT_ENDPOINT_EXEMPTIONS:
+        return None
+
+    path = request.path or ""
+    if any(path.startswith(prefix) for prefix in GENERAL_RATE_LIMIT_PATH_PREFIX_EXEMPTIONS):
+        return None
+
+    client_ip = _get_client_ip()
+    for name, limit, window in GENERAL_RATE_LIMITS:
+        key = f"rate:{name}:{client_ip}"
+        allowed, retry_after = rate_limiter.allow(key, limit, window)
+        if not allowed:
+            wait_seconds = max(1, int(retry_after or window))
+            response = jsonify({"error": "Too many requests. Please slow down."})
+            response.headers["Retry-After"] = str(wait_seconds)
+            return response, 429
+
+    return None
 
 @app.route('/api/health')
 def health_check():
