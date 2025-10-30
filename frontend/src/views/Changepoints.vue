@@ -556,9 +556,12 @@ async function loadMapData({ autoZoom = false } = {}) {
     xdData.value = enrichedXd
     selectionStore.updateMappings(enrichedSignals, enrichedXd)
 
-    if (autoZoom && mapRef.value && typeof mapRef.value.rezoomToSignals === 'function') {
+    if (autoZoom) {
       await nextTick()
-      mapRef.value.rezoomToSignals()
+      const mapInstance = mapRef.value
+      if (mapInstance && typeof mapInstance.rezoomToSignals === 'function') {
+        mapInstance.rezoomToSignals()
+      }
     }
   } catch (error) {
     console.error('Failed to load changepoint map data:', error)

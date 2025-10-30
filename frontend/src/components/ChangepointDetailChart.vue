@@ -43,12 +43,24 @@ const themeStore = useThemeStore()
 const BEFORE_COLOR = computed(() => '#1976D2')
 const AFTER_COLOR = computed(() => (themeStore.colorblindMode ? '#E69F00' : '#F57C00'))
 
-function initializeChart() {
-  if (!chartContainer.value) {
+function initializeChart(attempt = 0) {
+  const container = chartContainer.value
+  if (!container || chart) {
     return
   }
 
-  chart = echarts.init(chartContainer.value)
+  const { clientWidth, clientHeight } = container
+
+  if ((!clientWidth || !clientHeight) && attempt < 10) {
+    requestAnimationFrame(() => initializeChart(attempt + 1))
+    return
+  }
+
+  if (!clientWidth || !clientHeight) {
+    return
+  }
+
+  chart = echarts.init(container)
   window.addEventListener('resize', handleResize)
 }
 
@@ -80,6 +92,10 @@ watch(() => theme.global.current.value.dark, () => nextTick(updateChart))
 watch(() => themeStore.colorblindMode, () => nextTick(updateChart))
 
 function updateChart() {
+  if (!chart) {
+    initializeChart()
+  }
+
   if (!chart) {
     return
   }
