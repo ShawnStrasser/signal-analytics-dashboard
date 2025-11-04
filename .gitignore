@@ -224,3 +224,4 @@ frontend/coverage/
 test_email.py
 subscriptions.db
 debug_reports/*
+joke_state.json
