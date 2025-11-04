@@ -72,6 +72,14 @@ def send_test_report():
 
     result = report_service.generate_and_send_report(email, settings, subject_prefix="Monitoring Report (Test)")
     if not result.get("sent"):
-        return jsonify({"message": "No changepoints matched the selected filters. Email not sent."}), 200
+        reason = result.get("reason")
+        if reason == "no_data":
+            return jsonify({"message": "No changepoints matched the selected filters. Email not sent."}), 200
+        if reason == "debug_saved":
+            return jsonify({
+                "message": f"Report saved locally at {result.get('debug_saved_path')}",
+                "rows": result.get("rows", 0)
+            }), 200
+        return jsonify({"message": "Report generation failed.", "error": reason or "unknown"}), 500
 
     return jsonify({"message": "Test email sent", "rows": result.get("rows", 0)})

@@ -21,3 +21,6 @@ brevo-python
 # Reporting utilities
 fpdf2
 APScheduler
+matplotlib
+requests
+pillow
