@@ -268,13 +268,12 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
         t.AVG_AFTER,
         t.SCORE,
         xd.ROADNAME,
-        xd.BEARING
+        xd.BEARING,
+        LISTAGG(DISTINCT xd.ID, ', ') WITHIN GROUP (ORDER BY xd.ID) AS ASSOCIATED_SIGNALS
     FROM CHANGEPOINTS t
-    INNER JOIN (
-        SELECT DISTINCT XD, ID, ROADNAME, BEARING, APPROACH, VALID_GEOMETRY
-        FROM DIM_SIGNALS_XD
-    ) xd ON t.XD = xd.XD{join_signal_clause}
+    INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD{join_signal_clause}
     WHERE {where_clause}
+    GROUP BY ALL
     ORDER BY ABS(t.PCT_CHANGE) DESC, t.TIMESTAMP DESC
     LIMIT {limit}
     """
@@ -293,6 +292,7 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
             "score": row["SCORE"],
             "roadname": row["ROADNAME"],
             "bearing": row["BEARING"],
+            "associated_signals": row["ASSOCIATED_SIGNALS"],
         }
         rows.append(record)
 
@@ -966,7 +966,7 @@ def _render_combined_chart_block(pdf, meta: Dict[str, Any], image_bytes: Optiona
     natural_width = COMPOSITE_FIG_WIDTH_IN * 72
     chart_width = min(content_width, natural_width)
     chart_height = chart_width * COMPOSITE_FIG_RATIO
-    info_height = 66
+    info_height = 78
     total_height = info_height + chart_height + 14
 
     _ensure_space(pdf, total_height)
@@ -990,7 +990,10 @@ def _render_combined_chart_block(pdf, meta: Dict[str, Any], image_bytes: Optiona
     text_x = start_x + 16
     pdf.set_xy(text_x, start_y + 12)
     info_width = max(chart_width - 180, chart_width * 0.6)
-    pdf.cell(info_width, 14, location_text, ln=1)
+    associated = _clean_text(meta.get("associated_signals"), "--")
+    road_with_bearing = f"{road} ({bearing_value})" if bearing_value else road
+    location_text = f"XD {xd_label} | {road_with_bearing} | Signal(s): {associated}"
+    pdf.multi_cell(info_width, 14, location_text)
 
     callout_text, _, _, callout_text_rgb = _trend_callout(meta.get("pct_change"))
     pdf.set_text_color(*callout_text_rgb)

@@ -397,13 +397,12 @@ def get_changepoints_table():
         t.AVG_AFTER,
         t.SCORE,
         xd.ROADNAME,
-        xd.BEARING
+        xd.BEARING,
+        LISTAGG(DISTINCT xd.ID, ', ') WITHIN GROUP (ORDER BY xd.ID) AS ASSOCIATED_SIGNALS
     FROM CHANGEPOINTS t
-    INNER JOIN (
-        SELECT DISTINCT XD, ID, ROADNAME, BEARING, APPROACH, VALID_GEOMETRY
-        FROM DIM_SIGNALS_XD
-    ) xd ON t.XD = xd.XD{join_signal_clause}
+    INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD{join_signal_clause}
     WHERE {where_clause}
+    GROUP BY ALL
     ORDER BY {sort_column} {sort_direction}
     LIMIT 100
     """

@@ -217,6 +217,8 @@
                 <span class="meta-item">{{ item.meta.roadName || 'Unknown road' }}</span>
                 <span class="meta-separator" aria-hidden="true">&bull;</span>
                 <span class="meta-item">{{ formatTimestamp(item.meta.timestamp) }}</span>
+                <span class="meta-separator" aria-hidden="true">&bull;</span>
+                <span class="meta-item">Associated Signal(s): {{ item.meta.associatedSignals || '--' }}</span>
               </div>
             </div>
           </v-card-title>
@@ -701,7 +703,8 @@ function normalizeTableRow(row) {
     avgBefore: Number(row.AVG_BEFORE ?? row.avg_before ?? 0),
     avgAfter: Number(row.AVG_AFTER ?? row.avg_after ?? 0),
     roadName: row.ROADNAME ?? row.road_name ?? '',
-    bearing: row.BEARING ?? row.bearing ?? ''
+    bearing: row.BEARING ?? row.bearing ?? '',
+    associatedSignals: row.ASSOCIATED_SIGNALS ?? row.associated_signals ?? ''
   }
 }
 

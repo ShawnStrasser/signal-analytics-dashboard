@@ -123,6 +123,11 @@
                 <div class="text-caption text-medium-emphasis">Bearing {{ item.bearing ?? '--' }}</div>
               </div>
             </template>
+            <template #item.associated_signals="{ item }">
+              <div class="associated-signals-cell">
+                {{ item.associated_signals || '--' }}
+              </div>
+            </template>
             <template #item.xd="{ item }">
               <code>{{ item.xd }}</code>
             </template>
@@ -241,6 +246,7 @@ const tableHeaders = [
   { title: 'Avg Diff (s)', value: 'avg_diff', key: 'avg_diff', sortable: true },
   { title: 'Score', value: 'score', key: 'score', sortable: true },
   { title: 'Road & Bearing', value: 'road', key: 'road', sortable: false },
+  { title: 'Associated Signal(s)', value: 'associated_signals', key: 'associated_signals', sortable: false },
   { title: 'XD', value: 'xd', key: 'xd', sortable: false }
 ]
 
@@ -589,7 +595,7 @@ async function loadTableData() {
       road_name: row.ROADNAME,
       bearing: row.BEARING,
       xd: row.XD,
-      id: row.ID,
+      associated_signals: row.ASSOCIATED_SIGNALS,
       avg_before: Number(row.AVG_BEFORE ?? 0),
       avg_after: Number(row.AVG_AFTER ?? 0)
     }))
@@ -790,6 +796,11 @@ function formatScore(value) {
 .road-cell {
   display: flex;
   flex-direction: column;
+}
+
+.associated-signals-cell {
+  white-space: normal;
+  word-break: break-word;
 }
 
 
