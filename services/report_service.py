@@ -60,6 +60,9 @@ BEFORE_SERIES_HEX = "#1976D2"
 AFTER_SERIES_HEX = "#F57C00"
 JOKE_IMAGE_MAX_WIDTH_PT = 6 * 72  # match ATSPM_Report scaling (approx 6 inches)
 JOKE_IMAGE_MAX_HEIGHT_PT = 4 * 72  # approx 4 inches
+COMPOSITE_FIG_WIDTH_IN = 6.8
+COMPOSITE_FIG_HEIGHT_IN = 3.7
+COMPOSITE_FIG_RATIO = COMPOSITE_FIG_HEIGHT_IN / COMPOSITE_FIG_WIDTH_IN
 
 
 def _trend_callout(pct_change: Any) -> Tuple[str, Tuple[int, int, int], Tuple[int, int, int], Tuple[int, int, int]]:
@@ -341,6 +344,56 @@ def fetch_changepoint_detail_rows(xd: int, change_timestamp: Any) -> List[Dict[s
     return detail_rows
 
 
+def fetch_changepoint_hourly_series(xd: int, change_timestamp: Any) -> List[Dict[str, Any]]:
+    """Fetch hourly averaged travel times around a changepoint directly from Snowflake."""
+    session = get_snowflake_session(retry=True, max_retries=2)
+    if not session:
+        raise RuntimeError("Unable to establish database connection for changepoint hourly series")
+
+    xd_value = int(xd)
+    timestamp_sql = _format_timestamp_for_sql(change_timestamp)
+
+    query = f"""
+    WITH params AS (
+        SELECT TO_TIMESTAMP('{timestamp_sql}') AS CHANGE_TS
+    )
+    SELECT
+        DATE_TRUNC('HOUR', t.TIMESTAMP) AS HOUR_TS,
+        AVG(t.TRAVEL_TIME_SECONDS) AS AVG_TRAVEL_TIME,
+        CASE
+            WHEN t.TIMESTAMP < params.CHANGE_TS THEN 'before'
+            ELSE 'after'
+        END AS PERIOD
+    FROM TRAVEL_TIME_ANALYTICS t
+    CROSS JOIN params
+    WHERE t.XD = {xd_value}
+      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, params.CHANGE_TS)
+                          AND DATEADD('day', 7, params.CHANGE_TS)
+    GROUP BY 1, 3
+    ORDER BY HOUR_TS
+    """
+
+    table = session.sql(query).to_arrow()
+    if table.num_rows == 0:
+        return []
+
+    hourly_rows: List[Dict[str, Any]] = []
+    for record in table.to_pylist():
+        hour_ts = record.get("HOUR_TS")
+        if hasattr(hour_ts, "to_pydatetime"):
+            hour_ts = hour_ts.to_pydatetime()
+        period_value = str(record.get("PERIOD") or "").lower()
+        hourly_rows.append(
+            {
+                "timestamp": hour_ts,
+                "travel_time_seconds": _safe_float(record.get("AVG_TRAVEL_TIME")),
+                "period": period_value,
+            }
+        )
+
+    return hourly_rows
+
+
 def build_changepoint_date_series(rows: Sequence[Dict[str, Any]]) -> Dict[str, List[Tuple[datetime, float]]]:
     """Group travel time samples by period and sort by timestamp."""
     before: List[Tuple[datetime, float]] = []
@@ -449,8 +502,8 @@ def _render_changepoint_composite_chart(
     if not (before_dates or after_dates or before_time or after_time):
         return None
 
-    fig = plt.figure(figsize=(6.8, 5.2), dpi=170)
-    grid = fig.add_gridspec(2, 1, height_ratios=[1.15, 1], hspace=0.32)
+    fig = plt.figure(figsize=(COMPOSITE_FIG_WIDTH_IN, COMPOSITE_FIG_HEIGHT_IN), dpi=170)
+    grid = fig.add_gridspec(2, 1, height_ratios=[1.3, 1.0], hspace=0.35)
 
     ax_trend = fig.add_subplot(grid[0])
     if before_dates:
@@ -464,7 +517,7 @@ def _render_changepoint_composite_chart(
     if y_min is not None and y_max is not None:
         ax_trend.set_ylim(y_min, y_max)
     ax_trend.set_ylabel("Travel Time (seconds)", fontsize=10)
-    ax_trend.set_title("Daily Trend", fontsize=12, pad=10)
+    ax_trend.set_title("Daily Trend (Hourly)", fontsize=12, pad=10)
     ax_trend.grid(True, linestyle="--", alpha=0.25)
     ax_trend.tick_params(axis="both", labelsize=9)
     if mdates is not None and (before_dates or after_dates):
@@ -490,9 +543,8 @@ def _render_changepoint_composite_chart(
     tick_minutes = list(range(0, 24 * 60 + 1, 240))
     ax_profile.set_xticks(tick_minutes)
     ax_profile.set_xticklabels([_format_minutes_label(tick) for tick in tick_minutes])
-    ax_profile.set_xlabel("Time of Day", fontsize=10)
     ax_profile.set_ylabel("Travel Time (seconds)", fontsize=10)
-    ax_profile.set_title("Time of Day", fontsize=12, pad=10)
+    ax_profile.set_title("Time of Day (15-minute)", fontsize=12, pad=10)
     ax_profile.grid(True, linestyle="--", alpha=0.25)
     ax_profile.tick_params(axis="both", labelsize=9)
 
@@ -525,15 +577,22 @@ def enrich_monitoring_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any
     for row in rows:
         item = dict(row)
         detail_rows: List[Dict[str, Any]] = []
+        hourly_rows: List[Dict[str, Any]] = []
         try:
             detail_rows = fetch_changepoint_detail_rows(item["xd"], item["timestamp"])
         except Exception as exc:  # pragma: no cover - defensive logging
             print(f"[WARN] Unable to fetch changepoint detail for XD {item.get('xd')}: {exc}")
+        try:
+            hourly_rows = fetch_changepoint_hourly_series(item["xd"], item["timestamp"])
+        except Exception as exc:  # pragma: no cover - defensive logging
+            print(f"[WARN] Unable to fetch hourly changepoint trend for XD {item.get('xd')}: {exc}")
 
-        date_series = build_changepoint_date_series(detail_rows)
+        date_source = hourly_rows or detail_rows
+        date_series = build_changepoint_date_series(date_source)
         time_series = build_changepoint_time_of_day_series(detail_rows)
 
         item["detail_rows"] = detail_rows
+        item["hourly_rows"] = hourly_rows
         item["date_series"] = date_series
         item["time_series"] = time_series
         item["chart_images"] = _collect_chart_images(item, date_series, time_series)
@@ -654,15 +713,18 @@ def _ensure_space(pdf, required_height: float) -> None:
 
 
 def _draw_legend_entry(pdf, x_pos: float, y_pos: float, label: str, color: Tuple[int, int, int]) -> float:
-    """Draw a colored swatch with a label, returning the next x position."""
-    box_size = 10
-    pdf.set_fill_color(*color)
-    pdf.rect(x_pos, y_pos, box_size, box_size, "F")
+    """Draw a line-style legend entry with a label, returning the next x position."""
+    line_length = 18
+    center_y = y_pos + 5
+    pdf.set_draw_color(*color)
+    pdf.set_line_width(2)
+    pdf.line(x_pos, center_y, x_pos + line_length, center_y)
     pdf.set_text_color(62, 72, 85)
     pdf.set_font("Helvetica", "", 9)
-    pdf.set_xy(x_pos + box_size + 4, y_pos - 1)
-    pdf.cell(0, box_size + 2, label)
-    return x_pos + box_size + 4 + pdf.get_string_width(label) + 12
+    pdf.set_xy(x_pos + line_length + 6, y_pos - 1)
+    pdf.cell(0, 12, label)
+    pdf.set_line_width(0.8)
+    return x_pos + line_length + 6 + pdf.get_string_width(label) + 12
 
 
 def _render_combined_chart_block(pdf, meta: Dict[str, Any], image_bytes: Optional[bytes]) -> None:
@@ -670,14 +732,16 @@ def _render_combined_chart_block(pdf, meta: Dict[str, Any], image_bytes: Optiona
     if not image_bytes:
         return
 
-    chart_width = pdf.w - pdf.l_margin - pdf.r_margin
-    chart_height = chart_width * 0.52
-    info_height = 52
+    content_width = pdf.w - pdf.l_margin - pdf.r_margin
+    natural_width = COMPOSITE_FIG_WIDTH_IN * 72
+    chart_width = min(content_width, natural_width)
+    chart_height = chart_width * COMPOSITE_FIG_RATIO
+    info_height = 66
     total_height = info_height + chart_height + 14
 
     _ensure_space(pdf, total_height)
 
-    start_x = pdf.l_margin
+    start_x = pdf.l_margin + (content_width - chart_width) / 2.0
     start_y = pdf.get_y()
 
     pdf.set_draw_color(212, 226, 247)
@@ -689,31 +753,41 @@ def _render_combined_chart_block(pdf, meta: Dict[str, Any], image_bytes: Optiona
     pdf.set_font("Helvetica", "B", 11)
     xd_label = _clean_text(meta.get("xd"), "--")
     road = _clean_text(meta.get("roadname"), "Unknown road")
-    pdf.set_xy(start_x + 12, start_y + 12)
-    pdf.cell(chart_width - 24, 12, f"XD {xd_label} | {road}", ln=1)
-
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(80, 86, 96)
-    details: List[str] = []
-    timestamp = _localize_timestamp(meta.get("timestamp"))
-    if timestamp:
-        details.append(f"Observed: {timestamp}")
     bearing_value = _clean_text(meta.get("bearing"))
+    location_text = f"XD {xd_label} | {road}"
     if bearing_value:
-        details.append(f"Bearing: {bearing_value}")
-    info_text = " | ".join(details)
-    pdf.set_xy(start_x + 12, start_y + 30)
-    info_width = max(chart_width - 190, chart_width * 0.55)
-    pdf.cell(info_width, 12, info_text or " ")
+        location_text = f"{location_text} - {bearing_value}"
+    text_x = start_x + 16
+    pdf.set_xy(text_x, start_y + 12)
+    info_width = max(chart_width - 180, chart_width * 0.6)
+    pdf.cell(info_width, 14, location_text, ln=1)
 
-    legend_x = max(start_x + chart_width - 150, start_x + info_width + 24)
-    legend_y = start_y + 16
+    callout_text, _, _, callout_text_rgb = _trend_callout(meta.get("pct_change"))
+    pdf.set_text_color(*callout_text_rgb)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_x(text_x)
+    pdf.cell(info_width, 14, callout_text, ln=1)
+
+    observed_label = _localize_timestamp(meta.get("timestamp")) or "--"
+    before_value = _seconds(meta.get("avg_before"))
+    after_value = _seconds(meta.get("avg_after"))
+    delta_value = _seconds(meta.get("avg_diff"))
+    pdf.set_text_color(80, 86, 96)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_x(text_x)
+    stats_line = (
+        f"Observed AT: {observed_label} | Before {before_value} | After {after_value} | Delta {delta_value}"
+    )
+    pdf.cell(info_width, 12, stats_line, ln=1)
+
+    legend_x = max(start_x + chart_width - 150, start_x + info_width + 20)
+    legend_y = start_y + 18
     legend_next = _draw_legend_entry(pdf, legend_x, legend_y, "Before", BEFORE_SERIES_RGB)
     _draw_legend_entry(pdf, legend_next, legend_y, "After", AFTER_SERIES_RGB)
 
     pdf.set_y(start_y + info_height + 6)
     stream = io.BytesIO(image_bytes)
-    pdf.image(stream, x=start_x, y=pdf.get_y(), w=chart_width, h=chart_height, type="PNG")
+    pdf.image(stream, x=start_x, y=pdf.get_y(), w=chart_width, type="PNG")
     pdf.set_y(pdf.get_y() + chart_height + 8)
 
 
@@ -730,26 +804,48 @@ def build_monitoring_pdf(
             "Install the 'matplotlib' package in the application environment."
         )
     pdf = MonitoringReportPDF(orientation="P", unit="pt", format="A4")
-    pdf.set_margins(54, 68, 54)
+    pdf.set_margins(36, 36, 36)
     pdf.alias_nb_pages()
     pdf.set_auto_page_break(auto=True, margin=60)
 
-    detection_label = _clean_text(filters.get("end_date"), "--")
     pdf.set_report_metadata("", "", f"Prepared by {EMAIL_SENDER_NAME}")
     pdf.add_page()
 
     content_width = pdf.w - pdf.l_margin - pdf.r_margin
 
-    pdf.set_text_color(28, 45, 82)
-    pdf.set_font("Helvetica", "B", 22)
-    pdf.cell(0, 28, f"Travel Time Analytics - {detection_label}", ln=1)
+    try:
+        zone = ZoneInfo(TIMEZONE)
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = None
+    today = datetime.now(zone) if zone else datetime.utcnow()
+    header_date = f"{today.strftime('%B')} {today.day}, {today.year}"
 
+    banner_top = pdf.get_y()
+    banner_height = 96
+    pdf.set_fill_color(238, 244, 255)
+    pdf.set_draw_color(194, 211, 241)
+    pdf.set_line_width(0.9)
+    pdf.rect(pdf.l_margin, banner_top, content_width, banner_height, "FD")
+
+    pdf.set_xy(pdf.l_margin + 18, banner_top + 12)
+    pdf.set_text_color(20, 46, 84)
+    pdf.set_font("Helvetica", "B", 24)
+    pdf.cell(content_width - 36, 28, "Travel Time Analytics Report", ln=1)
+
+    pdf.set_text_color(68, 88, 116)
     pdf.set_font("Helvetica", "", 13)
-    pdf.set_text_color(76, 92, 108)
-    pdf.cell(0, 20, "Daily Performance Monitoring for Traffic Signals", ln=1)
-    pdf.ln(4)
+    pdf.set_x(pdf.l_margin + 18)
+    pdf.cell(content_width - 36, 18, "Daily Performance Monitoring for Traffic Signals", ln=1)
 
+    pdf.set_text_color(42, 72, 120)
+    pdf.set_font("Helvetica", "I", 11)
+    pdf.set_x(pdf.l_margin + 18)
+    pdf.cell(content_width - 36, 16, header_date, ln=1)
+
+    pdf.set_y(banner_top + banner_height + 14)
+    pdf.set_text_color(64, 74, 94)
     pdf.set_font("Helvetica", "", 11)
+
     summary_paragraph_1 = [
         ("This daily report monitors travel time anomalies and changepoints at traffic signals. It uses ", None),
         ("INRIX XD segment data", "https://github.com/ShawnStrasser/RITIS_INRIX_API"),
@@ -761,7 +857,7 @@ def build_monitoring_pdf(
         ("traffic-anomaly toolkit", "https://github.com/ShawnStrasser/traffic-anomaly"),
         (".", None),
     ]
-    _write_paragraph_with_links(pdf, summary_paragraph_1, line_height=14)
+    _write_paragraph_with_links(pdf, summary_paragraph_1, line_height=15, base_color=(64, 74, 94))
 
     summary_paragraph_2 = [
         ("Explore the ", None),
@@ -770,37 +866,8 @@ def build_monitoring_pdf(
         ("open-source codebase", "https://github.com/ShawnStrasser/signal-analytics-dashboard"),
         (" for implementation details.", None),
     ]
-    _write_paragraph_with_links(pdf, summary_paragraph_2, line_height=14)
-    pdf.ln(4)
-
-    pdf.set_text_color(41, 72, 132)
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 18, "Your report has the following filters applied:", ln=1)
-    detail_lines = _filters_detail_lines(filters)
-    pdf.set_text_color(70, 70, 76)
-    pdf.set_font("Helvetica", "", 10)
-    if detail_lines:
-        pdf.set_fill_color(242, 245, 253)
-        pdf.set_draw_color(214, 222, 242)
-        pdf.set_line_width(0.8)
-        detail_text = "\n".join(f"- {line}" for line in detail_lines)
-        pdf.multi_cell(content_width, 14, detail_text, border=1, fill=True)
-        pdf.set_line_width(0.4)
-    else:
-        _write_full_width(pdf, "- No additional filters applied", 14)
-
-    pdf.ln(4)
-    _write_paragraph_with_links(
-        pdf,
-        [
-            ("To adjust these filters, visit the ", None),
-            ("monitoring page", "https://signals.up.railway.app/monitoring"),
-            (".", None),
-        ],
-        line_height=12,
-        base_color=(85, 90, 96),
-    )
-    pdf.ln(6)
+    _write_paragraph_with_links(pdf, summary_paragraph_2, line_height=15, base_color=(64, 74, 94))
+    pdf.ln(10)
 
     pdf.set_line_width(0.4)
     pdf.set_draw_color(220, 220, 220)
@@ -870,11 +937,50 @@ def build_monitoring_pdf(
             pdf.set_font("Helvetica", "I", 9)
             _write_full_width(pdf, attribution_text, 12)
 
-        pdf.ln(8)
+        pdf.ln(10)
+    else:
+        pdf.ln(6)
+
+    pdf.set_text_color(41, 72, 132)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 18, "Your report has the following filters applied:", ln=1)
+    detail_lines = _filters_detail_lines(filters)
+    pdf.set_text_color(70, 70, 76)
+    pdf.set_font("Helvetica", "", 10)
+    if detail_lines:
+        pdf.set_fill_color(242, 245, 253)
+        pdf.set_draw_color(214, 222, 242)
+        pdf.set_line_width(0.8)
+        detail_text = "\n".join(f"- {line}" for line in detail_lines)
+        pdf.multi_cell(content_width, 14, detail_text, border=1, fill=True)
+        pdf.set_line_width(0.4)
+    else:
+        _write_full_width(pdf, "- No additional filters applied", 14)
+
+    pdf.ln(8)
+    _write_paragraph_with_links(
+        pdf,
+        [
+            ("To adjust these filters, visit the ", None),
+            ("monitoring page", "https://signals.up.railway.app/monitoring"),
+            (".", None),
+        ],
+        line_height=12,
+        base_color=(85, 90, 96),
+    )
+    pdf.ln(12)
 
     pdf.set_text_color(28, 54, 103)
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 22, "Anomalies", ln=1)
+    pdf.set_text_color(70, 70, 76)
+    pdf.set_font("Helvetica", "", 11)
+    anomaly_copy = (
+        "An anomaly is when travel times are statistically higher than the forecast based on historical data. "
+        "Anomalies may be caused by incidents, inclement weather, or temporary detection failure."
+    )
+    _write_full_width(pdf, anomaly_copy, 14)
+    pdf.ln(2)
     pdf.set_text_color(85, 90, 96)
     pdf.set_font("Helvetica", "I", 11)
     _write_full_width(pdf, "No Anomalies Today.", 16)
@@ -885,16 +991,12 @@ def build_monitoring_pdf(
     pdf.cell(0, 22, "Changepoints", ln=1)
     pdf.set_text_color(70, 70, 76)
     pdf.set_font("Helvetica", "", 11)
-    changepoint_intro = [
-        "We surface changepoints confirmed a week after detection so each highlight reflects a persistent structural shift in travel time.",
-        "Use these insights to focus follow-up investigations on corridors where conditions have materially changed.",
-    ]
-    for line in changepoint_intro:
-        _write_full_width(pdf, line, 14)
-    pdf.ln(8)
-
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font("Helvetica", "", 12)
+    changepoint_blurb = (
+        "A changepoint is when a structural shift occurs in travel time mean or variance, lasting more than a couple days. "
+        "Changepoints may result from timing changes, construction, school starting, catastrophic detection failure, etc."
+    )
+    _write_full_width(pdf, changepoint_blurb, 14)
+    pdf.ln(10)
 
     rows_list = list(rows)
     if not rows_list:
@@ -902,30 +1004,7 @@ def build_monitoring_pdf(
         _write_full_width(pdf, "No changepoints matched the current filters.", 16)
     else:
         for index, item in enumerate(rows_list, start=1):
-            _ensure_space(pdf, 260)
-            pdf.set_text_color(28, 54, 103)
-            pdf.set_font("Helvetica", "B", 12)
-            pdf.cell(0, 16, f"{index}. Changepoint", ln=1)
-
-            callout_text, fill_rgb, border_rgb, text_rgb = _trend_callout(item.get("pct_change"))
-            pdf.set_fill_color(*fill_rgb)
-            pdf.set_draw_color(*border_rgb)
-            pdf.set_line_width(0.9)
-            pdf.set_text_color(*text_rgb)
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.multi_cell(content_width, 20, callout_text, border=1, fill=True, align="C")
-            pdf.ln(4)
-
-            concise_metrics = [
-                f"Change {_percent(item.get('pct_change'))}",
-                f"Delta {_seconds(item.get('avg_diff'))}",
-                f"Before {_seconds(item.get('avg_before'))}",
-                f"After {_seconds(item.get('avg_after'))}",
-            ]
-            pdf.set_text_color(60, 63, 70)
-            pdf.set_font("Helvetica", "", 10)
-            pdf.cell(0, 12, " | ".join(concise_metrics), ln=1)
-            pdf.ln(2)
+            _ensure_space(pdf, 380)
 
             charts = item.get("chart_images") or {}
             composite_chart = charts.get("combined_profile")
@@ -949,14 +1028,6 @@ def build_monitoring_pdf(
                 except AttributeError:
                     pdf.line(pdf.l_margin, line_y, pdf.w - pdf.r_margin, line_y)
                 pdf.ln(16)
-            if index < len(rows_list):
-                line_y = pdf.get_y()
-                pdf.set_draw_color(215, 222, 232)
-                try:
-                    pdf.dashed_line(pdf.l_margin, line_y, pdf.w - pdf.r_margin, line_y, dash_length=3, space_length=2)
-                except AttributeError:
-                    pdf.line(pdf.l_margin, line_y, pdf.w - pdf.r_margin, line_y)
-                pdf.ln(12)
 
     output = pdf.output(dest="S")
     return output.encode("latin-1") if isinstance(output, str) else output
