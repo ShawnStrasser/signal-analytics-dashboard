@@ -9,7 +9,7 @@ import math
 from collections import defaultdict
 from datetime import datetime, date
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 try:
     from fpdf import FPDF
@@ -191,12 +191,25 @@ def _localize_timestamp(timestamp: datetime) -> str:
 
 def _parse_filters(raw_filters: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize incoming filter payload."""
+    selected_group_values = raw_filters.get("selected_signal_groups")
+    if not selected_group_values:
+        selected_group_values = raw_filters.get("selected_districts")
+    if isinstance(selected_group_values, (list, tuple, set)):
+        selected_groups = [
+            str(item).strip() for item in selected_group_values if str(item).strip()
+        ]
+    elif selected_group_values:
+        selected_groups = [str(selected_group_values).strip()]
+    else:
+        selected_groups = []
+
     filters = {
         "start_date": normalize_date(raw_filters.get("start_date")),
         "end_date": normalize_date(raw_filters.get("end_date")),
         "signal_ids": raw_filters.get("signal_ids") or [],
         "selected_signals": raw_filters.get("selected_signals") or raw_filters.get("signal_ids") or [],
         "selected_xds": raw_filters.get("selected_xds") or [],
+        "selected_signal_groups": selected_groups,
         "maintained_by": (raw_filters.get("maintained_by") or "all"),
         "approach": raw_filters.get("approach"),
         "valid_geometry": raw_filters.get("valid_geometry"),
@@ -503,7 +516,7 @@ def _render_changepoint_composite_chart(
         return None
 
     fig = plt.figure(figsize=(COMPOSITE_FIG_WIDTH_IN, COMPOSITE_FIG_HEIGHT_IN), dpi=170)
-    grid = fig.add_gridspec(2, 1, height_ratios=[1.3, 1.0], hspace=0.35)
+    grid = fig.add_gridspec(2, 1, height_ratios=[1.0, 1.3], hspace=0.35)
 
     ax_trend = fig.add_subplot(grid[0])
     if before_dates:
@@ -602,6 +615,205 @@ def enrich_monitoring_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any
     return enriched
 
 
+def _quote_literal(value: Any) -> str:
+    """Return a SQL-safe quoted literal."""
+    text = str(value)
+    escaped = text.replace("'", "''")
+    return f"'{escaped}'"
+
+
+def _format_signal_label(signal_id: Any, name: Optional[str]) -> str:
+    """Combine signal ID and name for human-readable display."""
+    identifier = str(signal_id).strip() or "--"
+    label = (name or "").strip()
+    if label and label != identifier:
+        return f"{identifier} - {label}"
+    return identifier
+
+
+def _format_signal_preview(labels: Sequence[str], prefix: str, *, max_items: int = 3) -> str:
+    """Create a short preview line listing the first few labels."""
+    if not labels:
+        return ""
+    preview = list(labels[:max_items])
+    remainder = len(labels) - len(preview)
+    joined = ", ".join(preview)
+    if remainder > 0:
+        return f"{prefix}: {joined}, and {remainder} more"
+    return f"{prefix}: {joined}"
+
+
+def _build_signal_filter_display(filters: Dict[str, Any]) -> Dict[str, Any]:
+    """Compute group and individual signal display data for summaries."""
+    raw_selected = filters.get("selected_signals") or filters.get("signal_ids") or []
+    normalized_ids: List[str] = []
+    seen_ids: Set[str] = set()
+
+    for value in raw_selected:
+        text = str(value).strip()
+        if not text or text in seen_ids:
+            continue
+        normalized_ids.append(text)
+        seen_ids.add(text)
+
+    explicit_groups_raw = filters.get("selected_signal_groups") or []
+    explicit_groups = [
+        str(group).strip() for group in explicit_groups_raw if str(group).strip()
+    ]
+    explicit_group_set = set(explicit_groups)
+
+    display: Dict[str, Any] = {
+        "groups": [],
+        "individuals": [],
+        "individual_count": 0,
+        "missing_ids": [],
+        "total_selected": len(normalized_ids),
+        "metadata_resolved": False,
+    }
+
+    if not normalized_ids:
+        return display
+
+    session = get_snowflake_session(retry=True, max_retries=1)
+    if not session:
+        return display
+
+    maintained = str(filters.get("maintained_by") or "all").lower()
+    try:
+        id_sql = ", ".join(_quote_literal(sig) for sig in normalized_ids)
+        conditions = [f"ID IN ({id_sql})"]
+        if maintained == "odot":
+            conditions.append("ODOT_MAINTAINED = TRUE")
+        elif maintained == "others":
+            conditions.append("ODOT_MAINTAINED = FALSE")
+
+        metadata_query = f"""
+        SELECT
+            ID,
+            COALESCE(DISTRICT, 'Unknown') AS DISTRICT,
+            NAME
+        FROM DIM_SIGNALS
+        WHERE {' AND '.join(conditions)}
+        ORDER BY DISTRICT, ID
+        """
+        metadata_rows = session.sql(metadata_query).collect()
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[WARN] Unable to fetch signal metadata for filter summary: {exc}")
+        return display
+
+    if not metadata_rows:
+        return display
+
+    metadata_by_id: Dict[str, Dict[str, Any]] = {}
+    selected_by_district: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
+    for row in metadata_rows:
+        signal_id = str(row["ID"]).strip()
+        district_value = row["DISTRICT"]
+        district = str(district_value).strip() if district_value not in (None, "") else "Unknown"
+        name = row["NAME"]
+        meta = {"id": signal_id, "district": district or "Unknown", "name": name}
+        metadata_by_id[signal_id] = meta
+
+    missing_ids: List[str] = []
+    for sig_id in normalized_ids:
+        meta = metadata_by_id.get(sig_id)
+        if not meta:
+            missing_ids.append(sig_id)
+            continue
+        district = meta["district"]
+        selected_by_district[district].append(meta)
+
+    districts_needed = list(selected_by_district.keys())
+    district_totals: Dict[str, int] = {}
+
+    if districts_needed:
+        try:
+            district_list_sql = ", ".join(_quote_literal(d) for d in districts_needed)
+            count_conditions: List[str] = []
+            if maintained == "odot":
+                count_conditions.append("ODOT_MAINTAINED = TRUE")
+            elif maintained == "others":
+                count_conditions.append("ODOT_MAINTAINED = FALSE")
+            count_conditions.append(f"COALESCE(DISTRICT, 'Unknown') IN ({district_list_sql})")
+            where_clause = "WHERE " + " AND ".join(count_conditions)
+            counts_query = f"""
+            SELECT
+                COALESCE(DISTRICT, 'Unknown') AS DISTRICT,
+                COUNT(*) AS TOTAL
+            FROM DIM_SIGNALS
+            {where_clause}
+            GROUP BY COALESCE(DISTRICT, 'Unknown')
+            """
+            counts_rows = session.sql(counts_query).collect()
+            for row in counts_rows:
+                district_value = row["DISTRICT"]
+                district = str(district_value).strip() if district_value not in (None, "") else "Unknown"
+                total = row["TOTAL"]
+                try:
+                    district_totals[district or "Unknown"] = int(total) if total is not None else 0
+                except (TypeError, ValueError):
+                    district_totals[district or "Unknown"] = 0
+        except Exception as exc:  # pragma: no cover - defensive logging
+            print(f"[WARN] Unable to compute district totals for signal filters: {exc}")
+            district_totals = {}
+
+    full_group_set: Set[str] = set()
+    for district, items in selected_by_district.items():
+        if district in explicit_group_set:
+            full_group_set.add(district)
+            continue
+        total = district_totals.get(district)
+        if total and len(items) >= total:
+            full_group_set.add(district)
+
+    groups_ordered: List[str] = []
+    added_groups: Set[str] = set()
+    for group in explicit_groups:
+        if group not in added_groups:
+            groups_ordered.append(group)
+            added_groups.add(group)
+    for district in selected_by_district.keys():
+        if district in full_group_set and district not in added_groups:
+            groups_ordered.append(district)
+            added_groups.add(district)
+
+    individuals_meta: List[Dict[str, Any]] = []
+    for sig_id in normalized_ids:
+        meta = metadata_by_id.get(sig_id)
+        if not meta:
+            continue
+        if meta["district"] in full_group_set:
+            continue
+        individuals_meta.append(meta)
+
+    individual_labels: List[str] = []
+    seen_labels: Set[str] = set()
+    for meta in individuals_meta:
+        label = _format_signal_label(meta["id"], meta.get("name"))
+        if label in seen_labels:
+            continue
+        individual_labels.append(label)
+        seen_labels.add(label)
+
+    display["groups"] = groups_ordered
+    display["individuals"] = individual_labels
+    display["individual_count"] = len(individual_labels)
+    display["missing_ids"] = missing_ids
+    display["metadata_resolved"] = True
+    return display
+
+
+def _ensure_signal_filter_display(filters: Dict[str, Any]) -> Dict[str, Any]:
+    """Return cached signal filter display info, computing if necessary."""
+    cached = filters.get("_signal_filter_display")
+    if isinstance(cached, dict):
+        return cached
+    display = _build_signal_filter_display(filters)
+    filters["_signal_filter_display"] = display
+    return display
+
+
 def _filters_summary(filters: Dict[str, Any]) -> str:
     detection_date = filters.get("end_date") or "--"
     parts = [f"Detection Date: {detection_date}"]
@@ -624,9 +836,18 @@ def _filters_summary(filters: Dict[str, Any]) -> str:
         f"Percent Change Threshold: +{pct_degrade:.2f}% / {-pct_improve:.2f}%"
     )
 
-    signals = filters.get("signal_ids") or []
-    if signals:
-        parts.append(f"Signals: {len(signals)} selected")
+    display = _ensure_signal_filter_display(filters)
+    if display.get("metadata_resolved"):
+        if display["groups"]:
+            parts.append(f"Signal Groups: {', '.join(display['groups'])}")
+        if display["individual_count"]:
+            preview = _format_signal_preview(display["individuals"], "Signals", max_items=2)
+            if preview:
+                parts.append(preview)
+        elif display["groups"] and display["total_selected"]:
+            parts.append(f"Signals: {display['total_selected']} selected")
+    elif display["total_selected"]:
+        parts.append(f"Signals: {display['total_selected']} selected")
 
     return " | ".join(parts)
 
@@ -650,9 +871,18 @@ def _filters_detail_lines(filters: Dict[str, Any]) -> List[str]:
     if selected_xds:
         lines.append(f"XD focus: {len(selected_xds)} selected")
 
-    signals = filters.get("signal_ids") or []
-    if signals:
-        lines.append(f"Signals filtered: {len(signals)} IDs")
+    display = _ensure_signal_filter_display(filters)
+    if display.get("metadata_resolved"):
+        if display["groups"]:
+            lines.append(f"Signal groups: {', '.join(display['groups'])}")
+        if display["individual_count"]:
+            preview = _format_signal_preview(display["individuals"], "Specific signals", max_items=5)
+            if preview:
+                lines.append(preview)
+        elif not display["groups"] and display["total_selected"]:
+            lines.append(f"Signals filtered: {display['total_selected']} IDs")
+    elif display["total_selected"]:
+        lines.append(f"Signals filtered: {display['total_selected']} IDs")
 
     pct_improve = filters.get("pct_change_improvement", 0)
     pct_degrade = filters.get("pct_change_degradation", 0)
