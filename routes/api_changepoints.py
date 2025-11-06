@@ -6,9 +6,13 @@ page. Responses use Apache Arrow streams for consistency with the rest of the AP
 """
 
 import time
+from datetime import datetime
+from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from flask import Blueprint, request
 
-from config import DEBUG_BACKEND_TIMING
+from config import DEBUG_BACKEND_TIMING, TIMEZONE
 from database import get_snowflake_session, is_auth_error
 from utils.arrow_utils import (
     create_arrow_response,
@@ -50,6 +54,58 @@ def _sanitize_int_list(values):
         except (TypeError, ValueError):
             continue
     return ints
+
+
+def _local_zone() -> Optional[ZoneInfo]:
+    try:
+        return ZoneInfo(TIMEZONE)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+def _to_local_naive(timestamp: datetime) -> datetime:
+    if timestamp.tzinfo is None:
+        return timestamp
+    zone = _local_zone()
+    if zone is not None:
+        return timestamp.astimezone(zone).replace(tzinfo=None)
+    return timestamp.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+
+def _normalize_change_timestamp(value: str) -> str:
+    """
+    Convert a raw timestamp parameter to a local-time string Snowflake can compare directly.
+    Accepts ISO strings (with optional timezone/Z) or epoch seconds.
+    """
+    text = (value or "").strip()
+    if not text:
+        raise ValueError("empty timestamp parameter")
+
+    parsed: Optional[datetime] = None
+
+    if text.isdigit():
+        try:
+            epoch_value = int(text)
+            if len(text) > 11:  # likely milliseconds
+                epoch_value = epoch_value / 1000.0
+            parsed = datetime.fromtimestamp(epoch_value, tz=ZoneInfo("UTC"))
+        except (ValueError, OSError):
+            parsed = None
+    if parsed is None:
+        candidate = text.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(candidate)
+        except ValueError:
+            parsed = None
+
+    if parsed is not None:
+        local_naive = _to_local_naive(parsed)
+        return local_naive.strftime("%Y-%m-%d %H:%M:%S")
+
+    sanitized = text.replace("T", " ").replace("'", "''")
+    if sanitized.endswith("Z"):
+        sanitized = sanitized[:-1]
+    return sanitized
 
 
 def _build_percent_change_condition(improvement, degradation):
@@ -444,12 +500,17 @@ def get_changepoint_detail():
     except ValueError:
         return "Invalid XD parameter", 400
 
+    try:
+        timestamp_sql = _normalize_change_timestamp(change_timestamp)
+    except ValueError:
+        return "Invalid timestamp parameter", 400
+
     sort_column = "t.TIMESTAMP"
 
     query = f"""
     WITH params AS (
         SELECT
-            TO_TIMESTAMP('{change_timestamp}') AS CHANGE_TS
+            TO_TIMESTAMP_NTZ('{timestamp_sql}') AS CHANGE_TS
     )
     SELECT
         t.XD,
@@ -469,7 +530,7 @@ def get_changepoint_detail():
 
     if DEBUG_BACKEND_TIMING:
         print(f"\n[TIMING] /changepoints-detail START")
-        print(f"  XD={xd_int}, timestamp={change_timestamp}")
+        print(f"  XD={xd_int}, timestamp={timestamp_sql}")
 
     def execute_query():
         result = _execute_arrow_query(query)

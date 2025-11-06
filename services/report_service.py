@@ -61,7 +61,7 @@ AFTER_SERIES_HEX = "#F57C00"
 JOKE_IMAGE_MAX_WIDTH_PT = 6 * 72  # match ATSPM_Report scaling (approx 6 inches)
 JOKE_IMAGE_MAX_HEIGHT_PT = 4 * 72  # approx 4 inches
 COMPOSITE_FIG_WIDTH_IN = 6.8
-COMPOSITE_FIG_HEIGHT_IN = 3.7
+COMPOSITE_FIG_HEIGHT_IN = 3.3
 COMPOSITE_FIG_RATIO = COMPOSITE_FIG_HEIGHT_IN / COMPOSITE_FIG_WIDTH_IN
 
 
@@ -173,18 +173,31 @@ def _safe_float(value: Any) -> float:
         return math.nan
 
 
+def _local_zone() -> Optional[ZoneInfo]:
+    try:
+        return ZoneInfo(TIMEZONE)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+def _to_local_naive(timestamp: datetime) -> datetime:
+    """Return a naive datetime that represents local wall-clock time"""
+    if timestamp.tzinfo is None:
+        return timestamp
+    zone = _local_zone()
+    if zone is not None:
+        return timestamp.astimezone(zone).replace(tzinfo=None)
+    return timestamp.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+
 def _localize_timestamp(timestamp: datetime) -> str:
     if not isinstance(timestamp, datetime):
         return str(timestamp)
 
-    try:
-        zone = ZoneInfo(TIMEZONE)
-    except (ZoneInfoNotFoundError, ValueError):
-        zone = None
-
+    zone = _local_zone()
     if zone:
         if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=ZoneInfo("UTC"))
+            timestamp = timestamp.replace(tzinfo=zone)
         timestamp = timestamp.astimezone(zone)
     return timestamp.strftime("%Y-%m-%d %H:%M")
 
@@ -282,9 +295,13 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
     rows: List[Dict[str, Any]] = []
 
     for row in results:
+        timestamp_value = row["TIMESTAMP"]
+        if isinstance(timestamp_value, datetime):
+            timestamp_value = _to_local_naive(timestamp_value)
+
         record = {
             "xd": row["XD"],
-            "timestamp": row["TIMESTAMP"],
+            "timestamp": timestamp_value,
             "pct_change": row["PCT_CHANGE"],
             "avg_diff": row["AVG_DIFF"],
             "avg_before": row["AVG_BEFORE"],
@@ -302,8 +319,7 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
 def _format_timestamp_for_sql(value: Any) -> str:
     """Convert a timestamp value into a SQL-safe string."""
     if isinstance(value, datetime):
-        if value.tzinfo is not None:
-            value = value.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+        value = _to_local_naive(value)
         return value.strftime("%Y-%m-%d %H:%M:%S")
     return str(value)
 
@@ -319,7 +335,7 @@ def fetch_changepoint_detail_rows(xd: int, change_timestamp: Any) -> List[Dict[s
 
     query = f"""
     WITH params AS (
-        SELECT TO_TIMESTAMP('{timestamp_sql}') AS CHANGE_TS
+        SELECT TO_TIMESTAMP_NTZ('{timestamp_sql}') AS CHANGE_TS
     )
     SELECT
         t.TIMESTAMP,
@@ -345,6 +361,8 @@ def fetch_changepoint_detail_rows(xd: int, change_timestamp: Any) -> List[Dict[s
         timestamp = record.get("TIMESTAMP")
         if hasattr(timestamp, "to_pydatetime"):
             timestamp = timestamp.to_pydatetime()
+        if isinstance(timestamp, datetime):
+            timestamp = _to_local_naive(timestamp)
         period_value = str(record.get("PERIOD") or "").lower()
         detail_rows.append(
             {
@@ -368,7 +386,7 @@ def fetch_changepoint_hourly_series(xd: int, change_timestamp: Any) -> List[Dict
 
     query = f"""
     WITH params AS (
-        SELECT TO_TIMESTAMP('{timestamp_sql}') AS CHANGE_TS
+        SELECT TO_TIMESTAMP_NTZ('{timestamp_sql}') AS CHANGE_TS
     )
     SELECT
         DATE_TRUNC('HOUR', t.TIMESTAMP) AS HOUR_TS,
@@ -395,6 +413,8 @@ def fetch_changepoint_hourly_series(xd: int, change_timestamp: Any) -> List[Dict
         hour_ts = record.get("HOUR_TS")
         if hasattr(hour_ts, "to_pydatetime"):
             hour_ts = hour_ts.to_pydatetime()
+        if isinstance(hour_ts, datetime):
+            hour_ts = _to_local_naive(hour_ts)
         period_value = str(record.get("PERIOD") or "").lower()
         hourly_rows.append(
             {
@@ -516,30 +536,45 @@ def _render_changepoint_composite_chart(
         return None
 
     fig = plt.figure(figsize=(COMPOSITE_FIG_WIDTH_IN, COMPOSITE_FIG_HEIGHT_IN), dpi=170)
-    grid = fig.add_gridspec(2, 1, height_ratios=[1.0, 1.3], hspace=0.35)
+    grid = fig.add_gridspec(2, 1, height_ratios=[1.0, 1.0], hspace=0.56)
 
     ax_trend = fig.add_subplot(grid[0])
     if before_dates:
         x_before, y_before = zip(*before_dates)
-        ax_trend.plot(x_before, y_before, color=BEFORE_SERIES_HEX, linewidth=2.2)
+        ax_trend.plot(x_before, y_before, color=BEFORE_SERIES_HEX, linewidth=2.2, label="Before")
     if after_dates:
         x_after, y_after = zip(*after_dates)
-        ax_trend.plot(x_after, y_after, color=AFTER_SERIES_HEX, linewidth=2.2)
+        ax_trend.plot(x_after, y_after, color=AFTER_SERIES_HEX, linewidth=2.2, label="After")
 
     y_min, y_max = _y_padding([before_dates, after_dates])
     if y_min is not None and y_max is not None:
         ax_trend.set_ylim(y_min, y_max)
-    ax_trend.set_ylabel("Travel Time (seconds)", fontsize=10)
-    ax_trend.set_title("Daily Trend (Hourly)", fontsize=12, pad=10)
+    ax_trend.set_title("Daily Trend (Hourly)", fontsize=9, fontweight="bold", pad=6, loc="left")
     ax_trend.grid(True, linestyle="--", alpha=0.25)
-    ax_trend.tick_params(axis="both", labelsize=9)
+    ax_trend.tick_params(axis="both", labelsize=9, pad=6)
     if mdates is not None and (before_dates or after_dates):
-        locator = mdates.AutoDateLocator()
+        locator = mdates.AutoDateLocator(minticks=3, maxticks=5)
         ax_trend.xaxis.set_major_locator(locator)
-        ax_trend.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+        ax_trend.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
         plt.setp(ax_trend.get_xticklabels(), rotation=0, ha="center")
     else:
         ax_trend.set_xlabel("Date", fontsize=10)
+    if ax_trend.has_data():
+        legend = ax_trend.legend(
+            loc="center left",
+            bbox_to_anchor=(1.03, 0.5),
+            frameon=False,
+            fontsize=9,
+            handlelength=1.4,
+            borderaxespad=0.0,
+            ncol=1,
+            columnspacing=1.0,
+        )
+        if legend:
+            legend.set_in_layout(False)
+            for line in legend.get_lines():
+                line.set_linewidth(2.2)
+    ax_trend.set_facecolor("white")
 
     ax_profile = fig.add_subplot(grid[1])
     if before_time:
@@ -556,15 +591,27 @@ def _render_changepoint_composite_chart(
     tick_minutes = list(range(0, 24 * 60 + 1, 240))
     ax_profile.set_xticks(tick_minutes)
     ax_profile.set_xticklabels([_format_minutes_label(tick) for tick in tick_minutes])
-    ax_profile.set_ylabel("Travel Time (seconds)", fontsize=10)
-    ax_profile.set_title("Time of Day (15-minute)", fontsize=12, pad=10)
+    ax_profile.set_title("Time of Day (15-minute)", fontsize=9, fontweight="bold", pad=5, loc="left")
     ax_profile.grid(True, linestyle="--", alpha=0.25)
-    ax_profile.tick_params(axis="both", labelsize=9)
+    ax_profile.tick_params(axis="both", labelsize=9, pad=4)
+    ax_profile.set_facecolor("white")
 
-    fig.subplots_adjust(left=0.12, right=0.98, top=0.95, bottom=0.1)
+    for ax in (ax_trend, ax_profile):
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        for spine_name in ("left", "bottom"):
+            spine = ax.spines[spine_name]
+            spine.set_color("#C2D3F1")
+            spine.set_linewidth(1.0)
+        ax.tick_params(axis="both", colors="#4A5668")
+
+    fig.text(0.035, 0.5, "Travel Time (seconds)", rotation="vertical", va="center", ha="center", fontsize=10)
+    fig.subplots_adjust(left=0.11, right=0.82, top=0.92, bottom=0.12)
+
+    fig.patch.set_alpha(0)
 
     buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", bbox_inches="tight")
+    fig.savefig(buffer, format="png", bbox_inches=None)
     plt.close(fig)
     return buffer.getvalue()
 
@@ -830,10 +877,16 @@ def _filters_summary(filters: Dict[str, Any]) -> str:
     if valid_geometry and valid_geometry != "all":
         parts.append(f"Valid Geometry: {valid_geometry}")
 
-    pct_improve = filters.get("pct_change_improvement", 0)
-    pct_degrade = filters.get("pct_change_degradation", 0)
+    pct_improve = _safe_float(filters.get("pct_change_improvement"))
+    if math.isnan(pct_improve):
+        pct_improve = 0.0
+    pct_degrade = _safe_float(filters.get("pct_change_degradation"))
+    if math.isnan(pct_degrade):
+        pct_degrade = 0.0
+    pct_improve_pct = pct_improve * 100.0
+    pct_degrade_pct = pct_degrade * 100.0
     parts.append(
-        f"Percent Change Threshold: +{pct_degrade:.2f}% / {-pct_improve:.2f}%"
+        f"Percent Change Threshold: +{pct_degrade_pct:.2f}% / {-pct_improve_pct:.2f}%"
     )
 
     display = _ensure_signal_filter_display(filters)
@@ -884,10 +937,16 @@ def _filters_detail_lines(filters: Dict[str, Any]) -> List[str]:
     elif display["total_selected"]:
         lines.append(f"Signals filtered: {display['total_selected']} IDs")
 
-    pct_improve = filters.get("pct_change_improvement", 0)
-    pct_degrade = filters.get("pct_change_degradation", 0)
+    pct_improve = _safe_float(filters.get("pct_change_improvement"))
+    if math.isnan(pct_improve):
+        pct_improve = 0.0
+    pct_degrade = _safe_float(filters.get("pct_change_degradation"))
+    if math.isnan(pct_degrade):
+        pct_degrade = 0.0
+    pct_improve_pct = pct_improve * 100.0
+    pct_degrade_pct = pct_degrade * 100.0
     lines.append(
-        f"Requires >= {pct_degrade:.1f}% increase or <= {-pct_improve:.1f}% decrease in travel time"
+        f"Requires >= {pct_degrade_pct:.1f}% increase or <= {-pct_improve_pct:.1f}% decrease in travel time"
     )
 
     return lines
@@ -942,64 +1001,107 @@ def _ensure_space(pdf, required_height: float) -> None:
         pdf.add_page()
 
 
-def _draw_legend_entry(pdf, x_pos: float, y_pos: float, label: str, color: Tuple[int, int, int]) -> float:
-    """Draw a line-style legend entry with a label, returning the next x position."""
-    line_length = 18
-    center_y = y_pos + 5
-    pdf.set_draw_color(*color)
-    pdf.set_line_width(2)
-    pdf.line(x_pos, center_y, x_pos + line_length, center_y)
-    pdf.set_text_color(62, 72, 85)
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_xy(x_pos + line_length + 6, y_pos - 1)
-    pdf.cell(0, 12, label)
-    pdf.set_line_width(0.8)
-    return x_pos + line_length + 6 + pdf.get_string_width(label) + 12
-
-
 def _render_combined_chart_block(pdf, meta: Dict[str, Any], image_bytes: Optional[bytes]) -> None:
-    """Render the combined daily trend and time-of-day charts with a shared legend."""
+    """Render the combined daily trend and time-of-day charts within the PDF layout."""
     if not image_bytes:
         return
 
     content_width = pdf.w - pdf.l_margin - pdf.r_margin
     natural_width = COMPOSITE_FIG_WIDTH_IN * 72
     chart_width = min(content_width, natural_width)
-    chart_height = chart_width * COMPOSITE_FIG_RATIO
-    info_height = 78
-    total_height = info_height + chart_height + 14
+    inner_margin = 16
+    inner_width = max(chart_width - inner_margin * 2, 16)
 
-    _ensure_space(pdf, total_height)
-
-    start_x = pdf.l_margin + (content_width - chart_width) / 2.0
-    start_y = pdf.get_y()
-
-    pdf.set_draw_color(212, 226, 247)
-    pdf.set_fill_color(245, 248, 255)
-    pdf.set_line_width(0.8)
-    pdf.rect(start_x, start_y, chart_width, info_height, "FD")
-
-    pdf.set_text_color(33, 60, 96)
-    pdf.set_font("Helvetica", "B", 11)
     xd_label = _clean_text(meta.get("xd"), "--")
     road = _clean_text(meta.get("roadname"), "Unknown road")
     bearing_value = _clean_text(meta.get("bearing"))
     location_text = f"XD {xd_label} | {road}"
     if bearing_value:
         location_text = f"{location_text} - {bearing_value}"
-    text_x = start_x + 16
-    pdf.set_xy(text_x, start_y + 12)
-    info_width = max(chart_width - 180, chart_width * 0.6)
     associated = _clean_text(meta.get("associated_signals"), "--")
     road_with_bearing = f"{road} ({bearing_value})" if bearing_value else road
     location_text = f"XD {xd_label} | {road_with_bearing} | Signal(s): {associated}"
-    pdf.multi_cell(info_width, 14, location_text)
+
+    pdf.set_text_color(33, 60, 96)
+    pdf.set_font("Helvetica", "B", 10)
+    location_line_height = 10.5
+    top_padding = 6
+    bottom_padding = 5
+    callout_height = 10.5
+    stats_height = 8.5
+    block_top_margin = 6
+
+    cursor_x, cursor_y = pdf.get_x(), pdf.get_y()
+    try:
+        location_lines = pdf.multi_cell(
+            inner_width,
+            location_line_height,
+            location_text,
+            split_only=True,  # type: ignore[arg-type] - available in fpdf2
+        )
+    except TypeError:
+        # Fallback for older fpdf versions without split_only support.
+        location_lines = []
+        for raw_line in location_text.split("\n"):
+            words = raw_line.split()
+            if not words:
+                location_lines.append("")
+                continue
+            current_line = words[0]
+            for word in words[1:]:
+                candidate = f"{current_line} {word}"
+                if pdf.get_string_width(candidate) <= inner_width:
+                    current_line = candidate
+                else:
+                    location_lines.append(current_line)
+                    current_line = word
+            location_lines.append(current_line)
+    pdf.set_xy(cursor_x, cursor_y)
+    if not location_lines:
+        location_lines = [location_text]
+    location_line_count = len(location_lines)
+    location_height = location_line_count * location_line_height
+    info_height = top_padding + location_height + callout_height + stats_height + bottom_padding
+
+    png_width_px: Optional[int] = None
+    png_height_px: Optional[int] = None
+    if isinstance(image_bytes, (bytes, bytearray)) and image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        try:
+            png_width_px = int.from_bytes(image_bytes[16:20], "big")
+            png_height_px = int.from_bytes(image_bytes[20:24], "big")
+        except Exception:
+            png_width_px = None
+            png_height_px = None
+
+    if png_width_px and png_height_px and png_width_px > 0:
+        chart_height = chart_width * (png_height_px / png_width_px)
+    else:
+        chart_height = chart_width * COMPOSITE_FIG_RATIO
+
+    total_height = block_top_margin + info_height + chart_height + 14
+
+    _ensure_space(pdf, total_height)
+
+    start_x = pdf.l_margin + (content_width - chart_width) / 2.0
+    start_y = pdf.get_y() + block_top_margin
+    pdf.set_y(start_y)
+
+    pdf.set_draw_color(212, 226, 247)
+    pdf.set_fill_color(245, 248, 255)
+    pdf.set_line_width(0.8)
+    pdf.rect(start_x, start_y, chart_width, info_height, "FD")
+
+    text_x = start_x + inner_margin
+    pdf.set_xy(text_x, start_y + top_padding)
+    pdf.set_text_color(33, 60, 96)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.multi_cell(inner_width, 10.5, location_text)
 
     callout_text, _, _, callout_text_rgb = _trend_callout(meta.get("pct_change"))
     pdf.set_text_color(*callout_text_rgb)
-    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_font("Helvetica", "B", 9.5)
     pdf.set_x(text_x)
-    pdf.cell(info_width, 14, callout_text, ln=1)
+    pdf.cell(inner_width, 10.5, callout_text, ln=1)
 
     observed_label = _localize_timestamp(meta.get("timestamp")) or "--"
     before_value = _seconds(meta.get("avg_before"))
@@ -1011,17 +1113,21 @@ def _render_combined_chart_block(pdf, meta: Dict[str, Any], image_bytes: Optiona
     stats_line = (
         f"Observed AT: {observed_label} | Before {before_value} | After {after_value} | Delta {delta_value}"
     )
-    pdf.cell(info_width, 12, stats_line, ln=1)
+    pdf.cell(inner_width, 8.5, stats_line, ln=1)
 
-    legend_x = max(start_x + chart_width - 150, start_x + info_width + 20)
-    legend_y = start_y + 18
-    legend_next = _draw_legend_entry(pdf, legend_x, legend_y, "Before", BEFORE_SERIES_RGB)
-    _draw_legend_entry(pdf, legend_next, legend_y, "After", AFTER_SERIES_RGB)
-
-    pdf.set_y(start_y + info_height + 6)
+    pdf.set_y(start_y + info_height)
     stream = io.BytesIO(image_bytes)
-    pdf.image(stream, x=start_x, y=pdf.get_y(), w=chart_width, type="PNG")
-    pdf.set_y(pdf.get_y() + chart_height + 8)
+    chart_y = pdf.get_y()
+    pdf.image(stream, x=start_x, y=chart_y, w=chart_width, type="PNG")
+
+    border_color = (194, 211, 241)
+    pdf.set_draw_color(*border_color)
+    pdf.set_line_width(0.8)
+    pdf.line(start_x, chart_y, start_x, chart_y + chart_height)
+    pdf.line(start_x + chart_width, chart_y, start_x + chart_width, chart_y + chart_height)
+    pdf.line(start_x, chart_y + chart_height, start_x + chart_width, chart_y + chart_height)
+
+    pdf.set_y(chart_y + chart_height + 6)
 
 
 
