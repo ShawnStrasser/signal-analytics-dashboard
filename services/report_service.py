@@ -41,6 +41,7 @@ from database import get_snowflake_session
 from routes.api_changepoints import _assemble_where_clause  # pylint: disable=protected-access
 from services import email_service, joke_service, subscription_store
 from utils.query_utils import build_filter_joins_and_where, normalize_date
+from utils.error_handler import handle_auth_error_retry
 
 
 def _percent(value: Optional[float]) -> str:
@@ -182,6 +183,27 @@ def _local_zone() -> Optional[ZoneInfo]:
         return ZoneInfo(TIMEZONE)
     except (ZoneInfoNotFoundError, ValueError):
         return None
+
+
+def _local_today() -> date:
+    """Return today's date in the configured timezone."""
+    zone = _local_zone()
+    if zone is None:
+        return datetime.utcnow().date()
+    return datetime.now(zone).date()
+
+
+def _default_monitoring_window(reference: Optional[date] = None) -> Tuple[str, str]:
+    """
+    Mirror the frontend monitoring window selection.
+
+    The current UI looks nine days back for the start date and one day forward from
+    that for the end date (effectively the same weekday from the prior week).
+    """
+    anchor = reference or _local_today()
+    start_date = anchor - timedelta(days=9)
+    end_date = start_date + timedelta(days=1)
+    return start_date.isoformat(), end_date.isoformat()
 
 
 def _to_local_naive(timestamp: datetime) -> datetime:
@@ -335,9 +357,6 @@ def _build_selected_filters_clause(selected_signals: Sequence[Any], selected_xds
 def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[Dict[str, Any]]:
     """Query Snowflake for monitoring changepoints using the provided filters."""
     filters = _parse_filters(raw_filters)
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        raise RuntimeError("Unable to establish database connection for monitoring report")
 
     filter_join, filter_where = build_filter_joins_and_where(
         filters["signal_ids"],
@@ -379,37 +398,41 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
     LIMIT {limit}
     """
 
-    results = session.sql(query).collect()
-    rows: List[Dict[str, Any]] = []
+    def execute_query() -> List[Dict[str, Any]]:
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise RuntimeError("Unable to establish database connection for monitoring report")
 
-    for row in results:
-        timestamp_value = row["TIMESTAMP"]
-        if isinstance(timestamp_value, datetime):
-            timestamp_value = _to_local_naive(timestamp_value)
+        result_rows = session.sql(query).collect()
+        rows: List[Dict[str, Any]] = []
 
-        record = {
-            "xd": row["XD"],
-            "timestamp": timestamp_value,
-            "pct_change": row["PCT_CHANGE"],
-            "avg_diff": row["AVG_DIFF"],
-            "avg_before": row["AVG_BEFORE"],
-            "avg_after": row["AVG_AFTER"],
-            "score": row["SCORE"],
-            "roadname": row["ROADNAME"],
-            "bearing": row["BEARING"],
-            "associated_signals": row["ASSOCIATED_SIGNALS"],
-        }
-        rows.append(record)
+        for row in result_rows:
+            timestamp_value = row["TIMESTAMP"]
+            if isinstance(timestamp_value, datetime):
+                timestamp_value = _to_local_naive(timestamp_value)
 
-    return rows
+            record = {
+                "xd": row["XD"],
+                "timestamp": timestamp_value,
+                "pct_change": row["PCT_CHANGE"],
+                "avg_diff": row["AVG_DIFF"],
+                "avg_before": row["AVG_BEFORE"],
+                "avg_after": row["AVG_AFTER"],
+                "score": row["SCORE"],
+                "roadname": row["ROADNAME"],
+                "bearing": row["BEARING"],
+                "associated_signals": row["ASSOCIATED_SIGNALS"],
+            }
+            rows.append(record)
+
+        return rows
+
+    return handle_auth_error_retry(execute_query)
 
 
 def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Query Snowflake for yesterday's anomalies using monitoring filters."""
     filters = _parse_filters(raw_filters)
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        raise RuntimeError("Unable to establish database connection for anomaly monitoring")
 
     filter_join, filter_where = build_filter_joins_and_where(
         filters["signal_ids"],
@@ -492,93 +515,100 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> List[Dict[str,
     ORDER BY s.ANOMALY_SCORE DESC, s.ANOMALY_RATIO DESC, s.XD
     """
 
-    records = session.sql(query).collect()
-    if not records:
-        return []
+    def execute_query() -> List[Dict[str, Any]]:
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise RuntimeError("Unable to establish database connection for anomaly monitoring")
 
-    yesterday = _yesterday_date()
-    rows: List[Dict[str, Any]] = []
-    xds: List[int] = []
-    for record in records:
-        data = record.as_dict() if hasattr(record, "as_dict") else dict(record)
-        xd_value = data.get("XD")
-        try:
-            xd = int(xd_value)
-        except (TypeError, ValueError):
-            continue
+        records = session.sql(query).collect()
+        if not records:
+            return []
 
-        anomaly_ratio = _safe_float(data.get("ANOMALY_RATIO"))
-        anomaly_score = _safe_float(data.get("ANOMALY_SCORE"))
+        yesterday = _yesterday_date()
+        rows: List[Dict[str, Any]] = []
+        xds: List[int] = []
+        for record in records:
+            data = record.as_dict() if hasattr(record, "as_dict") else dict(record)
+            xd_value = data.get("XD")
+            try:
+                xd = int(xd_value)
+            except (TypeError, ValueError):
+                continue
 
-        row = {
-            "xd": xd,
-            "anomaly_ratio": anomaly_ratio,
-            "anomaly_score": anomaly_score,
-            "roadname": data.get("ROADNAME"),
-            "bearing": data.get("BEARING"),
-            "associated_signals": data.get("ASSOCIATED_SIGNALS"),
-            "target_date": yesterday,
-            "time_of_day_series": [],
-        }
-        rows.append(row)
-        xds.append(xd)
+            anomaly_ratio = _safe_float(data.get("ANOMALY_RATIO"))
+            anomaly_score = _safe_float(data.get("ANOMALY_SCORE"))
 
-    if not xds:
+            row = {
+                "xd": xd,
+                "anomaly_ratio": anomaly_ratio,
+                "anomaly_score": anomaly_score,
+                "roadname": data.get("ROADNAME"),
+                "bearing": data.get("BEARING"),
+                "associated_signals": data.get("ASSOCIATED_SIGNALS"),
+                "target_date": yesterday,
+                "time_of_day_series": [],
+            }
+            rows.append(row)
+            xds.append(xd)
+
+        if not xds:
+            return rows
+
+        xd_literals = ", ".join(str(xd) for xd in sorted(set(xds)))
+        time_query = f"""
+        WITH params AS (
+            SELECT
+                DATEADD(day, -1, DATE_TRUNC('day', CURRENT_TIMESTAMP())) AS TARGET_DATE
+        )
+        SELECT
+            t.XD,
+            t.TIME_15MIN,
+            AVG(t.TRAVEL_TIME_SECONDS) AS AVG_ACTUAL,
+            AVG(t.PREDICTION) AS AVG_PREDICTION
+        FROM TRAVEL_TIME_ANALYTICS t
+        JOIN params p ON t.DATE_ONLY = CAST(p.TARGET_DATE AS DATE)
+        WHERE t.XD IN ({xd_literals})
+        GROUP BY t.XD, t.TIME_15MIN
+        ORDER BY t.XD, t.TIME_15MIN
+        """
+
+        series_map: Dict[int, List[Dict[str, Optional[float]]]] = defaultdict(list)
+        time_records = session.sql(time_query).collect()
+        for record in time_records:
+            data = record.as_dict() if hasattr(record, "as_dict") else dict(record)
+            try:
+                xd = int(data.get("XD"))
+            except (TypeError, ValueError):
+                continue
+
+            minutes = _minutes_from_value(data.get("TIME_15MIN"))
+            if minutes is None:
+                continue
+
+            actual = _safe_float(data.get("AVG_ACTUAL"))
+            forecast = _safe_float(data.get("AVG_PREDICTION"))
+            if math.isnan(actual) and math.isnan(forecast):
+                continue
+            if math.isnan(actual):
+                actual = None  # type: ignore[assignment]
+            if math.isnan(forecast):
+                forecast = None  # type: ignore[assignment]
+            series_map[xd].append(
+                {
+                    "minutes": minutes,
+                    "actual": actual,
+                    "prediction": forecast,
+                }
+            )
+
+        for row in rows:
+            points = series_map.get(row["xd"], [])
+            points.sort(key=lambda item: item["minutes"])
+            row["time_of_day_series"] = points
+
         return rows
 
-    xd_literals = ", ".join(str(xd) for xd in sorted(set(xds)))
-    time_query = f"""
-    WITH params AS (
-        SELECT
-            DATEADD(day, -1, DATE_TRUNC('day', CURRENT_TIMESTAMP())) AS TARGET_DATE
-    )
-    SELECT
-        t.XD,
-        t.TIME_15MIN,
-        AVG(t.TRAVEL_TIME_SECONDS) AS AVG_ACTUAL,
-        AVG(t.PREDICTION) AS AVG_PREDICTION
-    FROM TRAVEL_TIME_ANALYTICS t
-    JOIN params p ON t.DATE_ONLY = CAST(p.TARGET_DATE AS DATE)
-    WHERE t.XD IN ({xd_literals})
-    GROUP BY t.XD, t.TIME_15MIN
-    ORDER BY t.XD, t.TIME_15MIN
-    """
-
-    series_map: Dict[int, List[Dict[str, Optional[float]]]] = defaultdict(list)
-    time_records = session.sql(time_query).collect()
-    for record in time_records:
-        data = record.as_dict() if hasattr(record, "as_dict") else dict(record)
-        try:
-            xd = int(data.get("XD"))
-        except (TypeError, ValueError):
-            continue
-
-        minutes = _minutes_from_value(data.get("TIME_15MIN"))
-        if minutes is None:
-            continue
-
-        actual = _safe_float(data.get("AVG_ACTUAL"))
-        forecast = _safe_float(data.get("AVG_PREDICTION"))
-        if math.isnan(actual) and math.isnan(forecast):
-            continue
-        if math.isnan(actual):
-            actual = None  # type: ignore[assignment]
-        if math.isnan(forecast):
-            forecast = None  # type: ignore[assignment]
-        series_map[xd].append(
-            {
-                "minutes": minutes,
-                "actual": actual,
-                "prediction": forecast,
-            }
-        )
-
-    for row in rows:
-        points = series_map.get(row["xd"], [])
-        points.sort(key=lambda item: item["minutes"])
-        row["time_of_day_series"] = points
-
-    return rows
+    return handle_auth_error_retry(execute_query)
 
 
 def _format_timestamp_for_sql(value: Any) -> str:
@@ -591,10 +621,6 @@ def _format_timestamp_for_sql(value: Any) -> str:
 
 def fetch_changepoint_detail_rows(xd: int, change_timestamp: Any) -> List[Dict[str, Any]]:
     """Pull raw travel time samples surrounding a changepoint."""
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        raise RuntimeError("Unable to establish database connection for changepoint detail")
-
     xd_value = int(xd)
     timestamp_sql = _format_timestamp_for_sql(change_timestamp)
 
@@ -617,35 +643,38 @@ def fetch_changepoint_detail_rows(xd: int, change_timestamp: Any) -> List[Dict[s
     ORDER BY t.TIMESTAMP
     """
 
-    table = session.sql(query).to_arrow()
-    if table.num_rows == 0:
-        return []
+    def execute_query() -> List[Dict[str, Any]]:
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise RuntimeError("Unable to establish database connection for changepoint detail")
 
-    detail_rows: List[Dict[str, Any]] = []
-    for record in table.to_pylist():
-        timestamp = record.get("TIMESTAMP")
-        if hasattr(timestamp, "to_pydatetime"):
-            timestamp = timestamp.to_pydatetime()
-        if isinstance(timestamp, datetime):
-            timestamp = _to_local_naive(timestamp)
-        period_value = str(record.get("PERIOD") or "").lower()
-        detail_rows.append(
-            {
-                "timestamp": timestamp,
-                "travel_time_seconds": _safe_float(record.get("TRAVEL_TIME_SECONDS")),
-                "period": period_value,
-            }
-        )
+        table = session.sql(query).to_arrow()
+        if table.num_rows == 0:
+            return []
 
-    return detail_rows
+        detail_rows: List[Dict[str, Any]] = []
+        for record in table.to_pylist():
+            timestamp = record.get("TIMESTAMP")
+            if hasattr(timestamp, "to_pydatetime"):
+                timestamp = timestamp.to_pydatetime()
+            if isinstance(timestamp, datetime):
+                timestamp = _to_local_naive(timestamp)
+            period_value = str(record.get("PERIOD") or "").lower()
+            detail_rows.append(
+                {
+                    "timestamp": timestamp,
+                    "travel_time_seconds": _safe_float(record.get("TRAVEL_TIME_SECONDS")),
+                    "period": period_value,
+                }
+            )
+
+        return detail_rows
+
+    return handle_auth_error_retry(execute_query)
 
 
 def fetch_changepoint_hourly_series(xd: int, change_timestamp: Any) -> List[Dict[str, Any]]:
     """Fetch hourly averaged travel times around a changepoint directly from Snowflake."""
-    session = get_snowflake_session(retry=True, max_retries=2)
-    if not session:
-        raise RuntimeError("Unable to establish database connection for changepoint hourly series")
-
     xd_value = int(xd)
     timestamp_sql = _format_timestamp_for_sql(change_timestamp)
 
@@ -669,27 +698,34 @@ def fetch_changepoint_hourly_series(xd: int, change_timestamp: Any) -> List[Dict
     ORDER BY HOUR_TS
     """
 
-    table = session.sql(query).to_arrow()
-    if table.num_rows == 0:
-        return []
+    def execute_query() -> List[Dict[str, Any]]:
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise RuntimeError("Unable to establish database connection for changepoint hourly series")
 
-    hourly_rows: List[Dict[str, Any]] = []
-    for record in table.to_pylist():
-        hour_ts = record.get("HOUR_TS")
-        if hasattr(hour_ts, "to_pydatetime"):
-            hour_ts = hour_ts.to_pydatetime()
-        if isinstance(hour_ts, datetime):
-            hour_ts = _to_local_naive(hour_ts)
-        period_value = str(record.get("PERIOD") or "").lower()
-        hourly_rows.append(
-            {
-                "timestamp": hour_ts,
-                "travel_time_seconds": _safe_float(record.get("AVG_TRAVEL_TIME")),
-                "period": period_value,
-            }
-        )
+        table = session.sql(query).to_arrow()
+        if table.num_rows == 0:
+            return []
 
-    return hourly_rows
+        hourly_rows: List[Dict[str, Any]] = []
+        for record in table.to_pylist():
+            hour_ts = record.get("HOUR_TS")
+            if hasattr(hour_ts, "to_pydatetime"):
+                hour_ts = hour_ts.to_pydatetime()
+            if isinstance(hour_ts, datetime):
+                hour_ts = _to_local_naive(hour_ts)
+            period_value = str(record.get("PERIOD") or "").lower()
+            hourly_rows.append(
+                {
+                    "timestamp": hour_ts,
+                    "travel_time_seconds": _safe_float(record.get("AVG_TRAVEL_TIME")),
+                    "period": period_value,
+                }
+            )
+
+        return hourly_rows
+
+    return handle_auth_error_retry(execute_query)
 
 
 def build_changepoint_date_series(rows: Sequence[Dict[str, Any]]) -> Dict[str, List[Tuple[datetime, float]]]:
@@ -1066,29 +1102,32 @@ def _build_signal_filter_display(filters: Dict[str, Any]) -> Dict[str, Any]:
     if not normalized_ids:
         return display
 
-    session = get_snowflake_session(retry=True, max_retries=1)
-    if not session:
-        return display
-
     maintained = str(filters.get("maintained_by") or "all").lower()
-    try:
-        id_sql = ", ".join(_quote_literal(sig) for sig in normalized_ids)
-        conditions = [f"ID IN ({id_sql})"]
-        if maintained == "odot":
-            conditions.append("ODOT_MAINTAINED = TRUE")
-        elif maintained == "others":
-            conditions.append("ODOT_MAINTAINED = FALSE")
+    id_sql = ", ".join(_quote_literal(sig) for sig in normalized_ids)
+    conditions = [f"ID IN ({id_sql})"]
+    if maintained == "odot":
+        conditions.append("ODOT_MAINTAINED = TRUE")
+    elif maintained == "others":
+        conditions.append("ODOT_MAINTAINED = FALSE")
 
-        metadata_query = f"""
-        SELECT
-            ID,
-            COALESCE(DISTRICT, 'Unknown') AS DISTRICT,
-            NAME
-        FROM DIM_SIGNALS
-        WHERE {' AND '.join(conditions)}
-        ORDER BY DISTRICT, ID
-        """
-        metadata_rows = session.sql(metadata_query).collect()
+    metadata_query = f"""
+    SELECT
+        ID,
+        COALESCE(DISTRICT, 'Unknown') AS DISTRICT,
+        NAME
+    FROM DIM_SIGNALS
+    WHERE {' AND '.join(conditions)}
+    ORDER BY DISTRICT, ID
+    """
+
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=1)
+        if not session:
+            raise RuntimeError("Unable to establish database connection for filter metadata")
+        return session.sql(metadata_query).collect()
+
+    try:
+        metadata_rows = handle_auth_error_retry(execute_query)
     except Exception as exc:  # pragma: no cover - defensive logging
         print(f"[WARN] Unable to fetch signal metadata for filter summary: {exc}")
         return display
@@ -1872,6 +1911,16 @@ def build_email_html(
 def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject_prefix: str = "Monitoring Report") -> Dict[str, Any]:
     """Fetch monitoring data, generate a PDF, and send it via email."""
     filters = _parse_filters(raw_filters)
+    start_date_value = str(filters.get("start_date") or "").strip()
+    end_date_value = str(filters.get("end_date") or "").strip()
+    if (
+        start_date_value.lower() in {"", "none", "nat"}
+        or end_date_value.lower() in {"", "none", "nat"}
+    ):
+        start_date, end_date = _default_monitoring_window()
+        filters["start_date"] = start_date
+        filters["end_date"] = end_date
+
     changepoint_rows = fetch_monitoring_rows(filters)
     anomaly_rows = fetch_monitoring_anomaly_rows(filters)
 
@@ -1928,7 +1977,13 @@ def run_daily_dispatch() -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     for subscription in subscription_store.list_subscriptions():
         email = subscription["email"]
-        filters = subscription["settings"]
+        base_filters = subscription["settings"]
+        filters = dict(base_filters) if isinstance(base_filters, dict) else {}
+        start_date, end_date = _default_monitoring_window()
+        filters["start_date"] = start_date
+        filters["end_date"] = end_date
+        if "selected_signals" not in filters and filters.get("signal_ids"):
+            filters["selected_signals"] = filters["signal_ids"]
         try:
             result = generate_and_send_report(email, filters, subject_prefix="Daily Monitoring Report")
         except Exception as exc:  # pragma: no cover - defensive logging
