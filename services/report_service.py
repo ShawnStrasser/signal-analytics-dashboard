@@ -7,7 +7,7 @@ from __future__ import annotations
 import io
 import math
 from collections import defaultdict
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -30,6 +30,7 @@ except ImportError:  # pragma: no cover - optional dependency during testing
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from config import (
+    ANOMALY_MONITORING_THRESHOLD,
     BASE_DIR,
     DAILY_REPORT_SEND_HOUR,
     DEBUG_SAVE_REPORT_PDF,
@@ -58,6 +59,9 @@ BEFORE_SERIES_RGB: Tuple[int, int, int] = (25, 118, 210)
 AFTER_SERIES_RGB: Tuple[int, int, int] = (245, 124, 0)
 BEFORE_SERIES_HEX = "#1976D2"
 AFTER_SERIES_HEX = "#F57C00"
+ANOMALY_ACTUAL_HEX = "#1976D2"
+ANOMALY_FORECAST_HEX = "#1F1F24"
+ANOMALY_FORECAST_LINESTYLE = (2, 4)
 JOKE_IMAGE_MAX_WIDTH_PT = 6 * 72  # match ATSPM_Report scaling (approx 6 inches)
 JOKE_IMAGE_MAX_HEIGHT_PT = 4 * 72  # approx 4 inches
 COMPOSITE_FIG_WIDTH_IN = 6.8
@@ -202,6 +206,71 @@ def _localize_timestamp(timestamp: datetime) -> str:
     return timestamp.strftime("%Y-%m-%d %H:%M")
 
 
+def _yesterday_date() -> date:
+    """Return the local-date for yesterday."""
+    zone = _local_zone()
+    if zone:
+        now = datetime.now(zone)
+    else:
+        now = datetime.utcnow()
+    return (now - timedelta(days=1)).date()
+
+
+def _sanitize_string_list(values: Optional[Sequence[Any]]) -> List[str]:
+    """Return a SQL-safe list of quoted string values."""
+    sanitized: List[str] = []
+    if not values:
+        return sanitized
+    for value in values:
+        text = str(value).strip()
+        if not text:
+            continue
+        sanitized.append(text.replace("'", "''"))
+    return sanitized
+
+
+def _sanitize_int_list(values: Optional[Sequence[Any]]) -> List[str]:
+    """Return a SQL-safe list of integer literals."""
+    sanitized: List[str] = []
+    if not values:
+        return sanitized
+    for value in values:
+        try:
+            sanitized.append(str(int(value)))
+        except (TypeError, ValueError):
+            continue
+    return sanitized
+
+
+def _minutes_from_value(value: Any) -> Optional[int]:
+    """Convert a TIME or numeric value to minutes since midnight."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(round(float(value)))
+    if isinstance(value, datetime):
+        return value.hour * 60 + value.minute
+    hour = getattr(value, "hour", None)
+    minute = getattr(value, "minute", None)
+    if hour is not None and minute is not None:
+        try:
+            return int(hour) * 60 + int(minute)
+        except (TypeError, ValueError):
+            return None
+    text = str(value).strip()
+    if ":" in text:
+        parts = text.split(":")
+        if len(parts) >= 2:
+            try:
+                return int(parts[0]) * 60 + int(parts[1][:2])
+            except (TypeError, ValueError):
+                return None
+    try:
+        return int(round(float(text)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_filters(raw_filters: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize incoming filter payload."""
     selected_group_values = raw_filters.get("selected_signal_groups")
@@ -242,6 +311,25 @@ def _parse_filters(raw_filters: Dict[str, Any]) -> Dict[str, Any]:
         filters["pct_change_degradation"] = 0.0
 
     return filters
+
+
+def _build_selected_filters_clause(selected_signals: Sequence[Any], selected_xds: Sequence[Any]) -> str:
+    """Compose additional AND conditions for explicit signal or XD selections."""
+    conditions: List[str] = []
+
+    sanitized_signals = _sanitize_string_list(selected_signals)
+    if sanitized_signals:
+        ids_str = "', '".join(sanitized_signals)
+        conditions.append(
+            f"t.XD IN (SELECT DISTINCT XD FROM DIM_SIGNALS_XD WHERE ID IN ('{ids_str}'))"
+        )
+
+    sanitized_xds = _sanitize_int_list(selected_xds)
+    if sanitized_xds:
+        xds_str = ", ".join(sanitized_xds)
+        conditions.append(f"t.XD IN ({xds_str})")
+
+    return " AND ".join(conditions)
 
 
 def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[Dict[str, Any]]:
@@ -312,6 +400,183 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
             "associated_signals": row["ASSOCIATED_SIGNALS"],
         }
         rows.append(record)
+
+    return rows
+
+
+def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Query Snowflake for yesterday's anomalies using monitoring filters."""
+    filters = _parse_filters(raw_filters)
+    session = get_snowflake_session(retry=True, max_retries=2)
+    if not session:
+        raise RuntimeError("Unable to establish database connection for anomaly monitoring")
+
+    filter_join, filter_where = build_filter_joins_and_where(
+        filters["signal_ids"],
+        filters["maintained_by"],
+        filters["approach"],
+        filters["valid_geometry"],
+    )
+
+    needs_signal_join = "DIM_SIGNALS s" in filter_join
+    dimension_join = "INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID" if needs_signal_join else ""
+
+    eligible_cte = ""
+    eligible_join = ""
+    if filter_where:
+        eligible_cte = f"""
+    , eligible_xd AS (
+        SELECT DISTINCT xd.XD
+        FROM DIM_SIGNALS_XD xd
+        {dimension_join}
+        WHERE {filter_where}
+    )
+"""
+        eligible_join = "INNER JOIN eligible_xd fx ON t.XD = fx.XD"
+
+    selected_clause = _build_selected_filters_clause(filters["selected_signals"], filters["selected_xds"])
+    if selected_clause:
+        selected_clause = f" AND {selected_clause}"
+
+    query = f"""
+    WITH params AS (
+        SELECT
+            DATEADD(day, -1, DATE_TRUNC('day', CURRENT_TIMESTAMP())) AS TARGET_DATE
+    ){eligible_cte}
+    , anomaly_base AS (
+        SELECT
+            t.XD,
+            SUM(CASE WHEN t.ORIGINATED_ANOMALY THEN 1 ELSE 0 END) AS ANOMALY_SAMPLES,
+            COUNT(*) AS TOTAL_SAMPLES,
+            SUM(CASE WHEN t.ORIGINATED_ANOMALY THEN COALESCE(t.TRAVEL_TIME_SECONDS - t.PREDICTION, 0) ELSE 0 END) AS TOTAL_ANOMALY_DELTA,
+            AVG(t.TRAVEL_TIME_SECONDS) AS AVG_ACTUAL,
+            AVG(t.PREDICTION) AS AVG_PREDICTION
+        FROM TRAVEL_TIME_ANALYTICS t
+        JOIN params p ON t.DATE_ONLY = CAST(p.TARGET_DATE AS DATE)
+        {eligible_join}
+        WHERE 1=1{selected_clause}
+        GROUP BY t.XD
+    ),
+    scored AS (
+        SELECT
+            b.*,
+            CASE WHEN b.TOTAL_SAMPLES = 0 THEN 0
+                 ELSE b.ANOMALY_SAMPLES::FLOAT / b.TOTAL_SAMPLES::FLOAT
+            END AS ANOMALY_RATIO,
+            CASE
+                WHEN b.TOTAL_SAMPLES = 0 THEN 0
+                ELSE POWER(b.ANOMALY_SAMPLES::FLOAT / b.TOTAL_SAMPLES::FLOAT, 2)
+                     * (b.TOTAL_ANOMALY_DELTA / 60.0) * 100
+            END AS ANOMALY_SCORE
+        FROM anomaly_base b
+    ),
+    dimension_data AS (
+        SELECT
+            xd.XD,
+            MAX(xd.ROADNAME) AS ROADNAME,
+            MAX(xd.BEARING) AS BEARING,
+            LISTAGG(DISTINCT xd.ID, ', ') WITHIN GROUP (ORDER BY xd.ID) AS ASSOCIATED_SIGNALS
+        FROM DIM_SIGNALS_XD xd
+        GROUP BY xd.XD
+    )
+    SELECT
+        s.XD,
+        s.ANOMALY_RATIO,
+        s.ANOMALY_SCORE,
+        d.ROADNAME,
+        d.BEARING,
+        d.ASSOCIATED_SIGNALS
+    FROM scored s
+    INNER JOIN dimension_data d ON s.XD = d.XD
+    WHERE s.ANOMALY_SCORE >= {ANOMALY_MONITORING_THRESHOLD}
+    ORDER BY s.ANOMALY_SCORE DESC, s.ANOMALY_RATIO DESC, s.XD
+    """
+
+    records = session.sql(query).collect()
+    if not records:
+        return []
+
+    yesterday = _yesterday_date()
+    rows: List[Dict[str, Any]] = []
+    xds: List[int] = []
+    for record in records:
+        data = record.as_dict() if hasattr(record, "as_dict") else dict(record)
+        xd_value = data.get("XD")
+        try:
+            xd = int(xd_value)
+        except (TypeError, ValueError):
+            continue
+
+        anomaly_ratio = _safe_float(data.get("ANOMALY_RATIO"))
+        anomaly_score = _safe_float(data.get("ANOMALY_SCORE"))
+
+        row = {
+            "xd": xd,
+            "anomaly_ratio": anomaly_ratio,
+            "anomaly_score": anomaly_score,
+            "roadname": data.get("ROADNAME"),
+            "bearing": data.get("BEARING"),
+            "associated_signals": data.get("ASSOCIATED_SIGNALS"),
+            "target_date": yesterday,
+            "time_of_day_series": [],
+        }
+        rows.append(row)
+        xds.append(xd)
+
+    if not xds:
+        return rows
+
+    xd_literals = ", ".join(str(xd) for xd in sorted(set(xds)))
+    time_query = f"""
+    WITH params AS (
+        SELECT
+            DATEADD(day, -1, DATE_TRUNC('day', CURRENT_TIMESTAMP())) AS TARGET_DATE
+    )
+    SELECT
+        t.XD,
+        t.TIME_15MIN,
+        AVG(t.TRAVEL_TIME_SECONDS) AS AVG_ACTUAL,
+        AVG(t.PREDICTION) AS AVG_PREDICTION
+    FROM TRAVEL_TIME_ANALYTICS t
+    JOIN params p ON t.DATE_ONLY = CAST(p.TARGET_DATE AS DATE)
+    WHERE t.XD IN ({xd_literals})
+    GROUP BY t.XD, t.TIME_15MIN
+    ORDER BY t.XD, t.TIME_15MIN
+    """
+
+    series_map: Dict[int, List[Dict[str, Optional[float]]]] = defaultdict(list)
+    time_records = session.sql(time_query).collect()
+    for record in time_records:
+        data = record.as_dict() if hasattr(record, "as_dict") else dict(record)
+        try:
+            xd = int(data.get("XD"))
+        except (TypeError, ValueError):
+            continue
+
+        minutes = _minutes_from_value(data.get("TIME_15MIN"))
+        if minutes is None:
+            continue
+
+        actual = _safe_float(data.get("AVG_ACTUAL"))
+        forecast = _safe_float(data.get("AVG_PREDICTION"))
+        if math.isnan(actual) and math.isnan(forecast):
+            continue
+        if math.isnan(actual):
+            actual = None  # type: ignore[assignment]
+        if math.isnan(forecast):
+            forecast = None  # type: ignore[assignment]
+        series_map[xd].append(
+            {
+                "minutes": minutes,
+                "actual": actual,
+                "prediction": forecast,
+            }
+        )
+
+    for row in rows:
+        points = series_map.get(row["xd"], [])
+        points.sort(key=lambda item: item["minutes"])
+        row["time_of_day_series"] = points
 
     return rows
 
@@ -516,6 +781,86 @@ def _format_minutes_label(value: float) -> str:
     return f"{hours:02d}:{minutes:02d}"
 
 
+def _render_anomaly_chart(series: Sequence[Dict[str, Any]]) -> Optional[bytes]:
+    """Render a time-of-day anomaly chart plotting actual vs forecast travel times."""
+    if plt is None or not series:
+        return None
+
+    x_values: List[int] = []
+    actual_values: List[float] = []
+    forecast_values: List[float] = []
+
+    for point in series:
+        minutes_raw = point.get("minutes")
+        if minutes_raw is None:
+            continue
+
+        minutes = _minutes_from_value(minutes_raw)
+        if minutes is None:
+            continue
+
+        actual = _safe_float(point.get("actual"))
+        forecast = _safe_float(point.get("prediction"))
+
+        x_values.append(minutes)
+        actual_values.append(actual if math.isfinite(actual) else math.nan)
+        forecast_values.append(forecast if math.isfinite(forecast) else math.nan)
+
+    finite_actual = [value for value in actual_values if math.isfinite(value)]
+    finite_forecast = [value for value in forecast_values if math.isfinite(value)]
+    if not finite_actual and not finite_forecast:
+        return None
+
+    fig, ax = plt.subplots(figsize=(COMPOSITE_FIG_WIDTH_IN, 2.6), dpi=170)
+
+    ax.plot(
+        x_values,
+        actual_values,
+        color=ANOMALY_ACTUAL_HEX,
+        linewidth=2.6,
+        label="Actual",
+    )
+    ax.plot(
+        x_values,
+        forecast_values,
+        color=ANOMALY_FORECAST_HEX,
+        linewidth=1.6,
+        linestyle=(0, ANOMALY_FORECAST_LINESTYLE),
+        label="Forecast",
+    )
+
+    actual_points = [(x, y) for x, y in zip(x_values, actual_values) if math.isfinite(y)]
+    forecast_points = [(x, y) for x, y in zip(x_values, forecast_values) if math.isfinite(y)]
+    y_min, y_max = _y_padding([actual_points, forecast_points])
+    if y_min is not None and y_max is not None:
+        ax.set_ylim(y_min, y_max)
+
+    ax.set_xlim(0, 24 * 60)
+    tick_minutes = list(range(0, 24 * 60 + 1, 180))
+    ax.set_xticks(tick_minutes)
+    ax.set_xticklabels([_format_minutes_label(tick) for tick in tick_minutes])
+    ax.set_ylabel("Travel Time (seconds)", fontsize=9)
+    ax.set_xlabel("Time of Day (15-minute)", fontsize=9)
+    ax.grid(True, linestyle="--", alpha=0.25)
+    ax.tick_params(axis="both", labelsize=9, pad=4)
+
+    legend = ax.legend(loc="upper left", fontsize=9, frameon=False)
+    legend.set_title(None)
+
+    for spine_name in ("top", "right"):
+        ax.spines[spine_name].set_visible(False)
+    for spine_name in ("left", "bottom"):
+        spine = ax.spines[spine_name]
+        spine.set_color("#C2D3F1")
+        spine.set_linewidth(1.0)
+
+    fig.patch.set_alpha(0)
+    fig.tight_layout()
+
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", bbox_inches=None)
+    plt.close(fig)
+    return buffer.getvalue()
 
 
 def _render_changepoint_composite_chart(
@@ -1134,7 +1479,9 @@ def _render_combined_chart_block(pdf, meta: Dict[str, Any], image_bytes: Optiona
 
 def build_monitoring_pdf(
     filters: Dict[str, Any],
-    rows: Iterable[Dict[str, Any]],
+    changepoint_rows: Iterable[Dict[str, Any]],
+    *,
+    anomalies: Sequence[Dict[str, Any]] = (),
     joke: Optional[Dict[str, Any]] = None,
 ) -> bytes:
     if plt is None:
@@ -1151,6 +1498,11 @@ def build_monitoring_pdf(
     pdf.add_page()
 
     content_width = pdf.w - pdf.l_margin - pdf.r_margin
+
+    anomaly_rows: List[Dict[str, Any]] = [dict(item) for item in anomalies] if anomalies else []
+    for anomaly in anomaly_rows:
+        series = anomaly.get("time_of_day_series") or []
+        anomaly.setdefault("chart_image", _render_anomaly_chart(series))
 
     try:
         zone = ZoneInfo(TIMEZONE)
@@ -1319,11 +1671,38 @@ def build_monitoring_pdf(
         "Anomalies may be caused by incidents, inclement weather, or temporary detection failure."
     )
     _write_full_width(pdf, anomaly_copy, 14)
-    pdf.ln(2)
-    pdf.set_text_color(85, 90, 96)
-    pdf.set_font("Helvetica", "I", 11)
-    _write_full_width(pdf, "No Anomalies Today.", 16)
     pdf.ln(6)
+
+    if not anomaly_rows:
+        pdf.set_text_color(85, 90, 96)
+        pdf.set_font("Helvetica", "I", 11)
+        _write_full_width(pdf, "No anomalies matched the current filters for yesterday.", 16)
+        pdf.ln(6)
+    else:
+        pdf.set_text_color(70, 70, 76)
+        pdf.set_font("Helvetica", "", 10)
+        for index, anomaly in enumerate(anomaly_rows, start=1):
+            _ensure_space(pdf, 280)
+            chart_bytes = anomaly.get("chart_image")
+            if chart_bytes:
+                _render_anomaly_block(pdf, anomaly, chart_bytes)
+            else:
+                pdf.set_text_color(120, 120, 130)
+                pdf.set_font("Helvetica", "I", 10)
+                xd_label = _clean_text(anomaly.get("xd"), "--")
+                _write_full_width(pdf, f"Unable to render anomaly chart for XD {xd_label}.", 14)
+                pdf.set_text_color(70, 70, 76)
+                pdf.set_font("Helvetica", "", 10)
+
+            if index < len(anomaly_rows):
+                line_y = pdf.get_y()
+                pdf.set_draw_color(215, 222, 232)
+                try:
+                    pdf.dashed_line(pdf.l_margin, line_y, pdf.w - pdf.r_margin, line_y, dash_length=3, space_length=2)
+                except AttributeError:
+                    pdf.line(pdf.l_margin, line_y, pdf.w - pdf.r_margin, line_y)
+                pdf.ln(14)
+        pdf.ln(6)
 
     pdf.set_text_color(28, 54, 103)
     pdf.set_font("Helvetica", "B", 14)
@@ -1337,7 +1716,7 @@ def build_monitoring_pdf(
     _write_full_width(pdf, changepoint_blurb, 14)
     pdf.ln(10)
 
-    rows_list = list(rows)
+    rows_list = list(changepoint_rows)
     if not rows_list:
         pdf.set_font("Helvetica", "I", 12)
         _write_full_width(pdf, "No changepoints matched the current filters.", 16)
@@ -1372,22 +1751,117 @@ def build_monitoring_pdf(
     return output.encode("latin-1") if isinstance(output, str) else output
 
 
+def _render_anomaly_block(pdf, anomaly: Dict[str, Any], chart_bytes: Optional[bytes]) -> None:
+    """Render a single anomaly summary with chart inside the PDF."""
+    if not chart_bytes:
+        return
+
+    content_width = pdf.w - pdf.l_margin - pdf.r_margin
+    natural_width = COMPOSITE_FIG_WIDTH_IN * 72
+    chart_width = min(content_width, natural_width)
+    inner_margin = 16
+    text_width = max(chart_width - inner_margin * 2, 16)
+
+    xd_label = _clean_text(anomaly.get("xd"), "--")
+    road = _clean_text(anomaly.get("roadname"), "Unknown road")
+    bearing_value = _clean_text(anomaly.get("bearing"))
+    associated = _clean_text(anomaly.get("associated_signals"), "--")
+    road_with_bearing = f"{road} ({bearing_value})" if bearing_value else road
+    location_text = f"XD {xd_label} | {road_with_bearing} | Signal(s): {associated}"
+
+    location_line_height = 10.5
+    top_padding = 8
+    bottom_padding = 6
+    block_top_margin = 6
+
+    try:
+        location_lines = pdf.multi_cell(
+            text_width,
+            location_line_height,
+            location_text,
+            split_only=True,  # type: ignore[arg-type]
+        )
+    except TypeError:
+        location_lines = []
+
+    if not location_lines:
+        location_lines = [location_text]
+
+    header_height = top_padding + len(location_lines) * location_line_height + bottom_padding
+
+    png_width_px: Optional[int] = None
+    png_height_px: Optional[int] = None
+    if isinstance(chart_bytes, (bytes, bytearray)) and chart_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        try:
+            png_width_px = int.from_bytes(chart_bytes[16:20], "big")
+            png_height_px = int.from_bytes(chart_bytes[20:24], "big")
+        except Exception:
+            png_width_px = None
+            png_height_px = None
+
+    if png_width_px and png_height_px and png_width_px > 0:
+        chart_height = chart_width * (png_height_px / png_width_px)
+    else:
+        chart_height = chart_width * 0.55
+
+    total_height = block_top_margin + header_height + chart_height + 12
+    _ensure_space(pdf, total_height)
+
+    start_x = pdf.l_margin + (content_width - chart_width) / 2.0
+    start_y = pdf.get_y() + block_top_margin
+
+    # Header panel
+    pdf.set_y(start_y)
+    pdf.set_draw_color(212, 226, 247)
+    pdf.set_fill_color(245, 248, 255)
+    pdf.set_line_width(0.8)
+    pdf.rect(start_x, start_y, chart_width, header_height, "FD")
+
+    pdf.set_text_color(33, 60, 96)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_xy(start_x + inner_margin, start_y + top_padding)
+    pdf.multi_cell(text_width, location_line_height, "\n".join(location_lines))
+
+    # Chart image with blue outline
+    chart_top = start_y + header_height
+    pdf.image(io.BytesIO(chart_bytes), x=start_x, y=chart_top, w=chart_width, h=chart_height, type="PNG")
+    pdf.set_draw_color(194, 211, 241)
+    pdf.set_line_width(0.8)
+    pdf.rect(start_x, chart_top, chart_width, chart_height)
+
+    pdf.set_y(chart_top + chart_height + 6)
+
 
 def build_email_html(
     filters: Dict[str, Any],
-    rows: Iterable[Dict[str, Any]],
+    changepoints: Iterable[Dict[str, Any]],
+    *,
+    anomalies: Sequence[Dict[str, Any]] = (),
     joke: Optional[Dict[str, Any]] = None,
 ) -> str:
-    rows_list = list(rows)
-    count = len(rows_list)
-    plural = "s" if count != 1 else ""
+    changepoint_list = list(changepoints)
+    anomaly_list = list(anomalies or [])
+    changepoint_count = len(changepoint_list)
+    anomaly_count = len(anomaly_list)
+    changepoint_plural = "s" if changepoint_count != 1 else ""
+    anomaly_plural = "ies" if anomaly_count != 1 else "y"
     summary = _filters_summary(filters)
     generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+    if anomaly_count and changepoint_count:
+        highlight = (
+            f"<strong>{anomaly_count}</strong> anomal{anomaly_plural} and "
+            f"<strong>{changepoint_count}</strong> changepoint{changepoint_plural}"
+        )
+    elif anomaly_count:
+        highlight = f"<strong>{anomaly_count}</strong> anomal{anomaly_plural}"
+    else:
+        highlight = f"<strong>{changepoint_count}</strong> changepoint{changepoint_plural}"
 
     html_output = f"""
     <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;">
         <p>Hello,</p>
-        <p>Your monitoring report covering {summary} includes <strong>{count}</strong> changepoint{plural}. The PDF version is attached.</p>
+        <p>Your monitoring report covering {summary} includes {highlight}. The PDF version is attached.</p>
         <p>Generated at {generated_at}.</p>
         <p style="margin-top:18px;">&mdash; {EMAIL_SENDER_NAME}</p>
     </div>
@@ -1398,15 +1872,17 @@ def build_email_html(
 def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject_prefix: str = "Monitoring Report") -> Dict[str, Any]:
     """Fetch monitoring data, generate a PDF, and send it via email."""
     filters = _parse_filters(raw_filters)
-    rows = fetch_monitoring_rows(filters)
-    if not rows:
+    changepoint_rows = fetch_monitoring_rows(filters)
+    anomaly_rows = fetch_monitoring_anomaly_rows(filters)
+
+    if not changepoint_rows and not anomaly_rows:
         return {"sent": False, "reason": "no_data", "email": email}
 
-    enriched_rows = enrich_monitoring_rows(rows)
+    enriched_rows = enrich_monitoring_rows(changepoint_rows)
     report_date = _resolve_report_date(filters)
     joke = joke_service.prepare_joke(report_date)
-    pdf_bytes = build_monitoring_pdf(filters, enriched_rows, joke=joke)
-    html_content = build_email_html(filters, enriched_rows)
+    pdf_bytes = build_monitoring_pdf(filters, enriched_rows, anomalies=anomaly_rows, joke=joke)
+    html_content = build_email_html(filters, enriched_rows, anomalies=anomaly_rows)
     subject = f"{subject_prefix} - {filters['end_date']}"
 
     if DEBUG_SAVE_REPORT_PDF:
@@ -1422,6 +1898,8 @@ def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject
             "reason": "debug_saved",
             "email": email,
             "rows": len(enriched_rows),
+            "changepoints": len(enriched_rows),
+            "anomalies": len(anomaly_rows),
             "debug_saved_path": str(output_path),
         }
 
@@ -1432,7 +1910,13 @@ def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject
         attachments=[(f"monitoring-report-{filters['end_date']}.pdf", pdf_bytes)],
     )
 
-    return {"sent": True, "email": email, "rows": len(enriched_rows)}
+    return {
+        "sent": True,
+        "email": email,
+        "rows": len(enriched_rows),
+        "changepoints": len(enriched_rows),
+        "anomalies": len(anomaly_rows),
+    }
 
 def run_daily_dispatch() -> List[Dict[str, Any]]:
     """

@@ -361,6 +361,10 @@ class ApiService {
     return this.fetchArrowData('/changepoints-detail', params)
   }
 
+  async getMonitoringAnomalies(filters) {
+    return this.fetchJson('/monitoring-anomalies', filters)
+  }
+
   async getConfig() {
     try {
       const response = await fetch(`${this.baseURL}/config`)
@@ -372,6 +376,52 @@ class ApiService {
       console.error('Error fetching config:', error)
       // Return default values if config fetch fails
       return { maxLegendEntities: 10 }
+    }
+  }
+
+  async fetchJson(endpoint, params = {}, retries = 3, retryDelay = 1000) {
+    let url = `${this.baseURL}${endpoint}`
+
+    const searchParams = new URLSearchParams()
+    Object.keys(params).forEach(key => {
+      const value = params[key]
+      if (value !== null && value !== undefined) {
+        if (Array.isArray(value)) {
+          value.forEach(v => searchParams.append(key, v))
+        } else {
+          searchParams.append(key, value)
+        }
+      }
+    })
+
+    if (searchParams.toString()) {
+      url += '?' + searchParams.toString()
+    }
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(url)
+        if (response.status === 503) {
+          const errorText = await response.text()
+          if (attempt < retries && errorText.includes('reconnecting')) {
+            await new Promise(resolve => setTimeout(resolve, retryDelay))
+            continue
+          }
+          throw new Error(`Service unavailable: ${errorText}`)
+        }
+
+        if (!response.ok) {
+          const errorText = await response.text()
+          throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`)
+        }
+
+        return await response.json()
+      } catch (error) {
+        if (attempt === retries || !(error.message || '').includes('Service unavailable')) {
+          throw error
+        }
+        await new Promise(resolve => setTimeout(resolve, retryDelay))
+      }
     }
   }
 

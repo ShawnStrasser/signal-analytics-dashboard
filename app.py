@@ -96,13 +96,21 @@ def connection_status():
 @app.route('/api/config')
 def get_config():
     """Get frontend configuration values"""
-    from config import MAX_LEGEND_ENTITIES, MAX_ANOMALY_LEGEND_ENTITIES, MAX_BEFORE_AFTER_LEGEND_ENTITIES, DEFAULT_START_HOUR, DEFAULT_END_HOUR
+    from config import (
+        MAX_LEGEND_ENTITIES,
+        MAX_ANOMALY_LEGEND_ENTITIES,
+        MAX_BEFORE_AFTER_LEGEND_ENTITIES,
+        DEFAULT_START_HOUR,
+        DEFAULT_END_HOUR,
+        ANOMALY_MONITORING_THRESHOLD,
+    )
     return jsonify({
         'maxLegendEntities': MAX_LEGEND_ENTITIES,
         'maxAnomalyLegendEntities': MAX_ANOMALY_LEGEND_ENTITIES,
         'maxBeforeAfterLegendEntities': MAX_BEFORE_AFTER_LEGEND_ENTITIES,
         'defaultStartHour': DEFAULT_START_HOUR,
-        'defaultEndHour': DEFAULT_END_HOUR
+        'defaultEndHour': DEFAULT_END_HOUR,
+        'anomalyMonitoringThreshold': ANOMALY_MONITORING_THRESHOLD,
     })
 
 # Register blueprints

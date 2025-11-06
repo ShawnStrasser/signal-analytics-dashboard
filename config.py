@@ -61,6 +61,13 @@ MAX_BEFORE_AFTER_LEGEND_ENTITIES = 6
 MAX_BEFORE_AFTER_SMALL_MULTIPLES_ENTITIES = 12
 
 # =============================================================================
+# MONITORING SETTINGS
+# =============================================================================
+
+# Threshold applied to anomaly monitoring score when selecting segments
+ANOMALY_MONITORING_THRESHOLD = float(os.environ.get('ANOMALY_MONITORING_THRESHOLD', 4.0))
+
+# =============================================================================
 # TIME OF DAY FILTER SETTINGS
 # =============================================================================
 

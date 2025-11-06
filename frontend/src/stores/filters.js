@@ -5,6 +5,7 @@ export const useFiltersStore = defineStore('filters', () => {
   // Config values from backend (will be populated on init)
   const defaultStartHour = ref(6)   // Default from config.py
   const defaultEndHour = ref(19)    // Default from config.py
+  const anomalyMonitoringThreshold = ref(4.0)
 
   function formatDateOnly(date) {
     return date.toISOString().split('T')[0]
@@ -227,6 +228,12 @@ export const useFiltersStore = defineStore('filters', () => {
         defaultEndHour.value = config.defaultEndHour
         endHour.value = config.defaultEndHour
       }
+      if (config.anomalyMonitoringThreshold !== undefined) {
+        const numericThreshold = Number(config.anomalyMonitoringThreshold)
+        if (Number.isFinite(numericThreshold)) {
+          anomalyMonitoringThreshold.value = numericThreshold
+        }
+      }
     } catch (error) {
       console.error('Failed to load config:', error)
       // Keep default values on error
@@ -254,6 +261,7 @@ export const useFiltersStore = defineStore('filters', () => {
     removeAnomalies,
     defaultStartHour,
     defaultEndHour,
+    anomalyMonitoringThreshold,
     pctChangeImprovement,
     pctChangeDegradation,
 

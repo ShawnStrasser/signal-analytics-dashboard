@@ -132,7 +132,7 @@
         class="export-btn"
         size="large"
         :loading="isExporting"
-        :disabled="loading || charts.length === 0"
+        :disabled="loading || (charts.length === 0 && anomalyCards.length === 0)"
         @click="exportToPdf"
       >
         <v-icon left>mdi-file-pdf-box</v-icon>
@@ -171,6 +171,7 @@
             <div><strong>Approach:</strong> {{ approachLabel }}</div>
             <div><strong>Valid Geometry:</strong> {{ validGeometryLabel }}</div>
             <div><strong>Percent Change:</strong> {{ percentChangeLabel }}</div>
+            <div><strong>Anomaly Threshold:</strong> >= {{ anomalyThresholdLabel }}</div>
           </div>
         </v-card-text>
       </v-card>
@@ -188,80 +189,129 @@
         <v-progress-circular indeterminate size="64"></v-progress-circular>
       </div>
 
-      <div v-else-if="charts.length === 0" class="d-flex justify-center py-10">
-        <span class="text-medium-emphasis">
-          No changepoints matched the selected filters for {{ monitoringDateLabel }}.
-        </span>
-      </div>
+      <div v-else class="report-sections">
+        <section class="report-section">
+          <div class="section-header pdf-section">
+            <div class="section-title">Yesterday&apos;s Anomalies</div>
+            <div class="section-subtitle">
+              Monitoring score >= {{ anomalyThresholdLabel }} &bull; Data captured on {{ anomalyTargetLabel }}
+            </div>
+          </div>
+          <div v-if="anomalyCards.length === 0" class="empty-state text-medium-emphasis">
+            No anomalies matched the selected filters for yesterday.
+          </div>
+          <div v-else class="monitoring-grid">
+            <v-card
+              v-for="item in anomalyCards"
+              :key="item.key"
+              class="chart-card pdf-section"
+            >
+              <v-card-title class="py-2">
+                <div class="title-block">
+                  <div class="headline anomaly-headline">
+                    <span class="text-subtitle-1 font-weight-medium">
+                      XD {{ item.meta.xd }} | {{ item.meta.roadName || 'Unknown road' }}<span v-if="item.meta.bearing"> ({{ item.meta.bearing }})</span>
+                    </span>
+                  </div>
+                  <div class="meta-line text-body-2 text-medium-emphasis">
+                    <span class="meta-item">Signal(s): {{ item.meta.associatedSignals || '--' }}</span>
+                  </div>
+                </div>
+              </v-card-title>
+              <v-card-text class="pt-0">
+                <div class="chart-stack">
+                  <div class="chart-section">
+                    <div class="chart-heading">Time of Day (15-minute)</div>
+                    <div class="chart-wrapper anomaly-chart">
+                      <AnomalyMonitoringChart :series="item.series" />
+                    </div>
+                  </div>
+                </div>
+              </v-card-text>
+            </v-card>
+          </div>
+        </section>
 
-      <div v-else class="monitoring-grid">
-        <v-card
-          v-for="item in charts"
-          :key="item.key"
-          class="chart-card pdf-section"
-        >
-          <v-card-title class="py-2">
-            <div class="title-block">
-              <div class="headline">
-                <span class="text-subtitle-1 font-weight-medium">XD {{ item.meta.xd }}</span>
-                <v-chip
-                  size="small"
-                  class="ml-2"
-                  :color="item.meta.pctChange > 0 ? 'error' : (item.meta.pctChange < 0 ? 'success' : 'info')"
-                  variant="tonal"
-                >
-                  {{ formatPercent(item.meta.pctChange) }}
-                </v-chip>
-              </div>
-              <div class="meta-line text-body-2 text-medium-emphasis">
-                <span class="meta-item">{{ item.meta.roadName || 'Unknown road' }}</span>
-                <span class="meta-separator" aria-hidden="true">&bull;</span>
-                <span class="meta-item">{{ formatTimestamp(item.meta.timestamp) }}</span>
-                <span class="meta-separator" aria-hidden="true">&bull;</span>
-                <span class="meta-item">Associated Signal(s): {{ item.meta.associatedSignals || '--' }}</span>
-              </div>
+        <section class="report-section">
+          <div class="section-header pdf-section">
+            <div class="section-title">Changepoints</div>
+            <div class="section-subtitle">
+              Detected on {{ monitoringDateLabel }}. Filters apply to signals, maintained by, approach, valid geometry, and percent change thresholds.
             </div>
-          </v-card-title>
-          <v-card-text class="pt-0">
-            <div class="metrics-row">
-              <div class="metric">
-                <span class="metric-label">Avg Before</span>
-                <span class="metric-value">{{ formatSeconds(item.meta.avgBefore) }}</span>
-              </div>
-              <div class="metric">
-                <span class="metric-label">Avg After</span>
-                <span class="metric-value">{{ formatSeconds(item.meta.avgAfter) }}</span>
-              </div>
-              <div class="metric">
-                <span class="metric-label">Avg Delta</span>
-                <span class="metric-value">{{ formatSeconds(item.meta.avgDiff) }}</span>
-              </div>
-            </div>
-            <div class="chart-stack">
-              <div class="chart-section">
-                <div class="chart-heading">Daily Travel Time Trend</div>
-                <div class="chart-wrapper primary">
-                  <ChangepointDetailChart
-                    :series="item.dateSeries"
-                    :show-legend="true"
-                    :show-title="false"
-                  />
+          </div>
+          <div v-if="charts.length === 0" class="empty-state text-medium-emphasis">
+            No changepoints matched the selected filters for {{ monitoringDateLabel }}.
+          </div>
+          <div v-else class="monitoring-grid">
+            <v-card
+              v-for="item in charts"
+              :key="item.key"
+              class="chart-card pdf-section"
+            >
+              <v-card-title class="py-2">
+                <div class="title-block">
+                  <div class="headline">
+                    <span class="text-subtitle-1 font-weight-medium">XD {{ item.meta.xd }}</span>
+                    <v-chip
+                      size="small"
+                      class="ml-2"
+                      :color="item.meta.pctChange > 0 ? 'error' : (item.meta.pctChange < 0 ? 'success' : 'info')"
+                      variant="tonal"
+                    >
+                      {{ formatPercent(item.meta.pctChange) }}
+                    </v-chip>
+                  </div>
+                  <div class="meta-line text-body-2 text-medium-emphasis">
+                    <span class="meta-item">{{ item.meta.roadName || 'Unknown road' }}</span>
+                    <span class="meta-separator" aria-hidden="true">&bull;</span>
+                    <span class="meta-item">{{ formatTimestamp(item.meta.timestamp) }}</span>
+                    <span class="meta-separator" aria-hidden="true">&bull;</span>
+                    <span class="meta-item">Associated Signal(s): {{ item.meta.associatedSignals || '--' }}</span>
+                  </div>
                 </div>
-              </div>
-              <div class="chart-section">
-                <div class="chart-heading">Time of Day Profile</div>
-                <div class="chart-wrapper secondary">
-                  <ChangepointDetailChart
-                    :series="item.timeOfDaySeries"
-                    :is-time-of-day="true"
-                    :show-legend="false"
-                    :show-title="false"
-                  />
+              </v-card-title>
+              <v-card-text class="pt-0">
+                <div class="metrics-row">
+                  <div class="metric">
+                    <span class="metric-label">Avg Before</span>
+                    <span class="metric-value">{{ formatSeconds(item.meta.avgBefore) }}</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Avg After</span>
+                    <span class="metric-value">{{ formatSeconds(item.meta.avgAfter) }}</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Avg Delta</span>
+                    <span class="metric-value">{{ formatSeconds(item.meta.avgDiff) }}</span>
+                  </div>
                 </div>
-              </div>
-            </div>
-          </v-card-text>
-        </v-card>
+                <div class="chart-stack">
+                  <div class="chart-section">
+                    <div class="chart-heading">Daily Travel Time Trend</div>
+                    <div class="chart-wrapper primary">
+                      <ChangepointDetailChart
+                        :series="item.dateSeries"
+                        :show-legend="true"
+                        :show-title="false"
+                      />
+                    </div>
+                  </div>
+                  <div class="chart-section">
+                    <div class="chart-heading">Time of Day Profile</div>
+                    <div class="chart-wrapper secondary">
+                      <ChangepointDetailChart
+                        :series="item.timeOfDaySeries"
+                        :is-time-of-day="true"
+                        :show-legend="false"
+                        :show-title="false"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </v-card-text>
+            </v-card>
+          </div>
+        </section>
       </div>
     </div>
   </div>
@@ -270,8 +320,9 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import ApiService from '@/services/api'
-import ChangepointDetailChart from '@/components/ChangepointDetailChart.vue'
+  import ApiService from '@/services/api'
+  import ChangepointDetailChart from '@/components/ChangepointDetailChart.vue'
+  import AnomalyMonitoringChart from '@/components/AnomalyMonitoringChart.vue'
 import { useFiltersStore } from '@/stores/filters'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -296,18 +347,44 @@ const isSavingSubscription = ref(false)
 const isSendingTestEmail = ref(false)
 const verifyingToken = ref(false)
 
-const reportRef = ref(null)
-const loading = ref(false)
-const isExporting = ref(false)
-const exportError = ref(null)
-const error = ref(null)
-const charts = ref([])
-const lastUpdated = ref(null)
-let requestId = 0
+  const reportRef = ref(null)
+  const loading = ref(false)
+  const isExporting = ref(false)
+  const exportError = ref(null)
+  const error = ref(null)
+  const charts = ref([])
+  const anomalyCards = ref([])
+  const anomalyMetadata = ref({
+    targetDate: null,
+    generatedAt: null,
+    threshold: filtersStore.anomalyMonitoringThreshold
+  })
+  const lastUpdated = ref(null)
+  let requestId = 0
 
 const monitoringDateStrings = computed(() => getMonitoringDateStrings())
-const monitoringDateLabel = computed(() => `${monitoringDateStrings.value.start} to ${monitoringDateStrings.value.end}`)
-const lastUpdatedLabel = computed(() => lastUpdated.value ? lastUpdated.value.toLocaleString() : '')
+  const monitoringDateLabel = computed(() => `${monitoringDateStrings.value.start} to ${monitoringDateStrings.value.end}`)
+  const lastUpdatedLabel = computed(() => lastUpdated.value ? lastUpdated.value.toLocaleString() : '')
+  const anomalyThreshold = computed(() => {
+    const metadataValue = Number(anomalyMetadata.value?.threshold)
+    const storeValue = Number(filtersStore.anomalyMonitoringThreshold ?? 4)
+    if (Number.isFinite(metadataValue) && metadataValue > 0) {
+      return metadataValue
+    }
+    return Number.isFinite(storeValue) ? storeValue : 4
+  })
+  const anomalyThresholdLabel = computed(() => anomalyThreshold.value.toFixed(1))
+  const anomalyTargetLabel = computed(() => {
+    const target = anomalyMetadata.value?.targetDate
+    if (!target) {
+      return 'yesterday'
+    }
+    const parsed = new Date(target)
+    if (Number.isNaN(parsed.getTime())) {
+      return String(target)
+    }
+    return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  })
 
 const signalSummary = computed(() => {
   const count = filtersStore.selectedSignalIds?.length ?? 0
@@ -486,10 +563,51 @@ async function loadReport() {
   const currentRequest = ++requestId
   loading.value = true
   error.value = null
+  anomalyCards.value = []
 
   try {
     const params = buildRequestParams()
-    const table = await ApiService.getChangepointTable(params)
+    const [anomalyResult, changepointResult] = await Promise.allSettled([
+      ApiService.getMonitoringAnomalies(params),
+      ApiService.getChangepointTable(params)
+    ])
+
+    if (currentRequest !== requestId) {
+      return
+    }
+
+    if (anomalyResult.status === 'fulfilled' && anomalyResult.value) {
+      const response = anomalyResult.value
+      const responseThreshold = Number(response.threshold)
+      anomalyMetadata.value = {
+        targetDate: response.target_date ?? null,
+        generatedAt: response.generated_at ?? null,
+        threshold: Number.isFinite(responseThreshold) ? responseThreshold : filtersStore.anomalyMonitoringThreshold
+      }
+      const normalized = Array.isArray(response.anomalies)
+        ? response.anomalies.map(normalizeAnomalyRow)
+        : []
+      anomalyCards.value = normalized.map(item => ({
+        key: `anomaly-${item.xd}`,
+        meta: item,
+        series: item.series
+      }))
+    } else {
+      anomalyMetadata.value = {
+        targetDate: null,
+        generatedAt: null,
+        threshold: filtersStore.anomalyMonitoringThreshold
+      }
+      if (anomalyResult.status === 'rejected') {
+        console.error('Failed to load monitoring anomalies:', anomalyResult.reason)
+      }
+    }
+
+    if (changepointResult.status !== 'fulfilled') {
+      throw changepointResult.reason ?? new Error('Failed to load changepoint table')
+    }
+
+    const table = changepointResult.value
     const rows = ApiService.arrowTableToObjects(table)
     const topRows = rows.slice(0, 10)
 
@@ -694,6 +812,30 @@ function buildRequestParams() {
   return params
 }
 
+function normalizeAnomalyRow(row) {
+  const series = Array.isArray(row.time_of_day_series)
+    ? row.time_of_day_series
+    : (row.TIME_OF_DAY_SERIES ?? [])
+
+  const normalizedSeries = Array.isArray(series)
+    ? series.map(point => ({
+      minutes: Number(point?.minutes ?? point?.MINUTES ?? 0),
+      actual: point?.actual === null || point?.actual === undefined ? null : Number(point.actual ?? point.ACTUAL),
+      prediction: point?.prediction === null || point?.prediction === undefined ? null : Number(point.prediction ?? point.PREDICTION)
+    }))
+    : []
+
+  return {
+    xd: Number(row.xd ?? row.XD ?? 0),
+    roadName: row.roadname ?? row.ROADNAME ?? '',
+    bearing: row.bearing ?? row.BEARING ?? '',
+    associatedSignals: row.associated_signals ?? row.ASSOCIATED_SIGNALS ?? '--',
+    anomalyRatio: Number(row.anomaly_ratio ?? row.ANOMALY_RATIO ?? 0),
+    series: normalizedSeries,
+    targetDate: row.target_date ?? row.TARGET_DATE ?? null
+  }
+}
+
 function normalizeTableRow(row) {
   return {
     xd: Number(row.XD ?? row.xd ?? 0),
@@ -789,6 +931,42 @@ function formatSeconds(value) {
   font-size: 0.9rem;
 }
 
+.report-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.report-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.section-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.section-subtitle {
+  font-size: 0.9rem;
+  color: rgba(var(--v-theme-on-surface), 0.65);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 28px 12px;
+  border-radius: 12px;
+  border: 1px dashed rgba(var(--v-theme-on-surface), 0.2);
+}
+
 .monitoring-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
@@ -811,6 +989,11 @@ function formatSeconds(value) {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.anomaly-headline {
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 .meta-line {
@@ -887,6 +1070,10 @@ function formatSeconds(value) {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.05);
 }
 
+.chart-wrapper.anomaly-chart {
+  height: 240px;
+}
+
 .chart-wrapper.secondary {
   height: 220px;
 }
@@ -922,6 +1109,10 @@ function formatSeconds(value) {
   .chart-wrapper {
     height: 220px;
     padding: 10px;
+  }
+
+  .chart-wrapper.anomaly-chart {
+    height: 200px;
   }
 
   .chart-wrapper.secondary {

@@ -3,11 +3,13 @@ Anomalies API Routes - Returns Arrow data directly
 Optimized for low-latency small queries
 """
 
+import math
 import pyarrow as pa
-from flask import Blueprint, request
+from flask import Blueprint, request, jsonify
 
-from config import MAX_ANOMALY_LEGEND_ENTITIES
+from config import ANOMALY_MONITORING_THRESHOLD, MAX_ANOMALY_LEGEND_ENTITIES
 from database import get_snowflake_session, is_auth_error
+from services.report_service import fetch_monitoring_anomaly_rows
 from utils.error_handler import handle_auth_error_retry
 from utils.arrow_utils import (
     serialize_arrow_to_ipc,
@@ -782,6 +784,73 @@ def get_anomaly_percent_by_time_of_day():
         if is_auth_error(e):
             return "Database reconnecting - please wait", 503
         return f"Error fetching time-of-day anomaly percent data: {e}", 500
+
+
+@anomalies_bp.route('/monitoring-anomalies')
+def get_monitoring_anomalies():
+    """Return anomaly segments for the monitoring report as JSON."""
+    from datetime import datetime, date  # Local import to avoid circular issues in some environments
+
+    filters = {
+        "start_date": request.args.get("start_date"),
+        "end_date": request.args.get("end_date"),
+        "signal_ids": request.args.getlist("signal_ids"),
+        "selected_signals": request.args.getlist("selected_signals"),
+        "selected_xds": request.args.getlist("selected_xds"),
+        "selected_signal_groups": request.args.getlist("selected_signal_groups"),
+        "maintained_by": request.args.get("maintained_by"),
+        "approach": request.args.get("approach"),
+        "valid_geometry": request.args.get("valid_geometry"),
+    }
+
+    def execute_query():
+        rows = fetch_monitoring_anomaly_rows(filters)
+        payload = []
+        target_date_value = None
+        for row in rows:
+            ratio = row.get("anomaly_ratio")
+            target_date = row.get("target_date")
+            if isinstance(target_date, (datetime, date)):
+                target_iso = target_date.isoformat()
+            else:
+                target_iso = str(target_date) if target_date else None
+            if target_iso and not target_date_value:
+                target_date_value = target_iso
+
+            payload.append(
+                {
+                    "xd": row.get("xd"),
+                    "roadname": row.get("roadname"),
+                    "bearing": row.get("bearing"),
+                    "associated_signals": row.get("associated_signals"),
+                    "anomaly_ratio": ratio if math.isfinite(ratio) else None,
+                    "target_date": target_iso,
+                    "time_of_day_series": [
+                        {
+                            "minutes": point.get("minutes"),
+                            "actual": point.get("actual"),
+                            "prediction": point.get("prediction"),
+                        }
+                        for point in row.get("time_of_day_series") or []
+                    ],
+                }
+            )
+
+        response = {
+            "anomalies": payload,
+            "target_date": target_date_value,
+            "threshold": ANOMALY_MONITORING_THRESHOLD,
+            "generated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+        }
+        return jsonify(response)
+
+    try:
+        return handle_auth_error_retry(execute_query)
+    except Exception as exc:
+        print(f"[ERROR] /monitoring-anomalies: {exc}")
+        if is_auth_error(exc):
+            return "Database reconnecting - please wait", 503
+        return f"Error fetching monitoring anomalies: {exc}", 500
 
 
 @anomalies_bp.route('/travel-time-data')
