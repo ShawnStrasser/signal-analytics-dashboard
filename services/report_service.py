@@ -206,6 +206,12 @@ def _default_monitoring_window(reference: Optional[date] = None) -> Tuple[str, s
     return start_date.isoformat(), end_date.isoformat()
 
 
+def _combine_date_minutes(target_date: date, minutes: int) -> datetime:
+    """Create a timestamp on the given date at the provided minute-of-day."""
+    minutes = int(minutes)
+    return datetime.combine(target_date, datetime.min.time()) + timedelta(minutes=minutes)
+
+
 def _to_local_naive(timestamp: datetime) -> datetime:
     """Return a naive datetime that represents local wall-clock time"""
     if timestamp.tzinfo is None:
@@ -593,9 +599,11 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> List[Dict[str,
                 actual = None  # type: ignore[assignment]
             if math.isnan(forecast):
                 forecast = None  # type: ignore[assignment]
+
             series_map[xd].append(
                 {
                     "minutes": minutes,
+                    "timestamp": _combine_date_minutes(yesterday, minutes),
                     "actual": actual,
                     "prediction": forecast,
                 }
@@ -818,27 +826,31 @@ def _format_minutes_label(value: float) -> str:
 
 
 def _render_anomaly_chart(series: Sequence[Dict[str, Any]]) -> Optional[bytes]:
-    """Render a time-of-day anomaly chart plotting actual vs forecast travel times."""
+    """Render an anomaly chart plotting actual vs forecast travel times."""
     if plt is None or not series:
         return None
 
-    x_values: List[int] = []
+    timestamps: List[datetime] = []
     actual_values: List[float] = []
     forecast_values: List[float] = []
 
     for point in series:
-        minutes_raw = point.get("minutes")
-        if minutes_raw is None:
-            continue
+        timestamp_obj = point.get("timestamp")
+        dt_value: Optional[datetime] = None
+        if isinstance(timestamp_obj, datetime):
+            dt_value = timestamp_obj
+        else:
+            minutes = _minutes_from_value(point.get("minutes"))
+            if minutes is not None:
+                dt_value = _combine_date_minutes(_local_today(), minutes)
 
-        minutes = _minutes_from_value(minutes_raw)
-        if minutes is None:
+        if dt_value is None:
             continue
 
         actual = _safe_float(point.get("actual"))
         forecast = _safe_float(point.get("prediction"))
 
-        x_values.append(minutes)
+        timestamps.append(dt_value)
         actual_values.append(actual if math.isfinite(actual) else math.nan)
         forecast_values.append(forecast if math.isfinite(forecast) else math.nan)
 
@@ -850,33 +862,36 @@ def _render_anomaly_chart(series: Sequence[Dict[str, Any]]) -> Optional[bytes]:
     fig, ax = plt.subplots(figsize=(COMPOSITE_FIG_WIDTH_IN, 2.6), dpi=170)
 
     ax.plot(
-        x_values,
+        timestamps,
         actual_values,
-        color=ANOMALY_ACTUAL_HEX,
+        color=AFTER_SERIES_HEX,
         linewidth=2.6,
         label="Actual",
     )
     ax.plot(
-        x_values,
+        timestamps,
         forecast_values,
-        color=ANOMALY_FORECAST_HEX,
-        linewidth=1.6,
-        linestyle=(0, ANOMALY_FORECAST_LINESTYLE),
+        color=BEFORE_SERIES_HEX,
+        linewidth=2.2,
         label="Forecast",
     )
 
-    actual_points = [(x, y) for x, y in zip(x_values, actual_values) if math.isfinite(y)]
-    forecast_points = [(x, y) for x, y in zip(x_values, forecast_values) if math.isfinite(y)]
+    actual_points = [(x, y) for x, y in zip(timestamps, actual_values) if math.isfinite(y)]
+    forecast_points = [(x, y) for x, y in zip(timestamps, forecast_values) if math.isfinite(y)]
     y_min, y_max = _y_padding([actual_points, forecast_points])
     if y_min is not None and y_max is not None:
         ax.set_ylim(y_min, y_max)
 
-    ax.set_xlim(0, 24 * 60)
-    tick_minutes = list(range(0, 24 * 60 + 1, 180))
-    ax.set_xticks(tick_minutes)
-    ax.set_xticklabels([_format_minutes_label(tick) for tick in tick_minutes])
+    if timestamps:
+        ax.set_xlim(min(timestamps), max(timestamps))
+
+    if mdates is not None:
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%I:%M %p"))
+        ax.xaxis.set_major_locator(mdates.HourLocator(interval=3))
+        fig.autofmt_xdate(rotation=0, ha="center")
+
     ax.set_ylabel("Travel Time (seconds)", fontsize=9)
-    ax.set_xlabel("Time of Day (15-minute)", fontsize=9)
+    ax.set_xlabel("Time", fontsize=9)
     ax.grid(True, linestyle="--", alpha=0.25)
     ax.tick_params(axis="both", labelsize=9, pad=4)
 
@@ -1576,7 +1591,7 @@ def build_monitoring_pdf(
     pdf.set_text_color(64, 74, 94)
     pdf.set_font("Helvetica", "", 11)
 
-    summary_paragraph_1 = [
+    summary_paragraph = [
         ("This daily report monitors travel time anomalies and changepoints at traffic signals. It uses ", None),
         ("INRIX XD segment data", "https://github.com/ShawnStrasser/RITIS_INRIX_API"),
         (" delivered through the ", None),
@@ -1585,18 +1600,13 @@ def build_monitoring_pdf(
         ("Snowflake", "https://github.com/TPAU-ODOT/signal-analytics-snowflake"),
         (", and is analyzed with the ", None),
         ("traffic-anomaly toolkit", "https://github.com/ShawnStrasser/traffic-anomaly"),
-        (".", None),
-    ]
-    _write_paragraph_with_links(pdf, summary_paragraph_1, line_height=15, base_color=(64, 74, 94))
-
-    summary_paragraph_2 = [
-        ("Explore the ", None),
+        (". Explore the ", None),
         ("interactive dashboard", "https://signals.up.railway.app/"),
         (" or review the ", None),
         ("open-source codebase", "https://github.com/ShawnStrasser/signal-analytics-dashboard"),
         (" for implementation details.", None),
     ]
-    _write_paragraph_with_links(pdf, summary_paragraph_2, line_height=15, base_color=(64, 74, 94))
+    _write_paragraph_with_links(pdf, summary_paragraph, line_height=15, base_color=(64, 74, 94))
     pdf.ln(10)
 
     pdf.set_line_width(0.4)
@@ -1606,7 +1616,7 @@ def build_monitoring_pdf(
     if joke:
         pdf.set_text_color(33, 60, 96)
         pdf.set_font("Helvetica", "B", 12)
-        section_title = _clean_text(joke.get("section_title"), "Joke of the Week")
+        section_title = _clean_text(joke.get("section_title"), "Daily Humor")
         pdf.cell(0, 18, section_title, ln=1)
         pdf.set_text_color(70, 70, 76)
         pdf.set_font("Helvetica", "", 11)
@@ -1734,12 +1744,6 @@ def build_monitoring_pdf(
                 pdf.set_font("Helvetica", "", 10)
 
             if index < len(anomaly_rows):
-                line_y = pdf.get_y()
-                pdf.set_draw_color(215, 222, 232)
-                try:
-                    pdf.dashed_line(pdf.l_margin, line_y, pdf.w - pdf.r_margin, line_y, dash_length=3, space_length=2)
-                except AttributeError:
-                    pdf.line(pdf.l_margin, line_y, pdf.w - pdf.r_margin, line_y)
                 pdf.ln(14)
         pdf.ln(6)
 
@@ -1778,12 +1782,6 @@ def build_monitoring_pdf(
 
             pdf.ln(2)
             if index < len(rows_list):
-                line_y = pdf.get_y()
-                pdf.set_draw_color(215, 222, 232)
-                try:
-                    pdf.dashed_line(pdf.l_margin, line_y, pdf.w - pdf.r_margin, line_y, dash_length=3, space_length=2)
-                except AttributeError:
-                    pdf.line(pdf.l_margin, line_y, pdf.w - pdf.r_margin, line_y)
                 pdf.ln(16)
 
     output = pdf.output(dest="S")
