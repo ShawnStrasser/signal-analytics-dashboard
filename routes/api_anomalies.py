@@ -3,7 +3,6 @@ Anomalies API Routes - Returns Arrow data directly
 Optimized for low-latency small queries
 """
 
-import math
 import pyarrow as pa
 from flask import Blueprint, request, jsonify
 
@@ -808,7 +807,6 @@ def get_monitoring_anomalies():
         payload = []
         target_date_value = None
         for row in rows:
-            ratio = row.get("anomaly_ratio")
             target_date = row.get("target_date")
             if isinstance(target_date, (datetime, date)):
                 target_iso = target_date.isoformat()
@@ -823,7 +821,6 @@ def get_monitoring_anomalies():
                     "roadname": row.get("roadname"),
                     "bearing": row.get("bearing"),
                     "associated_signals": row.get("associated_signals"),
-                    "anomaly_ratio": ratio if math.isfinite(ratio) else None,
                     "target_date": target_iso,
                     "time_of_day_series": [
                         {

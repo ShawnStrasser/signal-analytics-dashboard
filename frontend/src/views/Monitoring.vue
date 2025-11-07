@@ -830,7 +830,7 @@ function normalizeAnomalyRow(row) {
     roadName: row.roadname ?? row.ROADNAME ?? '',
     bearing: row.bearing ?? row.BEARING ?? '',
     associatedSignals: row.associated_signals ?? row.ASSOCIATED_SIGNALS ?? '--',
-    anomalyRatio: Number(row.anomaly_ratio ?? row.ANOMALY_RATIO ?? 0),
+    anomalyRatio: row.anomaly_ratio ?? row.ANOMALY_RATIO ?? null,
     series: normalizedSeries,
     targetDate: row.target_date ?? row.TARGET_DATE ?? null
   }

@@ -161,6 +161,47 @@ def _assemble_where_clause(
     return " AND ".join(where_parts)
 
 
+def _build_filtered_dim_components(
+    signal_ids,
+    maintained_by,
+    approach,
+    valid_geometry
+):
+    """Return JOIN and WHERE fragments for DIM_SIGNALS_XD filtering without unnecessary joins."""
+    sanitized_ids = _sanitize_string_list(signal_ids)
+    join_clause = ""
+    where_parts = []
+
+    if sanitized_ids:
+        ids_str = "', '".join(sanitized_ids)
+        where_parts.append(f"dim.ID IN ('{ids_str}')")
+
+    if approach is not None and approach != '':
+        approach_bool = 'TRUE' if str(approach).lower() == 'true' else 'FALSE'
+        where_parts.append(f"dim.APPROACH = {approach_bool}")
+
+    if valid_geometry is not None and valid_geometry != '' and valid_geometry != 'all':
+        valid = str(valid_geometry).lower()
+        if valid == 'valid':
+            where_parts.append("dim.VALID_GEOMETRY = TRUE")
+        elif valid == 'invalid':
+            where_parts.append("dim.VALID_GEOMETRY = FALSE")
+
+    maintained = str(maintained_by or 'all').lower()
+    if maintained in {'odot', 'others'}:
+        join_clause = "\n        INNER JOIN DIM_SIGNALS s ON dim.ID = s.ID"
+        if maintained == 'odot':
+            where_parts.append("s.ODOT_MAINTAINED = TRUE")
+        else:
+            where_parts.append("s.ODOT_MAINTAINED = FALSE")
+
+    where_clause = ""
+    if where_parts:
+        where_clause = "\n        WHERE " + " AND ".join(where_parts)
+
+    return join_clause, where_clause
+
+
 def _execute_arrow_query(query):
     """Execute a Snowflake query and return Arrow response."""
     session = get_snowflake_session(retry=True, max_retries=2)
@@ -411,20 +452,17 @@ def get_changepoints_table():
     selected_signals = request.args.getlist('selected_signals')
     selected_xds = request.args.getlist('selected_xds')
 
-    filter_join, filter_where = build_filter_joins_and_where(
+    dimension_join, dimension_where_clause = _build_filtered_dim_components(
         signal_ids,
         maintained_by,
         approach,
         valid_geometry
     )
 
-    needs_signal_join = "DIM_SIGNALS s" in filter_join
-    join_signal_clause = "\n    INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID" if needs_signal_join else ""
-
     where_clause = _assemble_where_clause(
         start_date,
         end_date,
-        filter_where,
+        "",
         improvement,
         degradation,
         selected_signals=selected_signals,
@@ -456,7 +494,14 @@ def get_changepoints_table():
         xd.BEARING,
         LISTAGG(DISTINCT xd.ID, ', ') WITHIN GROUP (ORDER BY xd.ID) AS ASSOCIATED_SIGNALS
     FROM CHANGEPOINTS t
-    INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD{join_signal_clause}
+    INNER JOIN (
+        SELECT DISTINCT
+            dim.XD,
+            dim.ID,
+            dim.ROADNAME,
+            dim.BEARING
+        FROM DIM_SIGNALS_XD dim{dimension_join}{dimension_where_clause}
+    ) xd ON t.XD = xd.XD
     WHERE {where_clause}
     GROUP BY ALL
     ORDER BY {sort_column} {sort_direction}
@@ -507,24 +552,21 @@ def get_changepoint_detail():
 
     sort_column = "t.TIMESTAMP"
 
+    set_variable_sql = f"SET CHANGE_TS = TO_TIMESTAMP_NTZ('{timestamp_sql}')"
+
     query = f"""
-    WITH params AS (
-        SELECT
-            TO_TIMESTAMP_NTZ('{timestamp_sql}') AS CHANGE_TS
-    )
     SELECT
         t.XD,
         t.TIMESTAMP,
         t.TRAVEL_TIME_SECONDS,
         CASE
-            WHEN t.TIMESTAMP < params.CHANGE_TS THEN 'before'
+            WHEN t.TIMESTAMP < $CHANGE_TS THEN 'before'
             ELSE 'after'
         END AS PERIOD
     FROM TRAVEL_TIME_ANALYTICS t
-    CROSS JOIN params
     WHERE t.XD = {xd_int}
-      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, params.CHANGE_TS)
-                          AND DATEADD('day', 7, params.CHANGE_TS)
+      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, $CHANGE_TS)
+                          AND DATEADD('day', 7, $CHANGE_TS)
     ORDER BY {sort_column}
     """
 
@@ -533,7 +575,14 @@ def get_changepoint_detail():
         print(f"  XD={xd_int}, timestamp={timestamp_sql}")
 
     def execute_query():
-        result = _execute_arrow_query(query)
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
+
+        session.sql(set_variable_sql).collect()
+        arrow_data = session.sql(query).to_arrow()
+        arrow_bytes = snowflake_result_to_arrow(arrow_data)
+        result = create_arrow_response(arrow_bytes)
         if DEBUG_BACKEND_TIMING:
             total_time = (time.time() - request_start) * 1000
             print(f"[TIMING] /changepoints-detail COMPLETE in {total_time:.2f}ms")

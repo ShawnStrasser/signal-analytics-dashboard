@@ -38,9 +38,8 @@ from config import (
     TIMEZONE,
 )
 from database import get_snowflake_session
-from routes.api_changepoints import _assemble_where_clause  # pylint: disable=protected-access
 from services import email_service, joke_service, subscription_store
-from utils.query_utils import build_filter_joins_and_where, normalize_date
+from utils.query_utils import normalize_date
 from utils.error_handler import handle_auth_error_retry
 
 
@@ -360,29 +359,85 @@ def _build_selected_filters_clause(selected_signals: Sequence[Any], selected_xds
     return " AND ".join(conditions)
 
 
+def _build_filtered_dim_components(
+    signal_ids: Sequence[Any],
+    maintained_by: Optional[str],
+    approach: Optional[str],
+    valid_geometry: Optional[str],
+) -> tuple[str, str]:
+    """Return JOIN/WHERE fragments for filtering DIM_SIGNALS_XD without extra joins."""
+    sanitized_ids = _sanitize_string_list(signal_ids)
+    join_clause = ""
+    where_parts: List[str] = []
+
+    if sanitized_ids:
+        ids_str = "', '".join(sanitized_ids)
+        where_parts.append(f"dim.ID IN ('{ids_str}')")
+
+    if approach is not None and approach != '':
+        approach_bool = 'TRUE' if str(approach).lower() == 'true' else 'FALSE'
+        where_parts.append(f"dim.APPROACH = {approach_bool}")
+
+    if valid_geometry is not None and valid_geometry != '' and valid_geometry != 'all':
+        valid = str(valid_geometry).lower()
+        if valid == 'valid':
+            where_parts.append("dim.VALID_GEOMETRY = TRUE")
+        elif valid == 'invalid':
+            where_parts.append("dim.VALID_GEOMETRY = FALSE")
+
+    maintained = str(maintained_by or 'all').lower()
+    if maintained in {'odot', 'others'}:
+        join_clause = "\n    INNER JOIN DIM_SIGNALS s ON dim.ID = s.ID"
+        if maintained == 'odot':
+            where_parts.append("s.ODOT_MAINTAINED = TRUE")
+        else:
+            where_parts.append("s.ODOT_MAINTAINED = FALSE")
+
+    where_clause = ""
+    if where_parts:
+        where_clause = "\n    WHERE " + " AND ".join(where_parts)
+
+    return join_clause, where_clause
+
+
 def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[Dict[str, Any]]:
     """Query Snowflake for monitoring changepoints using the provided filters."""
     filters = _parse_filters(raw_filters)
 
-    filter_join, filter_where = build_filter_joins_and_where(
+    dimension_join, dimension_where_clause = _build_filtered_dim_components(
         filters["signal_ids"],
         filters["maintained_by"],
         filters["approach"],
         filters["valid_geometry"],
     )
 
-    needs_signal_join = "DIM_SIGNALS s" in filter_join
-    join_signal_clause = "\n    INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID" if needs_signal_join else ""
+    pct_conditions: List[str] = []
+    improvement = _safe_float(filters.get("pct_change_improvement"))
+    degradation = _safe_float(filters.get("pct_change_degradation"))
+    if improvement > 0:
+        pct_conditions.append(f"t.PCT_CHANGE <= {-improvement}")
+    if degradation > 0:
+        pct_conditions.append(f"t.PCT_CHANGE >= {degradation}")
+    pct_clause = "1=1" if not pct_conditions else "(" + " OR ".join(pct_conditions) + ")"
 
-    where_clause = _assemble_where_clause(
-        filters["start_date"],
-        filters["end_date"],
-        filter_where,
-        filters["pct_change_improvement"],
-        filters["pct_change_degradation"],
-        selected_signals=filters["selected_signals"],
-        selected_xds=filters["selected_xds"],
-    )
+    where_parts = [
+        "t.TIMESTAMP >= DATEADD(day, -9, DATE_TRUNC('day', CURRENT_TIMESTAMP()))",
+        pct_clause,
+    ]
+
+    sanitized_selected_signals = _sanitize_string_list(filters.get("selected_signals"))
+    if sanitized_selected_signals:
+        ids_str = "', '".join(sanitized_selected_signals)
+        where_parts.append(
+            f"t.XD IN (SELECT DISTINCT XD FROM DIM_SIGNALS_XD WHERE ID IN ('{ids_str}'))"
+        )
+
+    sanitized_selected_xds = _sanitize_int_list(filters.get("selected_xds"))
+    if sanitized_selected_xds:
+        xds_str = ", ".join(sanitized_selected_xds)
+        where_parts.append(f"t.XD IN ({xds_str})")
+
+    where_clause = " AND ".join(where_parts)
 
     query = f"""
     SELECT
@@ -397,10 +452,17 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
         xd.BEARING,
         LISTAGG(DISTINCT xd.ID, ', ') WITHIN GROUP (ORDER BY xd.ID) AS ASSOCIATED_SIGNALS
     FROM CHANGEPOINTS t
-    INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD{join_signal_clause}
+    INNER JOIN (
+        SELECT DISTINCT
+            dim.XD,
+            dim.ID,
+            dim.ROADNAME,
+            dim.BEARING
+        FROM DIM_SIGNALS_XD dim{dimension_join}{dimension_where_clause}
+    ) xd ON t.XD = xd.XD
     WHERE {where_clause}
     GROUP BY ALL
-    ORDER BY ABS(t.PCT_CHANGE) DESC, t.TIMESTAMP DESC
+    ORDER BY t.PCT_CHANGE DESC
     LIMIT {limit}
     """
 
@@ -440,85 +502,57 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> List[Dict[str,
     """Query Snowflake for yesterday's anomalies using monitoring filters."""
     filters = _parse_filters(raw_filters)
 
-    filter_join, filter_where = build_filter_joins_and_where(
+    dimension_join, dimension_where_clause = _build_filtered_dim_components(
         filters["signal_ids"],
         filters["maintained_by"],
         filters["approach"],
         filters["valid_geometry"],
     )
 
-    needs_signal_join = "DIM_SIGNALS s" in filter_join
-    dimension_join = "INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID" if needs_signal_join else ""
-
-    eligible_cte = ""
-    eligible_join = ""
-    if filter_where:
-        eligible_cte = f"""
-    , eligible_xd AS (
-        SELECT DISTINCT xd.XD
-        FROM DIM_SIGNALS_XD xd
-        {dimension_join}
-        WHERE {filter_where}
+    selected_clause = _build_selected_filters_clause(
+        filters["selected_signals"], filters["selected_xds"]
     )
-"""
-        eligible_join = "INNER JOIN eligible_xd fx ON t.XD = fx.XD"
-
-    selected_clause = _build_selected_filters_clause(filters["selected_signals"], filters["selected_xds"])
-    if selected_clause:
-        selected_clause = f" AND {selected_clause}"
+    selected_clause_sql = f" AND {selected_clause}" if selected_clause else ""
 
     query = f"""
-    WITH params AS (
-        SELECT
-            DATEADD(day, -1, DATE_TRUNC('day', CURRENT_TIMESTAMP())) AS TARGET_DATE
-    ){eligible_cte}
-    , anomaly_base AS (
-        SELECT
-            t.XD,
-            SUM(CASE WHEN t.ORIGINATED_ANOMALY THEN 1 ELSE 0 END) AS ANOMALY_SAMPLES,
-            COUNT(*) AS TOTAL_SAMPLES,
-            SUM(CASE WHEN t.ORIGINATED_ANOMALY THEN COALESCE(t.TRAVEL_TIME_SECONDS - t.PREDICTION, 0) ELSE 0 END) AS TOTAL_ANOMALY_DELTA,
-            AVG(t.TRAVEL_TIME_SECONDS) AS AVG_ACTUAL,
-            AVG(t.PREDICTION) AS AVG_PREDICTION
-        FROM TRAVEL_TIME_ANALYTICS t
-        JOIN params p ON t.DATE_ONLY = CAST(p.TARGET_DATE AS DATE)
-        {eligible_join}
-        WHERE 1=1{selected_clause}
-        GROUP BY t.XD
+    WITH filtered_dim AS (
+        SELECT DISTINCT
+            dim.XD,
+            dim.ID,
+            dim.ROADNAME,
+            dim.BEARING
+        FROM DIM_SIGNALS_XD dim{dimension_join}{dimension_where_clause}
     ),
-    scored AS (
+    signal_ids AS (
         SELECT
-            b.*,
-            CASE WHEN b.TOTAL_SAMPLES = 0 THEN 0
-                 ELSE b.ANOMALY_SAMPLES::FLOAT / b.TOTAL_SAMPLES::FLOAT
-            END AS ANOMALY_RATIO,
-            CASE
-                WHEN b.TOTAL_SAMPLES = 0 THEN 0
-                ELSE POWER(b.ANOMALY_SAMPLES::FLOAT / b.TOTAL_SAMPLES::FLOAT, 2)
-                     * (b.TOTAL_ANOMALY_DELTA / 60.0) * 100
-            END AS ANOMALY_SCORE
-        FROM anomaly_base b
+            XD,
+            LISTAGG(DISTINCT ID, ', ') WITHIN GROUP (ORDER BY ID) AS ASSOCIATED_SIGNALS
+        FROM filtered_dim
+        GROUP BY XD
     ),
-    dimension_data AS (
-        SELECT
-            xd.XD,
-            MAX(xd.ROADNAME) AS ROADNAME,
-            MAX(xd.BEARING) AS BEARING,
-            LISTAGG(DISTINCT xd.ID, ', ') WITHIN GROUP (ORDER BY xd.ID) AS ASSOCIATED_SIGNALS
-        FROM DIM_SIGNALS_XD xd
-        GROUP BY xd.XD
+    distinct_dim AS (
+        SELECT DISTINCT
+            XD,
+            ROADNAME,
+            BEARING
+        FROM filtered_dim
     )
     SELECT
-        s.XD,
-        s.ANOMALY_RATIO,
-        s.ANOMALY_SCORE,
+        t.XD,
         d.ROADNAME,
         d.BEARING,
-        d.ASSOCIATED_SIGNALS
-    FROM scored s
-    INNER JOIN dimension_data d ON s.XD = d.XD
-    WHERE s.ANOMALY_SCORE >= {ANOMALY_MONITORING_THRESHOLD}
-    ORDER BY s.ANOMALY_SCORE DESC, s.ANOMALY_RATIO DESC, s.XD
+        s.ASSOCIATED_SIGNALS
+    FROM TRAVEL_TIME_ANALYTICS t
+    INNER JOIN distinct_dim d ON t.XD = d.XD
+    LEFT JOIN signal_ids s ON t.XD = s.XD
+    WHERE t.DATE_ONLY >= DATEADD(day, -1, DATE_TRUNC('day', CURRENT_TIMESTAMP())){selected_clause_sql}
+    GROUP BY ALL
+    HAVING POWER(
+        COUNT(CASE WHEN t.ORIGINATED_ANOMALY = TRUE THEN 1 END)::FLOAT / NULLIF(COUNT(*)::FLOAT, 0),
+        2
+    ) * (SUM(CASE WHEN t.ORIGINATED_ANOMALY = TRUE THEN (t.TRAVEL_TIME_SECONDS - t.PREDICTION) ELSE 0 END) / 60.0) * 100
+        > {ANOMALY_MONITORING_THRESHOLD}
+    ORDER BY t.XD
     """
 
     def execute_query() -> List[Dict[str, Any]]:
@@ -541,13 +575,8 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> List[Dict[str,
             except (TypeError, ValueError):
                 continue
 
-            anomaly_ratio = _safe_float(data.get("ANOMALY_RATIO"))
-            anomaly_score = _safe_float(data.get("ANOMALY_SCORE"))
-
             row = {
                 "xd": xd,
-                "anomaly_ratio": anomaly_ratio,
-                "anomaly_score": anomaly_score,
                 "roadname": data.get("ROADNAME"),
                 "bearing": data.get("BEARING"),
                 "associated_signals": data.get("ASSOCIATED_SIGNALS"),
@@ -623,8 +652,10 @@ def _format_timestamp_for_sql(value: Any) -> str:
     """Convert a timestamp value into a SQL-safe string."""
     if isinstance(value, datetime):
         value = _to_local_naive(value)
-        return value.strftime("%Y-%m-%d %H:%M:%S")
-    return str(value)
+        formatted = value.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        formatted = str(value)
+    return formatted.replace("'", "''")
 
 
 def fetch_changepoint_detail_rows(xd: int, change_timestamp: Any) -> List[Dict[str, Any]]:
@@ -632,22 +663,20 @@ def fetch_changepoint_detail_rows(xd: int, change_timestamp: Any) -> List[Dict[s
     xd_value = int(xd)
     timestamp_sql = _format_timestamp_for_sql(change_timestamp)
 
+    set_variable_sql = f"SET CHANGE_TS = TO_TIMESTAMP_NTZ('{timestamp_sql}')"
+
     query = f"""
-    WITH params AS (
-        SELECT TO_TIMESTAMP_NTZ('{timestamp_sql}') AS CHANGE_TS
-    )
     SELECT
         t.TIMESTAMP,
         t.TRAVEL_TIME_SECONDS,
         CASE
-            WHEN t.TIMESTAMP < params.CHANGE_TS THEN 'before'
+            WHEN t.TIMESTAMP < $CHANGE_TS THEN 'before'
             ELSE 'after'
         END AS PERIOD
     FROM TRAVEL_TIME_ANALYTICS t
-    CROSS JOIN params
     WHERE t.XD = {xd_value}
-      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, params.CHANGE_TS)
-                          AND DATEADD('day', 7, params.CHANGE_TS)
+      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, $CHANGE_TS)
+                          AND DATEADD('day', 7, $CHANGE_TS)
     ORDER BY t.TIMESTAMP
     """
 
@@ -656,6 +685,7 @@ def fetch_changepoint_detail_rows(xd: int, change_timestamp: Any) -> List[Dict[s
         if not session:
             raise RuntimeError("Unable to establish database connection for changepoint detail")
 
+        session.sql(set_variable_sql).collect()
         table = session.sql(query).to_arrow()
         if table.num_rows == 0:
             return []
@@ -686,22 +716,20 @@ def fetch_changepoint_hourly_series(xd: int, change_timestamp: Any) -> List[Dict
     xd_value = int(xd)
     timestamp_sql = _format_timestamp_for_sql(change_timestamp)
 
+    set_variable_sql = f"SET CHANGE_TS = TO_TIMESTAMP_NTZ('{timestamp_sql}')"
+
     query = f"""
-    WITH params AS (
-        SELECT TO_TIMESTAMP_NTZ('{timestamp_sql}') AS CHANGE_TS
-    )
     SELECT
         DATE_TRUNC('HOUR', t.TIMESTAMP) AS HOUR_TS,
         AVG(t.TRAVEL_TIME_SECONDS) AS AVG_TRAVEL_TIME,
         CASE
-            WHEN t.TIMESTAMP < params.CHANGE_TS THEN 'before'
+            WHEN t.TIMESTAMP < $CHANGE_TS THEN 'before'
             ELSE 'after'
         END AS PERIOD
     FROM TRAVEL_TIME_ANALYTICS t
-    CROSS JOIN params
     WHERE t.XD = {xd_value}
-      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, params.CHANGE_TS)
-                          AND DATEADD('day', 7, params.CHANGE_TS)
+      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, $CHANGE_TS)
+                          AND DATEADD('day', 7, $CHANGE_TS)
     GROUP BY 1, 3
     ORDER BY HOUR_TS
     """
@@ -711,6 +739,7 @@ def fetch_changepoint_hourly_series(xd: int, change_timestamp: Any) -> List[Dict
         if not session:
             raise RuntimeError("Unable to establish database connection for changepoint hourly series")
 
+        session.sql(set_variable_sql).collect()
         table = session.sql(query).to_arrow()
         if table.num_rows == 0:
             return []
