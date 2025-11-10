@@ -31,6 +31,7 @@
       <div id="status-message" ref="statusMessageRef"></div>
       <div v-if="showVictoryPrompt" class="victory-panel">
         <p class="victory-message">
+          You have proven your humanity in a sea of AI hacker bots!
           Ready to enter the site or play again?
         </p>
         <div class="victory-actions">
@@ -242,7 +243,7 @@ startVictoryCelebration = () => {
       return
     }
     const elapsed = Date.now() - celebrationStart
-    if (elapsed >= 5000) {
+    if (elapsed >= 3000) {
       stopVictoryCelebration()
       return
     }
@@ -925,14 +926,12 @@ onMounted(async () => {
     }
 
     verificationInProgress = true
-    updateStatus('Verifying your puzzle solve with the traffic cabinet...', 'warning')
     removeListeners()
     try {
       await submitCaptchaSolve(captchaNonce.value)
       captchaNonce.value = ''
       isVerified = true
       allowPostVictoryMotion = wasMoving
-      updateStatus('You have proven your humanity in a sea of AI hacker bots!', 'success')
       emitVictoryBurst(1.3)
       showVictoryPrompt.value = true
       startVictoryCelebration()
