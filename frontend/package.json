@@ -25,7 +25,8 @@
     "leaflet-draw": "*",
     "apache-arrow": "*",
     "html2canvas": "*",
-    "jspdf": "*"
+    "jspdf": "*",
+    "canvas-confetti": "^1.9.3"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "*",

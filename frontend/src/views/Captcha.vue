@@ -50,6 +50,7 @@
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { isCaptchaVerified, setCaptchaVerified } from '../utils/captchaSession'
+import confetti from 'canvas-confetti'
 
 const canvasRef = ref(null)
 const statusMessageRef = ref(null)
@@ -104,6 +105,165 @@ let cancelAnimation = () => {}
 let detachResizeListener = () => {}
 let stopVictoryCelebration = () => {}
 let startVictoryCelebration = () => {}
+let teardownConfettiEngine = () => {}
+
+const confettiColors = ['#ef4444', '#f97316', '#fcd34d', '#34d399', '#38bdf8', '#c084fc']
+let confettiCanvas = null
+let confettiEngine = null
+let victoryCelebrationActive = false
+let victoryCelebrationTimer = 0
+let detachConfettiResize = () => {}
+
+const initializeConfettiEngine = () => {
+  if (confettiEngine || typeof window === 'undefined') {
+    return
+  }
+  confettiCanvas = document.createElement('canvas')
+  confettiCanvas.className = 'global-confetti-canvas'
+  document.body.appendChild(confettiCanvas)
+
+  const applyCanvasSizing = () => {
+    if (!confettiCanvas) {
+      return
+    }
+    const ratio = Math.min(window.devicePixelRatio || 1, 2)
+    confettiCanvas.style.position = 'fixed'
+    confettiCanvas.style.top = '0'
+    confettiCanvas.style.left = '0'
+    confettiCanvas.style.width = '100vw'
+    confettiCanvas.style.height = '100vh'
+    confettiCanvas.style.pointerEvents = 'none'
+    confettiCanvas.style.zIndex = '9999'
+    confettiCanvas.width = Math.floor(window.innerWidth * ratio)
+    confettiCanvas.height = Math.floor(window.innerHeight * ratio)
+  }
+
+  applyCanvasSizing()
+  const handleResize = () => applyCanvasSizing()
+  window.addEventListener('resize', handleResize)
+  detachConfettiResize = () => window.removeEventListener('resize', handleResize)
+
+  confettiEngine = confetti.create(confettiCanvas, {
+    resize: true,
+    useWorker: true,
+    disableForReducedMotion: false,
+  })
+}
+
+const emitLocalizedConfetti = (canvasEl, x, y) => {
+  if (!confettiEngine || !canvasEl) {
+    return
+  }
+  const rect = canvasEl.getBoundingClientRect()
+  const originX = (rect.left + (x / canvasEl.width) * rect.width) / window.innerWidth
+  const originY = (rect.top + (y / canvasEl.height) * rect.height) / window.innerHeight
+  confettiEngine({
+    particleCount: 40,
+    spread: 65,
+    startVelocity: 50,
+    gravity: 1.1,
+    scalar: 0.9,
+    ticks: 70,
+    colors: confettiColors,
+    origin: { x: originX, y: originY },
+    drift: (Math.random() - 0.5) * 0.6,
+  })
+}
+
+const emitVictoryBurst = (intensity = 1) => {
+  if (!confettiEngine) {
+    return
+  }
+  const mobileScalar = window.innerWidth <= 640 ? 0.85 : 1.15
+  const mobileCountFactor = window.innerWidth <= 640 ? 0.75 : 1
+  const randomOrigin = () => ({
+    x: Math.random(),
+    y: 0.05 + Math.random() * 0.9,
+  })
+
+  confettiEngine({
+    particleCount: Math.floor(220 * intensity * mobileCountFactor),
+    spread: 140 + Math.random() * 40,
+    startVelocity: 70 + Math.random() * 15,
+    gravity: 0.75,
+    ticks: 110,
+    scalar: mobileScalar,
+    drift: (Math.random() - 0.5) * 1.5,
+    colors: confettiColors,
+    origin: randomOrigin(),
+  })
+
+  confettiEngine({
+    particleCount: Math.floor(120 * intensity * mobileCountFactor),
+    spread: 90,
+    startVelocity: 85,
+    decay: 0.92,
+    gravity: 1.3,
+    scalar: mobileScalar * 0.65,
+    colors: confettiColors,
+    origin: randomOrigin(),
+    drift: (Math.random() - 0.5) * 1.6,
+  })
+
+  confettiEngine({
+    particleCount: Math.floor(80 * intensity * mobileCountFactor),
+    spread: 45,
+    startVelocity: 60,
+    gravity: 2.4,
+    scalar: mobileScalar * 0.5,
+    ticks: 60,
+    origin: { x: Math.random(), y: 0.95 },
+    colors: confettiColors,
+  })
+}
+
+stopVictoryCelebration = () => {
+  victoryCelebrationActive = false
+  if (victoryCelebrationTimer) {
+    window.clearTimeout(victoryCelebrationTimer)
+    victoryCelebrationTimer = 0
+  }
+}
+
+startVictoryCelebration = () => {
+  stopVictoryCelebration()
+  if (!confettiEngine) {
+    return
+  }
+  victoryCelebrationActive = true
+  const celebrationStart = Date.now()
+
+  const loop = () => {
+    if (!victoryCelebrationActive) {
+      return
+    }
+    const elapsed = Date.now() - celebrationStart
+    if (elapsed >= 5000) {
+      stopVictoryCelebration()
+      return
+    }
+    emitVictoryBurst(1.1 + Math.random() * 0.4)
+    victoryCelebrationTimer = window.setTimeout(loop, 230 + Math.random() * 170)
+  }
+
+  emitVictoryBurst(1.4)
+  emitVictoryBurst(1.2)
+  loop()
+}
+
+teardownConfettiEngine = () => {
+  stopVictoryCelebration()
+  if (confettiEngine?.reset) {
+    confettiEngine.reset()
+  }
+  confettiEngine = null
+  if (confettiCanvas) {
+    confettiCanvas.remove()
+    confettiCanvas = null
+  }
+  detachConfettiResize()
+  detachConfettiResize = () => {}
+}
 watch(
   difficulty,
   (next, prev) => {
@@ -139,6 +299,7 @@ onMounted(() => {
   if (!ctx) {
     return
   }
+  initializeConfettiEngine()
 
   const BASE_CANVAS_WIDTH = 630
   const BASE_CANVAS_HEIGHT = 480
@@ -170,9 +331,6 @@ onMounted(() => {
   const ESCAPE_TRIGGER_MS = 14000
   const touchOptions = { passive: false }
   const HARD_LAUNCH_MODE = 'hard'
-  const confettiColors = ['#ef4444', '#f97316', '#fcd34d', '#34d399', '#38bdf8', '#c084fc']
-  const confettiLayers = new Set()
-
   function getDifficultySpeedBoost() {
     if (activeDifficulty === 'easy') {
       return 0
@@ -181,151 +339,6 @@ onMounted(() => {
       return 1.45
     }
     return 1
-  }
-
-  function launchConfettiBurst(level = 'mini', options = {}) {
-    const isGlobal = options.global ?? false
-    const canvasHost = canvas.closest('.captcha-container')
-    const host = isGlobal ? document.body : canvasHost
-    if (!host) {
-      return
-    }
-
-    const {
-      originX = isGlobal ? Math.random() * 100 : 50,
-      originY = isGlobal ? Math.random() * 100 : 50,
-      variant = isGlobal ? 'firework' : 'stream'
-    } = options
-
-    const layer = document.createElement('div')
-    layer.className = `confetti-layer${isGlobal ? ' global' : ''}`
-    layer.style.setProperty('--confetti-origin-x', `${originX}%`)
-    layer.style.setProperty('--confetti-origin-y', `${originY}%`)
-    host.appendChild(layer)
-    confettiLayers.add(layer)
-
-    const isMega = level === 'mega'
-    const isFirework = variant === 'firework'
-    const isComet = variant === 'comet'
-    const pieceCount = isMega ? 220 : isFirework ? 90 : isComet ? 60 : 40
-    const spread = isMega ? 420 : isFirework ? 260 : 200
-    const fallDistance = isMega ? 360 : 220
-    const lifetime = isMega ? 2100 : isFirework ? 1700 : isComet ? 1400 : 1200
-
-    for (let i = 0; i < pieceCount; i += 1) {
-      const piece = document.createElement('span')
-      const baseColor = confettiColors[i % confettiColors.length]
-      piece.className = `confetti-piece ${level}${isFirework ? ' firework' : ''}${isComet ? ' comet' : ''}`
-
-      if (isFirework) {
-        const highlight = 'rgba(255, 255, 255, 0.95)'
-        piece.style.backgroundColor = 'transparent'
-        piece.style.backgroundImage = `radial-gradient(circle at ${30 + Math.random() * 40}% ${30 + Math.random() * 40}%, ${highlight}, ${baseColor})`
-        piece.style.borderRadius = '50%'
-        piece.style.boxShadow = `0 0 12px ${baseColor}88`
-        piece.style.width = `${Math.random() * 10 + 6}px`
-        piece.style.height = piece.style.width
-      } else if (isComet) {
-        piece.style.backgroundColor = baseColor
-        piece.style.width = `${Math.random() * 4 + 2}px`
-        piece.style.height = `${Math.random() * 30 + 20}px`
-        piece.style.borderRadius = '999px'
-        piece.style.boxShadow = `0 0 18px ${baseColor}aa`
-      } else {
-        piece.style.backgroundColor = baseColor
-        piece.style.width = `${Math.random() * 6 + 4}px`
-        piece.style.height = `${Math.random() * 10 + 6}px`
-      }
-
-      if (isFirework) {
-        const angle = Math.random() * Math.PI * 2
-        const distance = Math.random() * spread + 140
-        piece.style.setProperty('--confetti-x', `${Math.cos(angle) * distance}px`)
-        piece.style.setProperty('--confetti-y', `${Math.sin(angle) * distance}px`)
-        piece.style.setProperty('--confetti-rotate', `${Math.random() * 360}deg`)
-        piece.style.setProperty('--confetti-duration', `${1400 + Math.random() * 400}ms`)
-      } else if (isComet) {
-        const angle = Math.random() * Math.PI * 2
-        const distance = Math.random() * spread + 200
-        piece.style.setProperty('--confetti-x', `${Math.cos(angle) * distance}px`)
-        piece.style.setProperty('--confetti-y', `${Math.sin(angle) * distance}px`)
-        piece.style.setProperty('--confetti-rotate', `${Math.random() * 360}deg`)
-        piece.style.setProperty('--confetti-duration', `${900 + Math.random() * 500}ms`)
-      } else {
-        piece.style.setProperty('--confetti-x', `${(Math.random() - 0.5) * spread}px`)
-        piece.style.setProperty('--confetti-y', `${Math.random() * fallDistance + 80}px`)
-        piece.style.setProperty('--confetti-rotate', `${Math.random() * 720 - 360}deg`)
-        piece.style.setProperty('--confetti-duration', isMega ? '1700ms' : '1100ms')
-      }
-
-      layer.appendChild(piece)
-    }
-
-    window.setTimeout(() => {
-      if (confettiLayers.has(layer)) {
-        layer.remove()
-        confettiLayers.delete(layer)
-      }
-    }, lifetime)
-  }
-
-  const victoryCelebrationTimers = new Set()
-  let victoryCelebrationActive = false
-  let victoryCelebrationDeadline = 0
-  let victoryCelebrationEndTimer = 0
-
-  stopVictoryCelebration = () => {
-    if (victoryCelebrationEndTimer) {
-      window.clearTimeout(victoryCelebrationEndTimer)
-      victoryCelebrationEndTimer = 0
-    }
-    victoryCelebrationActive = false
-    victoryCelebrationTimers.forEach(id => window.clearTimeout(id))
-    victoryCelebrationTimers.clear()
-    cleanupConfettiLayers()
-  }
-
-  function scheduleVictoryBurst() {
-    if (!victoryCelebrationActive) {
-      return
-    }
-    if (Date.now() >= victoryCelebrationDeadline) {
-      stopVictoryCelebration()
-      return
-    }
-    const selectedVariant = Math.random() > 0.35 ? 'firework' : 'comet'
-    launchConfettiBurst('mega', {
-      global: true,
-      variant: selectedVariant
-    })
-    const delay = 350 + Math.random() * 450
-    const timeoutId = window.setTimeout(() => {
-      victoryCelebrationTimers.delete(timeoutId)
-      scheduleVictoryBurst()
-    }, delay)
-    victoryCelebrationTimers.add(timeoutId)
-  }
-
-  startVictoryCelebration = () => {
-    stopVictoryCelebration()
-    victoryCelebrationActive = true
-    victoryCelebrationDeadline = Date.now() + 5000
-    for (let i = 0; i < 3; i += 1) {
-      window.setTimeout(() => {
-        if (victoryCelebrationActive) {
-          launchConfettiBurst('mega', { global: true, variant: 'firework' })
-        }
-      }, i * 120)
-    }
-    scheduleVictoryBurst()
-    victoryCelebrationEndTimer = window.setTimeout(() => {
-      stopVictoryCelebration()
-    }, 5200)
-  }
-
-  function cleanupConfettiLayers() {
-    confettiLayers.forEach(layer => layer.remove())
-    confettiLayers.clear()
   }
 
   let scale = 1
@@ -873,12 +886,7 @@ onMounted(() => {
       return
     }
     setCaptchaVerified()
-    launchConfettiBurst('mega', {
-      originX: 40 + Math.random() * 20,
-      originY: 35 + Math.random() * 30,
-      global: true,
-      variant: 'firework'
-    })
+    emitVictoryBurst(1.3)
     showVictoryPrompt.value = true
     startVictoryCelebration()
   }
@@ -889,9 +897,7 @@ onMounted(() => {
 
     placedLights[dragTarget.id] = true
     dragTarget.isPlaced = true
-    const originX = (zone.x / canvas.width) * 100
-    const originY = (zone.y / canvas.height) * 100
-    launchConfettiBurst('mini', { originX, originY, variant: 'firework' })
+    emitLocalizedConfetti(canvas, zone.x, zone.y)
 
     const allPlaced = Object.values(placedLights).every(status => status === true)
 
@@ -947,7 +953,6 @@ onMounted(() => {
     applyResponsiveScaling()
     canvas.classList.remove('dragging')
     showVictoryPrompt.value = false
-    cleanupConfettiLayers()
 
     isVerified = false
     redirected = false
@@ -1025,10 +1030,10 @@ onBeforeUnmount(() => {
   detachResizeListener()
   cancelAnimation()
   stopVictoryCelebration()
-  cleanupConfettiLayers()
   difficultyResetHandler = null
   enterSiteHandler = null
   replayHandler = null
+  teardownConfettiEngine()
 })
 </script>
 
@@ -1244,108 +1249,13 @@ h2 {
   color: #f59e0b;
 }
 
-:global(.confetti-layer) {
+:global(.global-confetti-canvas) {
   pointer-events: none;
-  position: absolute;
-  inset: 0;
-  overflow: visible;
-  z-index: 2;
-  --confetti-origin-x: 50%;
-  --confetti-origin-y: 50%;
-}
-
-:global(.confetti-layer.global) {
   position: fixed;
   inset: 0;
+  width: 100vw;
+  height: 100vh;
   z-index: 9999;
-}
-
-:global(.confetti-piece) {
-  position: absolute;
-  top: var(--confetti-origin-y, 50%);
-  left: var(--confetti-origin-x, 50%);
-  border-radius: 2px;
-  opacity: 0;
-  transform: translate(-50%, -50%);
-  animation: confetti-pop var(--confetti-duration, 1000ms) ease-out forwards;
-}
-
-:global(.confetti-piece.mega) {
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
-}
-
-:global(.confetti-piece.firework) {
-  border-radius: 999px;
-  box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
-  animation: firework-pop var(--confetti-duration, 1200ms) ease-out forwards;
-}
-
-:global(.confetti-piece.comet) {
-  animation: comet-pop var(--confetti-duration, 1000ms) ease-out forwards;
-}
-
-@keyframes confetti-pop {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(0.6) rotate(0deg);
-  }
-  25% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translate(
-        calc(-50% + var(--confetti-x, 0px)),
-        calc(-50% + var(--confetti-y, 120px))
-      )
-      rotate(var(--confetti-rotate, 180deg));
-  }
-}
-
-@keyframes firework-pop {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(0.4);
-  }
-  40% {
-    opacity: 1;
-    transform: translate(
-        calc(-50% + var(--confetti-x, 0px) * 0.4),
-        calc(-50% + var(--confetti-y, 0px) * 0.4)
-      )
-      scale(0.9);
-  }
-  100% {
-    opacity: 0;
-    transform: translate(
-        calc(-50% + var(--confetti-x, 0px)),
-        calc(-50% + var(--confetti-y, 0px))
-      )
-      scale(1.2);
-  }
-}
-
-@keyframes comet-pop {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(0.3);
-  }
-  30% {
-    opacity: 1;
-    transform: translate(
-        calc(-50% + var(--confetti-x, 0px) * 0.3),
-        calc(-50% + var(--confetti-y, 0px) * 0.3)
-      )
-      scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: translate(
-        calc(-50% + var(--confetti-x, 0px)),
-        calc(-50% + var(--confetti-y, 0px))
-      )
-      scale(0.85);
-  }
 }
 
 @media (max-width: 640px) {
