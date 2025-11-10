@@ -92,6 +92,7 @@
 
     <!-- Connection status overlay -->
     <ConnectionStatus
+      v-if="!isCaptchaRoute"
       :status="connectionStatus"
       :error-details="connectionError"
       @retry="checkConnection"
@@ -142,7 +143,7 @@ const geometryStore = useGeometryStore()
 const themeStore = useThemeStore()
 const vuetifyTheme = useTheme()
 const { mobile } = useDisplay()
-const connectionStatus = ref('connecting') // 'idle', 'connecting', 'connected', 'error'
+const connectionStatus = ref('idle') // 'idle', 'connecting', 'connected', 'error'
 const connectionError = ref(null)
 
 // Drawer state management
@@ -190,9 +191,12 @@ const toggleColorblindMode = () => {
 }
 
 const showFilterPanel = computed(() => route.meta?.showFilters !== false)
+const isCaptchaRoute = computed(() => route.name === 'Captcha')
 
 const connectionChipColor = computed(() => {
   switch (connectionStatus.value) {
+    case 'idle':
+      return 'grey'
     case 'connected':
       return 'success'
     case 'connecting':
@@ -206,6 +210,8 @@ const connectionChipColor = computed(() => {
 
 const connectionIcon = computed(() => {
   switch (connectionStatus.value) {
+    case 'idle':
+      return 'mdi-help-circle'
     case 'connected':
       return 'mdi-check-circle'
     case 'connecting':
@@ -219,6 +225,8 @@ const connectionIcon = computed(() => {
 
 const connectionText = computed(() => {
   switch (connectionStatus.value) {
+    case 'idle':
+      return 'Idle'
     case 'connected':
       return 'Connected'
     case 'connecting':
@@ -232,6 +240,8 @@ const connectionText = computed(() => {
 
 const connectionTooltip = computed(() => {
   switch (connectionStatus.value) {
+    case 'idle':
+      return 'Connection check pending'
     case 'connected':
       return 'Database connection active'
     case 'connecting':
@@ -244,6 +254,11 @@ const connectionTooltip = computed(() => {
 })
 
 const checkConnection = async () => {
+  if (isCaptchaRoute.value) {
+    connectionStatus.value = 'idle'
+    connectionError.value = null
+    return
+  }
   connectionStatus.value = 'connecting'
   connectionError.value = null
 
@@ -265,6 +280,19 @@ const checkConnection = async () => {
 }
 
 onMounted(async () => {
-  await checkConnection()
+  if (!isCaptchaRoute.value) {
+    await checkConnection()
+  }
+})
+
+watch(isCaptchaRoute, async (onCaptcha) => {
+  if (onCaptcha) {
+    connectionStatus.value = 'idle'
+    connectionError.value = null
+    return
+  }
+  if (connectionStatus.value !== 'connected') {
+    await checkConnection()
+  }
 })
 </script>

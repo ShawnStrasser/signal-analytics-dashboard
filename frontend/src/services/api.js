@@ -1,4 +1,17 @@
 import * as arrow from 'apache-arrow'
+import { isCaptchaVerified } from '../utils/captchaSession'
+
+function requireCaptchaVerification() {
+  if (typeof window === 'undefined') {
+    return
+  }
+  if (isCaptchaVerified()) {
+    return
+  }
+  const error = new Error('captcha_required')
+  error.code = 'captcha_required'
+  throw error
+}
 
 // Note: Arrow IPC compression (LZ4/ZSTD) is not available in apache-arrow 21.0.0
 // because compressionRegistry is not exposed in the public API.
@@ -11,6 +24,7 @@ class ApiService {
   }
 
   async fetchArrowData(endpoint, params = {}, retries = 3, retryDelay = 1000) {
+    requireCaptchaVerification()
     // Simple URL construction that works with Vite proxy
     let url = `${this.baseURL}${endpoint}`
 
@@ -243,6 +257,7 @@ class ApiService {
 
   async healthCheck() {
     try {
+      requireCaptchaVerification()
       const response = await fetch(`${this.baseURL}/health`)
       return response.json()
     } catch (error) {
@@ -253,6 +268,7 @@ class ApiService {
 
   async getConnectionStatus() {
     try {
+      requireCaptchaVerification()
       const response = await fetch(`${this.baseURL}/connection-status`)
       return response.json()
     } catch (error) {
@@ -367,6 +383,7 @@ class ApiService {
 
   async getConfig() {
     try {
+      requireCaptchaVerification()
       const response = await fetch(`${this.baseURL}/config`)
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
@@ -380,6 +397,7 @@ class ApiService {
   }
 
   async fetchJson(endpoint, params = {}, retries = 3, retryDelay = 1000) {
+    requireCaptchaVerification()
     let url = `${this.baseURL}${endpoint}`
 
     const searchParams = new URLSearchParams()
@@ -483,6 +501,7 @@ class ApiService {
   }
 
   async saveSubscription(settings) {
+    requireCaptchaVerification()
     const response = await fetch(`${this.baseURL}/subscriptions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -499,6 +518,7 @@ class ApiService {
   }
 
   async deleteSubscription() {
+    requireCaptchaVerification()
     const response = await fetch(`${this.baseURL}/subscriptions`, {
       method: 'DELETE',
       credentials: 'include'
@@ -513,6 +533,7 @@ class ApiService {
   }
 
   async sendTestReport(settings) {
+    requireCaptchaVerification()
     const response = await fetch(`${this.baseURL}/reports/send-test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

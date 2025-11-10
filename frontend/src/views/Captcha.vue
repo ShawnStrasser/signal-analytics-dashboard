@@ -5,6 +5,23 @@
       <p id="challenge-text">
         <span id="challenge-color" ref="challengeColorRef"></span>
       </p>
+      <div class="difficulty-section" role="radiogroup" aria-label="Captcha difficulty">
+        <div class="difficulty-options">
+          <label
+            v-for="option in difficultyOptions"
+            :key="option.value"
+            :class="['difficulty-option', option.value === difficulty ? 'active' : '']"
+          >
+            <input
+              type="radio"
+              :value="option.value"
+              v-model="difficulty"
+              name="captcha-difficulty"
+            />
+            <span class="difficulty-name">{{ option.label }}</span>
+          </label>
+        </div>
+      </div>
       <canvas
         id="trafficCanvas"
         ref="canvasRef"
@@ -12,22 +29,56 @@
         height="480"
       ></canvas>
       <div id="status-message" ref="statusMessageRef"></div>
-      <button id="reset-button" ref="resetButtonRef" type="button">
-        Reset Challenge
-      </button>
+      <div v-if="showVictoryPrompt" class="victory-panel">
+        <p class="victory-message">
+          Ready to enter the site or play again?
+        </p>
+        <div class="victory-actions">
+          <button class="victory-enter" type="button" @click="enterSite">
+            Enter the Site
+          </button>
+          <button class="victory-replay" type="button" @click="playAgain">
+            Play Again
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { onMounted, onBeforeUnmount, ref } from 'vue'
+import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { isCaptchaVerified, setCaptchaVerified } from '../utils/captchaSession'
 
 const canvasRef = ref(null)
 const statusMessageRef = ref(null)
-const resetButtonRef = ref(null)
 const challengeColorRef = ref(null)
+const difficulty = ref('medium')
+const showVictoryPrompt = ref(false)
+
+const difficultyOptions = [
+  { value: 'easy', label: 'Easy' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'hard', label: 'Hard' }
+]
+
+let activeDifficulty = difficulty.value
+let difficultyResetHandler = null
+let enterSiteHandler = null
+let replayHandler = null
+
+const enterSite = () => {
+  if (typeof enterSiteHandler === 'function') {
+    enterSiteHandler()
+  }
+}
+
+const playAgain = () => {
+  if (typeof replayHandler === 'function') {
+    replayHandler()
+  }
+}
 
 const router = useRouter()
 const route = useRoute()
@@ -49,10 +100,24 @@ function redirectAfterVerification() {
 }
 
 let detachCanvasListeners = () => {}
-let detachResetHandler = () => {}
 let cancelAnimation = () => {}
-let clearRedirectTimer = () => {}
 let detachResizeListener = () => {}
+let stopVictoryCelebration = () => {}
+let startVictoryCelebration = () => {}
+watch(
+  difficulty,
+  (next, prev) => {
+    if (next === prev) {
+      return
+    }
+    activeDifficulty = next
+    showVictoryPrompt.value = false
+    stopVictoryCelebration()
+    if (typeof difficultyResetHandler === 'function') {
+      difficultyResetHandler()
+    }
+  }
+)
 
 onMounted(() => {
   document.title = "Please Verify You're a Human who Likes to Solve Traffic Signal Puzzles"
@@ -64,10 +129,9 @@ onMounted(() => {
 
   const canvas = canvasRef.value
   const statusMessageEl = statusMessageRef.value
-  const resetButton = resetButtonRef.value
   const challengeColorEl = challengeColorRef.value
 
-  if (!canvas || !statusMessageEl || !resetButton) {
+  if (!canvas || !statusMessageEl) {
     return
   }
 
@@ -105,6 +169,164 @@ onMounted(() => {
   const FAST_SPIN_TRIGGER_MS = 9000
   const ESCAPE_TRIGGER_MS = 14000
   const touchOptions = { passive: false }
+  const HARD_LAUNCH_MODE = 'hard'
+  const confettiColors = ['#ef4444', '#f97316', '#fcd34d', '#34d399', '#38bdf8', '#c084fc']
+  const confettiLayers = new Set()
+
+  function getDifficultySpeedBoost() {
+    if (activeDifficulty === 'easy') {
+      return 0
+    }
+    if (activeDifficulty === 'hard') {
+      return 1.45
+    }
+    return 1
+  }
+
+  function launchConfettiBurst(level = 'mini', options = {}) {
+    const isGlobal = options.global ?? false
+    const canvasHost = canvas.closest('.captcha-container')
+    const host = isGlobal ? document.body : canvasHost
+    if (!host) {
+      return
+    }
+
+    const {
+      originX = isGlobal ? Math.random() * 100 : 50,
+      originY = isGlobal ? Math.random() * 100 : 50,
+      variant = isGlobal ? 'firework' : 'stream'
+    } = options
+
+    const layer = document.createElement('div')
+    layer.className = `confetti-layer${isGlobal ? ' global' : ''}`
+    layer.style.setProperty('--confetti-origin-x', `${originX}%`)
+    layer.style.setProperty('--confetti-origin-y', `${originY}%`)
+    host.appendChild(layer)
+    confettiLayers.add(layer)
+
+    const isMega = level === 'mega'
+    const isFirework = variant === 'firework'
+    const isComet = variant === 'comet'
+    const pieceCount = isMega ? 220 : isFirework ? 90 : isComet ? 60 : 40
+    const spread = isMega ? 420 : isFirework ? 260 : 200
+    const fallDistance = isMega ? 360 : 220
+    const lifetime = isMega ? 2100 : isFirework ? 1700 : isComet ? 1400 : 1200
+
+    for (let i = 0; i < pieceCount; i += 1) {
+      const piece = document.createElement('span')
+      const baseColor = confettiColors[i % confettiColors.length]
+      piece.className = `confetti-piece ${level}${isFirework ? ' firework' : ''}${isComet ? ' comet' : ''}`
+
+      if (isFirework) {
+        const highlight = 'rgba(255, 255, 255, 0.95)'
+        piece.style.backgroundColor = 'transparent'
+        piece.style.backgroundImage = `radial-gradient(circle at ${30 + Math.random() * 40}% ${30 + Math.random() * 40}%, ${highlight}, ${baseColor})`
+        piece.style.borderRadius = '50%'
+        piece.style.boxShadow = `0 0 12px ${baseColor}88`
+        piece.style.width = `${Math.random() * 10 + 6}px`
+        piece.style.height = piece.style.width
+      } else if (isComet) {
+        piece.style.backgroundColor = baseColor
+        piece.style.width = `${Math.random() * 4 + 2}px`
+        piece.style.height = `${Math.random() * 30 + 20}px`
+        piece.style.borderRadius = '999px'
+        piece.style.boxShadow = `0 0 18px ${baseColor}aa`
+      } else {
+        piece.style.backgroundColor = baseColor
+        piece.style.width = `${Math.random() * 6 + 4}px`
+        piece.style.height = `${Math.random() * 10 + 6}px`
+      }
+
+      if (isFirework) {
+        const angle = Math.random() * Math.PI * 2
+        const distance = Math.random() * spread + 140
+        piece.style.setProperty('--confetti-x', `${Math.cos(angle) * distance}px`)
+        piece.style.setProperty('--confetti-y', `${Math.sin(angle) * distance}px`)
+        piece.style.setProperty('--confetti-rotate', `${Math.random() * 360}deg`)
+        piece.style.setProperty('--confetti-duration', `${1400 + Math.random() * 400}ms`)
+      } else if (isComet) {
+        const angle = Math.random() * Math.PI * 2
+        const distance = Math.random() * spread + 200
+        piece.style.setProperty('--confetti-x', `${Math.cos(angle) * distance}px`)
+        piece.style.setProperty('--confetti-y', `${Math.sin(angle) * distance}px`)
+        piece.style.setProperty('--confetti-rotate', `${Math.random() * 360}deg`)
+        piece.style.setProperty('--confetti-duration', `${900 + Math.random() * 500}ms`)
+      } else {
+        piece.style.setProperty('--confetti-x', `${(Math.random() - 0.5) * spread}px`)
+        piece.style.setProperty('--confetti-y', `${Math.random() * fallDistance + 80}px`)
+        piece.style.setProperty('--confetti-rotate', `${Math.random() * 720 - 360}deg`)
+        piece.style.setProperty('--confetti-duration', isMega ? '1700ms' : '1100ms')
+      }
+
+      layer.appendChild(piece)
+    }
+
+    window.setTimeout(() => {
+      if (confettiLayers.has(layer)) {
+        layer.remove()
+        confettiLayers.delete(layer)
+      }
+    }, lifetime)
+  }
+
+  const victoryCelebrationTimers = new Set()
+  let victoryCelebrationActive = false
+  let victoryCelebrationDeadline = 0
+  let victoryCelebrationEndTimer = 0
+
+  stopVictoryCelebration = () => {
+    if (victoryCelebrationEndTimer) {
+      window.clearTimeout(victoryCelebrationEndTimer)
+      victoryCelebrationEndTimer = 0
+    }
+    victoryCelebrationActive = false
+    victoryCelebrationTimers.forEach(id => window.clearTimeout(id))
+    victoryCelebrationTimers.clear()
+    cleanupConfettiLayers()
+  }
+
+  function scheduleVictoryBurst() {
+    if (!victoryCelebrationActive) {
+      return
+    }
+    if (Date.now() >= victoryCelebrationDeadline) {
+      stopVictoryCelebration()
+      return
+    }
+    const selectedVariant = Math.random() > 0.35 ? 'firework' : 'comet'
+    launchConfettiBurst('mega', {
+      global: true,
+      variant: selectedVariant
+    })
+    const delay = 350 + Math.random() * 450
+    const timeoutId = window.setTimeout(() => {
+      victoryCelebrationTimers.delete(timeoutId)
+      scheduleVictoryBurst()
+    }, delay)
+    victoryCelebrationTimers.add(timeoutId)
+  }
+
+  startVictoryCelebration = () => {
+    stopVictoryCelebration()
+    victoryCelebrationActive = true
+    victoryCelebrationDeadline = Date.now() + 5000
+    for (let i = 0; i < 3; i += 1) {
+      window.setTimeout(() => {
+        if (victoryCelebrationActive) {
+          launchConfettiBurst('mega', { global: true, variant: 'firework' })
+        }
+      }, i * 120)
+    }
+    scheduleVictoryBurst()
+    victoryCelebrationEndTimer = window.setTimeout(() => {
+      stopVictoryCelebration()
+    }, 5200)
+  }
+
+  function cleanupConfettiLayers() {
+    confettiLayers.forEach(layer => layer.remove())
+    confettiLayers.clear()
+  }
 
   let scale = 1
   let geometryScale = 1
@@ -147,9 +369,10 @@ onMounted(() => {
   let fastSpinMessageShown = false
   let placedLights = { red: false, yellow: false, green: false }
   let animationFrameId = 0
-  let verificationRedirectTimer = 0
   let isMovementPending = false
   let movementStartDeadline = 0
+  let pendingLaunchMode = 'normal'
+  let allowPostVictoryMotion = false
 
   function applyResponsiveScaling() {
     const container = canvas.parentElement
@@ -185,6 +408,9 @@ onMounted(() => {
 
     const movementScale = Math.max(geometryScale * 0.85, 0.32)
     const speedFactor = 0.3 + 0.7 * scale * scale
+    const difficultyBoost = getDifficultySpeedBoost()
+    const rotationBoost = activeDifficulty === 'hard' ? 1.25 : 1
+    const rotationDifficultyFactor = activeDifficulty === 'easy' ? 0 : rotationBoost
 
     LIGHT_RADIUS = BASE_LIGHT_RADIUS * geometryScale
     PADDING = BASE_PADDING * geometryScale
@@ -195,9 +421,10 @@ onMounted(() => {
     signalWidth = BASE_SIGNAL_WIDTH * geometryScale
     signalHeight = BASE_SIGNAL_HEIGHT * geometryScale
     scaledSignalMove = BASE_SIGNAL_MOVE * movementScale
-    signalSpeedMultiplier = BASE_SIGNAL_SPEED_MULTIPLIER * speedFactor
-    baseRotationSpeed = BASE_ROTATION_SPEED * speedFactor
-    fastRotationSpeed = BASE_FAST_ROTATION_SPEED * Math.max(speedFactor, 0.45)
+    signalSpeedMultiplier = BASE_SIGNAL_SPEED_MULTIPLIER * speedFactor * difficultyBoost
+    baseRotationSpeed = BASE_ROTATION_SPEED * speedFactor * rotationDifficultyFactor
+    fastRotationSpeed =
+      BASE_FAST_ROTATION_SPEED * Math.max(speedFactor, 0.45) * rotationDifficultyFactor
   }
 
   if (challengeColorEl) {
@@ -345,6 +572,18 @@ onMounted(() => {
     statusMessageEl.className = className
   }
 
+  function requestSignalMovement(mode = 'normal') {
+    if (activeDifficulty === 'easy') {
+      return
+    }
+    if (isSignalMoving || isMovementPending) {
+      return
+    }
+    pendingLaunchMode = mode
+    isMovementPending = true
+    movementStartDeadline = mode === HARD_LAUNCH_MODE ? Date.now() : Date.now() + MOVEMENT_DELAY_MS
+  }
+
   function handleOffPageEscape() {
     if (hasEscaped || isVerified) {
       return
@@ -359,7 +598,15 @@ onMounted(() => {
   }
 
   function updateSignalPosition() {
-    if (isVerified) {
+    const dropZones = getDropZoneCenters()
+
+    if (isVerified && !allowPostVictoryMotion) {
+      syncPlacedLights(dropZones)
+      return
+    }
+
+    if (!isVerified && activeDifficulty === 'easy') {
+      syncPlacedLights(dropZones)
       return
     }
 
@@ -369,9 +616,19 @@ onMounted(() => {
       if (isMovementPending && now >= movementStartDeadline) {
         isMovementPending = false
         isSignalMoving = true
+        const launchMode = pendingLaunchMode
+        pendingLaunchMode = 'normal'
         gameStartTime = now
-        updateStatus('Signal head is moving!', 'warning')
+        if (launchMode === HARD_LAUNCH_MODE) {
+          gameStartTime = now - FAST_SPIN_TRIGGER_MS
+          isSpinning = true
+          fastSpinMessageShown = true
+          updateStatus('Hard mode: the signal head is at full speed!', 'error')
+        } else {
+          updateStatus('Signal head is moving!', 'warning')
+        }
       } else {
+        syncPlacedLights(dropZones)
         return
       }
     }
@@ -457,16 +714,7 @@ onMounted(() => {
       }
     }
 
-    const dropZones = getDropZoneCenters()
-    lights.forEach(light => {
-      if (light.isPlaced) {
-        const zone = dropZones.find(z => z.id === light.id)
-        if (zone) {
-          light.x = zone.x
-          light.y = zone.y
-        }
-      }
-    })
+    syncPlacedLights(dropZones)
   }
 
   function animate() {
@@ -498,6 +746,18 @@ onMounted(() => {
         x: cx + rotX,
         y: cy + rotY,
         r: rc.r
+      }
+    })
+  }
+
+  function syncPlacedLights(dropZones) {
+    lights.forEach(light => {
+      if (light.isPlaced) {
+        const zone = dropZones.find(z => z.id === light.id)
+        if (zone) {
+          light.x = zone.x
+          light.y = zone.y
+        }
       }
     })
   }
@@ -554,9 +814,8 @@ onMounted(() => {
         lights.push(item)
 
         if (!isSignalMoving && !isMovementPending) {
-          isMovementPending = true
-          movementStartDeadline = Date.now() + MOVEMENT_DELAY_MS
-          //updateStatus('Signal head will start moving in a moment...', 'warning')
+          const launchMode = activeDifficulty === 'hard' ? HARD_LAUNCH_MODE : 'normal'
+          requestSignalMovement(launchMode)
         }
 
         draw()
@@ -610,21 +869,18 @@ onMounted(() => {
   }
 
   function completeVerification() {
-    if (redirected) {
+    if (showVictoryPrompt.value) {
       return
     }
-    redirected = true
     setCaptchaVerified()
-    clearRedirectTimer()
-    verificationRedirectTimer = window.setTimeout(() => {
-      redirectAfterVerification()
-    }, 600)
-    clearRedirectTimer = () => {
-      if (verificationRedirectTimer) {
-        window.clearTimeout(verificationRedirectTimer)
-        verificationRedirectTimer = 0
-      }
-    }
+    launchConfettiBurst('mega', {
+      originX: 40 + Math.random() * 20,
+      originY: 35 + Math.random() * 30,
+      global: true,
+      variant: 'firework'
+    })
+    showVictoryPrompt.value = true
+    startVictoryCelebration()
   }
 
   function handleSuccessfulPlacement(zone) {
@@ -633,14 +889,17 @@ onMounted(() => {
 
     placedLights[dragTarget.id] = true
     dragTarget.isPlaced = true
+    const originX = (zone.x / canvas.width) * 100
+    const originY = (zone.y / canvas.height) * 100
+    launchConfettiBurst('mini', { originX, originY, variant: 'firework' })
 
     const allPlaced = Object.values(placedLights).every(status => status === true)
 
     if (allPlaced) {
+      const wasMoving = isSignalMoving
       isVerified = true
-      isSignalMoving = false
-      isSpinning = false
-      updateStatus('Configuration Complete! You are Human.', 'success')
+      allowPostVictoryMotion = wasMoving
+      updateStatus('You have proven your humanity in a sea of AI hacker bots!', 'success')
       removeListeners()
       completeVerification()
     } else {
@@ -684,8 +943,11 @@ onMounted(() => {
   }
 
   function init() {
+    stopVictoryCelebration()
     applyResponsiveScaling()
     canvas.classList.remove('dragging')
+    showVictoryPrompt.value = false
+    cleanupConfettiLayers()
 
     isVerified = false
     redirected = false
@@ -703,7 +965,8 @@ onMounted(() => {
     signalMoveY = scaledSignalMove
     isMovementPending = false
     movementStartDeadline = 0
-    clearRedirectTimer()
+    pendingLaunchMode = 'normal'
+    allowPostVictoryMotion = false
     updateStatus('')
 
     defineComponents()
@@ -719,11 +982,31 @@ onMounted(() => {
     draw()
   }
 
-  resetButton.addEventListener('click', init)
-  detachResetHandler = () => resetButton.removeEventListener('click', init)
-
   window.addEventListener('resize', handleResize)
   detachResizeListener = () => window.removeEventListener('resize', handleResize)
+
+  difficultyResetHandler = () => {
+    redirected = false
+    stopVictoryCelebration()
+    init()
+  }
+
+  enterSiteHandler = () => {
+    if (redirected) {
+      return
+    }
+    redirected = true
+    stopVictoryCelebration()
+    showVictoryPrompt.value = false
+    redirectAfterVerification()
+  }
+
+  replayHandler = () => {
+    redirected = false
+    stopVictoryCelebration()
+    showVictoryPrompt.value = false
+    init()
+  }
 
   detachCanvasListeners = removeListeners
   cancelAnimation = () => {
@@ -733,23 +1016,19 @@ onMounted(() => {
     }
   }
 
-  clearRedirectTimer = () => {
-    if (verificationRedirectTimer) {
-      window.clearTimeout(verificationRedirectTimer)
-      verificationRedirectTimer = 0
-    }
-  }
-
   animationFrameId = window.requestAnimationFrame(animate)
   init()
 })
 
 onBeforeUnmount(() => {
   detachCanvasListeners()
-  detachResetHandler()
   detachResizeListener()
   cancelAnimation()
-  clearRedirectTimer()
+  stopVictoryCelebration()
+  cleanupConfettiLayers()
+  difficultyResetHandler = null
+  enterSiteHandler = null
+  replayHandler = null
 })
 </script>
 
@@ -782,6 +1061,7 @@ onBeforeUnmount(() => {
   border: 1px solid #e5e7eb;
   box-sizing: border-box;
   margin: 0 auto;
+  position: relative;
 }
 
 h2 {
@@ -798,6 +1078,61 @@ h2 {
 
 #challenge-color {
   font-weight: 600;
+}
+
+.difficulty-section {
+  margin: 8px 0 20px 0;
+  text-align: left;
+}
+
+.difficulty-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  justify-content: center;
+}
+
+.difficulty-option {
+  position: relative;
+  flex: 0 1 120px;
+  min-width: 96px;
+  max-width: 140px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #d1d5db;
+  cursor: pointer;
+  background-color: #f9fafb;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.difficulty-option input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  border: 0;
+  padding: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+}
+
+.difficulty-option.active {
+  border-color: #4f46e5;
+  background-color: #eef2ff;
+  box-shadow: 0 10px 20px rgba(79, 70, 229, 0.18);
+}
+
+.difficulty-name {
+  font-weight: 700;
+  color: #111827;
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 #trafficCanvas {
@@ -825,6 +1160,78 @@ h2 {
   transition: color 0.2s;
 }
 
+.victory-panel {
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #ecfccb 0%, #d9f99d 100%);
+  border: 1px solid #bbf7d0;
+  text-align: left;
+  animation: victory-pop 0.35s ease-out;
+}
+
+.victory-message {
+  margin: 0 0 14px 0;
+  color: #065f46;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.victory-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.victory-enter,
+.victory-replay {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 18px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  min-width: 140px;
+  max-width: 240px;
+  width: auto;
+  flex: 0 1 auto;
+}
+
+.victory-enter {
+  background-color: #047857;
+  color: #f0fdf4;
+  box-shadow: 0 8px 20px rgba(4, 120, 87, 0.25);
+}
+
+.victory-enter:hover {
+  transform: translateY(-1px);
+  background-color: #059669;
+}
+
+.victory-replay {
+  background-color: #fff;
+  color: #1d4ed8;
+  border: 2px solid #bfdbfe;
+}
+
+.victory-replay:hover {
+  transform: translateY(-1px);
+  background-color: #eff6ff;
+}
+
+@keyframes victory-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .success {
   color: #16a34a;
 }
@@ -837,27 +1244,108 @@ h2 {
   color: #f59e0b;
 }
 
-#reset-button {
-  background-color: #4f46e5;
-  color: white;
-  border: none;
-  padding: 10px 16px;
-  font-size: 0.9rem;
-  font-weight: 500;
-  border-radius: 8px;
-  cursor: pointer;
-  margin-top: 12px;
-  transition: background-color 0.2s ease, transform 0.1s ease;
-  box-shadow: 0 4px #3730a3;
+:global(.confetti-layer) {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  z-index: 2;
+  --confetti-origin-x: 50%;
+  --confetti-origin-y: 50%;
 }
 
-#reset-button:hover {
-  background-color: #4338ca;
+:global(.confetti-layer.global) {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
 }
 
-#reset-button:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px #3730a3;
+:global(.confetti-piece) {
+  position: absolute;
+  top: var(--confetti-origin-y, 50%);
+  left: var(--confetti-origin-x, 50%);
+  border-radius: 2px;
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  animation: confetti-pop var(--confetti-duration, 1000ms) ease-out forwards;
+}
+
+:global(.confetti-piece.mega) {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+
+:global(.confetti-piece.firework) {
+  border-radius: 999px;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
+  animation: firework-pop var(--confetti-duration, 1200ms) ease-out forwards;
+}
+
+:global(.confetti-piece.comet) {
+  animation: comet-pop var(--confetti-duration, 1000ms) ease-out forwards;
+}
+
+@keyframes confetti-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.6) rotate(0deg);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(
+        calc(-50% + var(--confetti-x, 0px)),
+        calc(-50% + var(--confetti-y, 120px))
+      )
+      rotate(var(--confetti-rotate, 180deg));
+  }
+}
+
+@keyframes firework-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+  40% {
+    opacity: 1;
+    transform: translate(
+        calc(-50% + var(--confetti-x, 0px) * 0.4),
+        calc(-50% + var(--confetti-y, 0px) * 0.4)
+      )
+      scale(0.9);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(
+        calc(-50% + var(--confetti-x, 0px)),
+        calc(-50% + var(--confetti-y, 0px))
+      )
+      scale(1.2);
+  }
+}
+
+@keyframes comet-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.3);
+  }
+  30% {
+    opacity: 1;
+    transform: translate(
+        calc(-50% + var(--confetti-x, 0px) * 0.3),
+        calc(-50% + var(--confetti-y, 0px) * 0.3)
+      )
+      scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(
+        calc(-50% + var(--confetti-x, 0px)),
+        calc(-50% + var(--confetti-y, 0px))
+      )
+      scale(0.85);
+  }
 }
 
 @media (max-width: 640px) {
@@ -881,11 +1369,38 @@ h2 {
     font-size: 1rem;
   }
 
-  #reset-button {
-    width: 100%;
-    padding: 12px;
-    font-size: 0.95rem;
+  .difficulty-options {
+    flex-direction: row;
+    justify-content: center;
+    gap: 8px;
   }
+
+  .difficulty-option {
+    flex: 0 1 90px;
+    min-width: 80px;
+    max-width: 110px;
+    padding: 8px 10px;
+  }
+
+  .difficulty-name {
+    font-size: 0.9rem;
+  }
+
+  .victory-actions {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .victory-enter,
+  .victory-replay {
+    width: auto;
+    min-width: 0;
+    max-width: 140px;
+    padding: 9px 12px;
+    font-size: 0.85rem;
+    text-align: center;
+  }
+
 }
 
 @media (max-width: 420px) {
