@@ -1,24 +1,61 @@
-const STORAGE_KEY = 'traffic-signal-captcha-verified'
+const CAPTCHA_BASE = '/api/captcha'
 
-export const CAPTCHA_STORAGE_KEY = STORAGE_KEY
+let cachedVerified = false
 
-export function isCaptchaVerified() {
-  if (typeof window === 'undefined') {
-    return false
-  }
-  return window.localStorage.getItem(STORAGE_KEY) === 'true'
+function setCachedVerified(value) {
+  cachedVerified = !!value
 }
 
-export function setCaptchaVerified() {
-  if (typeof window === 'undefined') {
-    return
-  }
-  window.localStorage.setItem(STORAGE_KEY, 'true')
+export function isCaptchaVerifiedCached() {
+  return cachedVerified
 }
 
-export function clearCaptchaVerification() {
-  if (typeof window === 'undefined') {
-    return
+export function resetCaptchaCache() {
+  setCachedVerified(false)
+}
+
+async function handleResponse(response) {
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const error = new Error(data.error || 'captcha_request_failed')
+    error.status = response.status
+    error.response = data
+    throw error
   }
-  window.localStorage.removeItem(STORAGE_KEY)
+  return data
+}
+
+export async function requestCaptchaNonce() {
+  const response = await fetch(`${CAPTCHA_BASE}/start`, {
+    method: 'POST',
+    credentials: 'include'
+  })
+  const data = await handleResponse(response)
+  if (!data.nonce) {
+    throw new Error('missing_nonce')
+  }
+  setCachedVerified(false)
+  return data.nonce
+}
+
+export async function submitCaptchaSolve(nonce) {
+  const response = await fetch(`${CAPTCHA_BASE}/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ nonce })
+  })
+  const data = await handleResponse(response)
+  setCachedVerified(true)
+  return data
+}
+
+export async function fetchCaptchaStatus() {
+  const response = await fetch(`${CAPTCHA_BASE}/status`, {
+    method: 'GET',
+    credentials: 'include'
+  })
+  const data = await handleResponse(response)
+  setCachedVerified(!!data.verified)
+  return data
 }

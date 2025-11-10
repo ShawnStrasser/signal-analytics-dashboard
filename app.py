@@ -15,9 +15,12 @@ from routes.api_anomalies import anomalies_bp
 from routes.api_changepoints import changepoints_bp
 from routes.api_travel_time import travel_time_bp
 from routes.api_subscriptions import subscriptions_bp
+from routes.api_captcha import captcha_bp
 from services import subscription_store
 from services.scheduler import start_scheduler
 from services.rate_limiter import rate_limiter
+from services import captcha_sessions
+from config import SECRET_KEY
 
 # Download timezone database on Windows if needed
 if sys.platform == 'win32':
@@ -28,6 +31,7 @@ if sys.platform == 'win32':
         print(f"⚠️  Failed to download timezone database: {e}")
 
 app = Flask(__name__, static_folder='static/dist')
+app.config['SECRET_KEY'] = SECRET_KEY
 CORS(app)
 
 subscription_store.initialize()
@@ -120,6 +124,27 @@ app.register_blueprint(before_after_bp, url_prefix='/api')
 app.register_blueprint(changepoints_bp, url_prefix='/api')
 app.register_blueprint(auth_bp, url_prefix='/api')
 app.register_blueprint(subscriptions_bp, url_prefix='/api')
+app.register_blueprint(captcha_bp, url_prefix='/api')
+
+CAPTCHA_EXEMPT_PATHS = (
+    "/api/captcha",
+    "/api/health",
+)
+
+
+@app.before_request
+def enforce_captcha_verification():
+    if request.method == "OPTIONS":
+        return None
+    path = request.path or ""
+    if not path.startswith("/api/"):
+        return None
+    for exempt in CAPTCHA_EXEMPT_PATHS:
+        if path.startswith(exempt):
+            return None
+    if captcha_sessions.is_verified(request):
+        return None
+    return jsonify({"error": "captcha_required"}), 401
 
 # Serve Vue.js app in production
 @app.route('/', defaults={'path': ''})

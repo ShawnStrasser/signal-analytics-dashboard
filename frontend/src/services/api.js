@@ -1,16 +1,27 @@
 import * as arrow from 'apache-arrow'
-import { isCaptchaVerified } from '../utils/captchaSession'
 
-function requireCaptchaVerification() {
-  if (typeof window === 'undefined') {
-    return
-  }
-  if (isCaptchaVerified()) {
-    return
-  }
+function buildCaptchaError() {
   const error = new Error('captcha_required')
   error.code = 'captcha_required'
-  throw error
+  return error
+}
+
+async function ensureCaptchaAllowed(response) {
+  if (response.status !== 401) {
+    return
+  }
+  let payload
+  try {
+    payload = await response.clone().json()
+  } catch (_) {
+    payload = null
+  }
+  if (payload?.error === 'captcha_required') {
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('captcha-required'))
+    }
+    throw buildCaptchaError()
+  }
 }
 
 // Note: Arrow IPC compression (LZ4/ZSTD) is not available in apache-arrow 21.0.0
@@ -24,7 +35,6 @@ class ApiService {
   }
 
   async fetchArrowData(endpoint, params = {}, retries = 3, retryDelay = 1000) {
-    requireCaptchaVerification()
     // Simple URL construction that works with Vite proxy
     let url = `${this.baseURL}${endpoint}`
 
@@ -49,6 +59,7 @@ class ApiService {
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         const response = await fetch(url)
+        await ensureCaptchaAllowed(response)
 
         // Handle 503 (Service Unavailable - database reconnecting)
         if (response.status === 503) {
@@ -257,8 +268,8 @@ class ApiService {
 
   async healthCheck() {
     try {
-      requireCaptchaVerification()
       const response = await fetch(`${this.baseURL}/health`)
+      await ensureCaptchaAllowed(response)
       return response.json()
     } catch (error) {
       console.error('Health check failed:', error)
@@ -268,8 +279,8 @@ class ApiService {
 
   async getConnectionStatus() {
     try {
-      requireCaptchaVerification()
       const response = await fetch(`${this.baseURL}/connection-status`)
+      await ensureCaptchaAllowed(response)
       return response.json()
     } catch (error) {
       console.error('Connection status check failed:', error)
@@ -383,8 +394,8 @@ class ApiService {
 
   async getConfig() {
     try {
-      requireCaptchaVerification()
       const response = await fetch(`${this.baseURL}/config`)
+      await ensureCaptchaAllowed(response)
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
@@ -397,7 +408,6 @@ class ApiService {
   }
 
   async fetchJson(endpoint, params = {}, retries = 3, retryDelay = 1000) {
-    requireCaptchaVerification()
     let url = `${this.baseURL}${endpoint}`
 
     const searchParams = new URLSearchParams()
@@ -419,6 +429,7 @@ class ApiService {
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         const response = await fetch(url)
+        await ensureCaptchaAllowed(response)
         if (response.status === 503) {
           const errorText = await response.text()
           if (attempt < retries && errorText.includes('reconnecting')) {
@@ -451,6 +462,7 @@ class ApiService {
       body: JSON.stringify({ email })
     })
 
+    await ensureCaptchaAllowed(response)
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
       throw new Error(error.error || 'Failed to send login link')
@@ -467,6 +479,7 @@ class ApiService {
       body: JSON.stringify({ token })
     })
 
+    await ensureCaptchaAllowed(response)
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
       throw new Error(error.error || 'Login link is invalid or expired')
@@ -481,6 +494,7 @@ class ApiService {
       credentials: 'include'
     })
 
+    await ensureCaptchaAllowed(response)
     if (response.status === 401) {
       return { error: 'unauthenticated' }
     }
@@ -494,14 +508,14 @@ class ApiService {
   }
 
   async logout() {
-    await fetch(`${this.baseURL}/auth/session`, {
+    const response = await fetch(`${this.baseURL}/auth/session`, {
       method: 'DELETE',
       credentials: 'include'
     })
+    await ensureCaptchaAllowed(response)
   }
 
   async saveSubscription(settings) {
-    requireCaptchaVerification()
     const response = await fetch(`${this.baseURL}/subscriptions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -509,6 +523,7 @@ class ApiService {
       body: JSON.stringify({ settings })
     })
 
+    await ensureCaptchaAllowed(response)
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
       throw new Error(error.error || 'Failed to save subscription')
@@ -518,12 +533,12 @@ class ApiService {
   }
 
   async deleteSubscription() {
-    requireCaptchaVerification()
     const response = await fetch(`${this.baseURL}/subscriptions`, {
       method: 'DELETE',
       credentials: 'include'
     })
 
+    await ensureCaptchaAllowed(response)
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
       throw new Error(error.error || 'Failed to delete subscription')
@@ -533,7 +548,6 @@ class ApiService {
   }
 
   async sendTestReport(settings) {
-    requireCaptchaVerification()
     const response = await fetch(`${this.baseURL}/reports/send-test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -541,6 +555,7 @@ class ApiService {
       body: JSON.stringify({ settings })
     })
 
+    await ensureCaptchaAllowed(response)
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
       throw new Error(error.error || 'Failed to send test email')

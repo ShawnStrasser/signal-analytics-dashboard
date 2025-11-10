@@ -49,7 +49,7 @@
 <script setup>
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { isCaptchaVerified, setCaptchaVerified } from '../utils/captchaSession'
+import { fetchCaptchaStatus, requestCaptchaNonce, submitCaptchaSolve } from '../utils/captchaSession'
 import confetti from 'canvas-confetti'
 
 const canvasRef = ref(null)
@@ -57,6 +57,7 @@ const statusMessageRef = ref(null)
 const challengeColorRef = ref(null)
 const difficulty = ref('medium')
 const showVictoryPrompt = ref(false)
+const captchaNonce = ref('')
 
 const difficultyOptions = [
   { value: 'easy', label: 'Easy' },
@@ -68,6 +69,7 @@ let activeDifficulty = difficulty.value
 let difficultyResetHandler = null
 let enterSiteHandler = null
 let replayHandler = null
+let verificationInProgress = false
 
 const enterSite = () => {
   if (typeof enterSiteHandler === 'function') {
@@ -77,7 +79,9 @@ const enterSite = () => {
 
 const playAgain = () => {
   if (typeof replayHandler === 'function') {
-    replayHandler()
+    Promise.resolve(replayHandler()).catch(err =>
+      console.error('Failed to restart captcha challenge:', err)
+    )
   }
 }
 
@@ -279,13 +283,8 @@ watch(
   }
 )
 
-onMounted(() => {
+onMounted(async () => {
   document.title = "Please Verify You're a Human who Likes to Solve Traffic Signal Puzzles"
-
-  if (isCaptchaVerified()) {
-    redirectAfterVerification()
-    return
-  }
 
   const canvas = canvasRef.value
   const statusMessageEl = statusMessageRef.value
@@ -300,6 +299,18 @@ onMounted(() => {
     return
   }
   initializeConfettiEngine()
+
+  try {
+    const status = await fetchCaptchaStatus()
+    if (status?.verified) {
+      redirectAfterVerification()
+      return
+    }
+  } catch (error) {
+    console.warn('Captcha status check failed:', error)
+  }
+
+  await loadCaptchaNonce({ announceReady: false })
 
   const BASE_CANVAS_WIDTH = 630
   const BASE_CANVAS_HEIGHT = 480
@@ -578,6 +589,27 @@ onMounted(() => {
     drawBackplate()
     drawSignalHead()
     drawLights()
+  }
+
+  async function loadCaptchaNonce(options = {}) {
+    const { announceReady = false } = options
+    try {
+      const nonce = await requestCaptchaNonce()
+      captchaNonce.value = nonce
+      if (announceReady) {
+        updateStatus('New challenge loaded. Configure the signal head to continue.', 'success')
+      }
+      return true
+    } catch (error) {
+      console.error('Failed to request captcha nonce:', error)
+      captchaNonce.value = ''
+      let message = 'Unable to start captcha challenge. Please try again.'
+      if (error?.response?.error) {
+        message = error.response.error
+      }
+      updateStatus(message, 'error')
+      return false
+    }
   }
 
   function updateStatus(message, className = '') {
@@ -881,14 +913,48 @@ onMounted(() => {
     draw()
   }
 
-  function completeVerification() {
-    if (showVictoryPrompt.value) {
+  async function completeVerification(wasMoving = false) {
+    if (showVictoryPrompt.value || verificationInProgress) {
       return
     }
-    setCaptchaVerified()
-    emitVictoryBurst(1.3)
-    showVictoryPrompt.value = true
-    startVictoryCelebration()
+    if (!captchaNonce.value) {
+      updateStatus('Requesting a fresh signal puzzle...', 'warning')
+      await loadCaptchaNonce({ announceReady: false })
+      init()
+      return
+    }
+
+    verificationInProgress = true
+    updateStatus('Verifying your puzzle solve with the traffic cabinet...', 'warning')
+    removeListeners()
+    try {
+      await submitCaptchaSolve(captchaNonce.value)
+      captchaNonce.value = ''
+      isVerified = true
+      allowPostVictoryMotion = wasMoving
+      updateStatus('You have proven your humanity in a sea of AI hacker bots!', 'success')
+      emitVictoryBurst(1.3)
+      showVictoryPrompt.value = true
+      startVictoryCelebration()
+    } catch (error) {
+      console.error('Captcha verification failed:', error)
+      isVerified = false
+      allowPostVictoryMotion = false
+      let message = 'Verification failed. Please try again.'
+      if (error?.response?.error === 'invalid_or_expired_nonce') {
+        message = 'This challenge expired. Fetching a new one...'
+      } else if (error?.response?.error) {
+        message = error.response.error
+      }
+      updateStatus(message, 'error')
+      captchaNonce.value = ''
+      showVictoryPrompt.value = false
+      stopVictoryCelebration()
+      await loadCaptchaNonce({ announceReady: false })
+      init()
+    } finally {
+      verificationInProgress = false
+    }
   }
 
   function handleSuccessfulPlacement(zone) {
@@ -903,11 +969,7 @@ onMounted(() => {
 
     if (allPlaced) {
       const wasMoving = isSignalMoving
-      isVerified = true
-      allowPostVictoryMotion = wasMoving
-      updateStatus('You have proven your humanity in a sea of AI hacker bots!', 'success')
-      removeListeners()
-      completeVerification()
+      completeVerification(wasMoving)
     } else {
       //updateStatus(`${dragTarget.id.charAt(0).toUpperCase() + dragTarget.id.slice(1)} placed correctly!`, 'success')
       window.setTimeout(() => {
@@ -1006,10 +1068,11 @@ onMounted(() => {
     redirectAfterVerification()
   }
 
-  replayHandler = () => {
+  replayHandler = async () => {
     redirected = false
     stopVictoryCelebration()
     showVictoryPrompt.value = false
+    await loadCaptchaNonce({ announceReady: false })
     init()
   }
 

@@ -3,7 +3,6 @@ import { createPinia } from 'pinia'
 import { createVuetify } from 'vuetify'
 import router from './router'
 import App from './App.vue'
-import { isCaptchaVerified } from './utils/captchaSession'
 
 // Vuetify
 import 'vuetify/styles'
@@ -58,13 +57,6 @@ app.use(vuetify)
 
 const bootstrap = async () => {
   await router.isReady()
-  if (!isCaptchaVerified() && router.currentRoute.value.name !== 'Captcha') {
-    const redirectTarget = router.currentRoute.value.fullPath
-    await router.replace({
-      name: 'Captcha',
-      query: redirectTarget && redirectTarget !== '/captcha' ? { redirect: redirectTarget } : {}
-    }).catch(() => {})
-  }
   app.mount('#app')
 }
 

@@ -119,10 +119,12 @@ def get_snowflake_session(retry=False, max_retries=3, retry_delay=2):
                 print(f"🔄 Creating new session with connection parameters (attempt {attempt + 1}/{attempts})...")
 
             # Fallback to connection parameters
-            connection_parameters = json.loads(os.environ.get("SNOWFLAKE_CONNECTION", "{}"))
-
+            raw_conn = os.environ.get("SNOWFLAKE_CONNECTION")
+            if not raw_conn:
+                raise Exception("SNOWFLAKE_CONNECTION environment variable must be set")
+            connection_parameters = json.loads(raw_conn)
             if not connection_parameters:
-                raise Exception("No Snowflake connection parameters found")
+                raise Exception("SNOWFLAKE_CONNECTION environment variable is empty")
 
             snowflake_session = Session.builder.configs(connection_parameters).create()
             print("✅ Connected using connection parameters")
