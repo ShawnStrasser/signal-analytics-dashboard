@@ -126,31 +126,8 @@
         </template>
       </v-card-text>
     </v-card>
-    <div class="toolbar">
-      <v-btn
-        color="primary"
-        class="export-btn"
-        size="large"
-        :loading="isExporting"
-        :disabled="loading || (charts.length === 0 && anomalyCards.length === 0)"
-        @click="exportToPdf"
-      >
-        <v-icon left>mdi-file-pdf-box</v-icon>
-        Export PDF
-      </v-btn>
-    </div>
-
-    <v-alert
-      v-if="exportError"
-      type="error"
-      variant="tonal"
-      class="mb-3"
-    >
-      {{ exportError }}
-    </v-alert>
-
-    <div ref="reportRef" class="report-surface">
-      <v-card class="mb-3 summary-card pdf-section">
+    <div class="report-surface">
+      <v-card class="mb-3 summary-card">
         <v-card-title class="py-2 d-flex align-center flex-wrap">
           <div class="d-flex align-center">
             <v-icon left>mdi-monitor-dashboard</v-icon>
@@ -191,7 +168,7 @@
 
       <div v-else class="report-sections">
         <section class="report-section">
-          <div class="section-header pdf-section">
+          <div class="section-header">
             <div class="section-title">Yesterday&apos;s Anomalies</div>
             <div class="section-subtitle">
               Monitoring score >= {{ anomalyThresholdLabel }} &bull; Data captured on {{ anomalyTargetLabel }}
@@ -200,13 +177,13 @@
           <div v-if="anomalyCards.length === 0" class="empty-state text-medium-emphasis">
             No anomalies matched the selected filters for yesterday.
           </div>
-          <div v-else class="monitoring-grid">
+          <div v-else class="monitoring-grid anomaly-grid">
             <v-card
               v-for="item in anomalyCards"
               :key="item.key"
-              class="chart-card pdf-section"
+              class="chart-card anomaly-card"
             >
-              <v-card-title class="py-2">
+              <v-card-title class="py-2 anomaly-card-title">
                 <div class="title-block">
                   <div class="headline anomaly-headline">
                     <span class="text-subtitle-1 font-weight-medium">
@@ -218,7 +195,7 @@
                   </div>
                 </div>
               </v-card-title>
-              <v-card-text class="pt-0">
+              <v-card-text class="pt-0 anomaly-card-body">
                 <div class="chart-stack">
                   <div class="chart-section">
                     <div class="chart-heading">Time of Day (15-minute)</div>
@@ -233,7 +210,7 @@
         </section>
 
         <section class="report-section">
-          <div class="section-header pdf-section">
+          <div class="section-header">
             <div class="section-title">Changepoints</div>
             <div class="section-subtitle">
               Detected on {{ monitoringDateLabel }}. Filters apply to signals, maintained by, approach, valid geometry, and percent change thresholds.
@@ -246,7 +223,7 @@
             <v-card
               v-for="item in charts"
               :key="item.key"
-              class="chart-card pdf-section"
+              class="chart-card"
             >
               <v-card-title class="py-2">
                 <div class="title-block">
@@ -318,7 +295,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
   import ApiService from '@/services/api'
   import ChangepointDetailChart from '@/components/ChangepointDetailChart.vue'
@@ -347,13 +324,10 @@ const isSavingSubscription = ref(false)
 const isSendingTestEmail = ref(false)
 const verifyingToken = ref(false)
 
-  const reportRef = ref(null)
-  const loading = ref(false)
-  const isExporting = ref(false)
-  const exportError = ref(null)
-  const error = ref(null)
-  const charts = ref([])
-  const anomalyCards = ref([])
+const loading = ref(false)
+const error = ref(null)
+const charts = ref([])
+const anomalyCards = ref([])
   const anomalyMetadata = ref({
     targetDate: null,
     generatedAt: null,
@@ -656,131 +630,7 @@ async function loadReport() {
   }
 }
 
-async function exportToPdf() {
-  if (!reportRef.value) {
-    return
-  }
-
-  exportError.value = null
-  isExporting.value = true
-
-  const rootElement = reportRef.value
-  const previousScrollY = window.scrollY
-
-  rootElement.classList.add('pdf-exporting')
-
-  try {
-    await nextTick()
-
-    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-      import('html2canvas'),
-      import('jspdf')
-    ])
-
-    window.scrollTo(0, 0)
-
-    const bodyStyle = getComputedStyle(document.body)
-    const exportBackground = bodyStyle.backgroundColor || '#ffffff'
-
-    const sections = Array
-      .from(rootElement.querySelectorAll('.pdf-section'))
-      .filter((section) => section.offsetParent !== null)
-
-    if (sections.length === 0) {
-      throw new Error('No report content available to export.')
-    }
-
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'pt',
-      format: 'a4'
-    })
-
-    const margin = 28
-    const footerHeight = 42
-    const sectionSpacing = 18
-
-    const pageSize = pdf.internal.pageSize
-    const pageWidth = pageSize.getWidth()
-    const pageHeight = pageSize.getHeight()
-    const maxContentWidth = pageWidth - margin * 2
-    const maxContentHeight = pageHeight - margin - footerHeight
-
-    let cursorY = margin
-
-    for (const section of sections) {
-      const canvas = await html2canvas(section, {
-        scale: window.devicePixelRatio > 1 ? 2 : 1.5,
-        backgroundColor: exportBackground,
-        useCORS: true,
-        scrollX: 0,
-        scrollY: 0
-      })
-
-      const naturalWidth = canvas.width
-      const naturalHeight = canvas.height
-
-      if (!naturalWidth || !naturalHeight) {
-        continue
-      }
-
-      const widthScale = maxContentWidth / naturalWidth
-      const heightScale = maxContentHeight / naturalHeight
-      const scale = Math.min(widthScale, heightScale, 1)
-
-      const renderWidth = naturalWidth * scale
-      const renderHeight = naturalHeight * scale
-
-      if (cursorY + renderHeight > pageHeight - footerHeight) {
-        pdf.addPage()
-        cursorY = margin
-      }
-
-      const offsetX = margin + (maxContentWidth - renderWidth) / 2
-      const imageData = canvas.toDataURL('image/png')
-
-      pdf.addImage(imageData, 'PNG', offsetX, cursorY, renderWidth, renderHeight, undefined, 'FAST')
-
-      cursorY += renderHeight + sectionSpacing
-    }
-
-    const totalPages = pdf.internal.getNumberOfPages()
-    const dateStamp = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date())
-
-    pdf.setFont('helvetica', 'normal')
-    pdf.setFontSize(9)
-    pdf.setTextColor(102, 102, 102)
-    pdf.setDrawColor(200, 200, 200)
-    pdf.setLineWidth(0.5)
-
-    for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
-      pdf.setPage(pageNumber)
-      const size = pdf.internal.pageSize
-      const width = size.getWidth()
-      const height = size.getHeight()
-      const footerTop = height - footerHeight + 12
-      const footerTextY = height - margin / 2
-
-      pdf.line(margin, footerTop, width - margin, footerTop)
-      pdf.text(dateStamp, margin, footerTextY)
-      pdf.text(`Page ${pageNumber} / ${totalPages}`, width - margin, footerTextY, { align: 'right' })
-    }
-
-    const filename = `monitoring-report-${monitoringDateStrings.value.start}.pdf`
-    pdf.save(filename)
-  } catch (err) {
-    console.error('Failed to export monitoring PDF:', err)
-    if (err instanceof Error && err.message === 'No report content available to export.') {
-      exportError.value = 'There is no report content to export right now.'
-    } else {
-      exportError.value = 'Failed to export report. Please try again.'
-    }
-  } finally {
-    rootElement.classList.remove('pdf-exporting')
-    window.scrollTo(0, previousScrollY)
-    isExporting.value = false
-  }
-}
+// PDF export is handled server-side via the monitoring email/report service.
 
 function buildRequestParams() {
   const params = {

@@ -67,6 +67,7 @@ JOKE_IMAGE_MAX_HEIGHT_PT = 4 * 72  # approx 4 inches
 COMPOSITE_FIG_WIDTH_IN = 6.8
 COMPOSITE_FIG_HEIGHT_IN = 3.3
 COMPOSITE_FIG_RATIO = COMPOSITE_FIG_HEIGHT_IN / COMPOSITE_FIG_WIDTH_IN
+ANOMALY_FIG_HEIGHT_IN = 2.8
 
 
 def _trend_callout(pct_change: Any) -> Tuple[str, Tuple[int, int, int], Tuple[int, int, int], Tuple[int, int, int]]:
@@ -888,7 +889,7 @@ def _render_anomaly_chart(series: Sequence[Dict[str, Any]]) -> Optional[bytes]:
     if not finite_actual and not finite_forecast:
         return None
 
-    fig, ax = plt.subplots(figsize=(COMPOSITE_FIG_WIDTH_IN, 2.6), dpi=170)
+    fig, ax = plt.subplots(figsize=(COMPOSITE_FIG_WIDTH_IN, ANOMALY_FIG_HEIGHT_IN), dpi=170)
 
     ax.plot(
         timestamps,
@@ -1760,7 +1761,6 @@ def build_monitoring_pdf(
         pdf.set_text_color(70, 70, 76)
         pdf.set_font("Helvetica", "", 10)
         for index, anomaly in enumerate(anomaly_rows, start=1):
-            _ensure_space(pdf, 280)
             chart_bytes = anomaly.get("chart_image")
             if chart_bytes:
                 _render_anomaly_block(pdf, anomaly, chart_bytes)
@@ -1773,7 +1773,7 @@ def build_monitoring_pdf(
                 pdf.set_font("Helvetica", "", 10)
 
             if index < len(anomaly_rows):
-                pdf.ln(14)
+                pdf.ln(8)
         pdf.ln(6)
 
     pdf.set_text_color(28, 54, 103)
@@ -1825,7 +1825,7 @@ def _render_anomaly_block(pdf, anomaly: Dict[str, Any], chart_bytes: Optional[by
     content_width = pdf.w - pdf.l_margin - pdf.r_margin
     natural_width = COMPOSITE_FIG_WIDTH_IN * 72
     chart_width = min(content_width, natural_width)
-    inner_margin = 16
+    inner_margin = 14
     text_width = max(chart_width - inner_margin * 2, 16)
 
     xd_label = _clean_text(anomaly.get("xd"), "--")
@@ -1835,10 +1835,10 @@ def _render_anomaly_block(pdf, anomaly: Dict[str, Any], chart_bytes: Optional[by
     road_with_bearing = f"{road} ({bearing_value})" if bearing_value else road
     location_text = f"XD {xd_label} | {road_with_bearing} | Signal(s): {associated}"
 
-    location_line_height = 10.5
-    top_padding = 8
-    bottom_padding = 6
-    block_top_margin = 6
+    location_line_height = 9.5
+    top_padding = 6
+    bottom_padding = 4
+    block_top_margin = 4
 
     try:
         location_lines = pdf.multi_cell(
@@ -1868,9 +1868,9 @@ def _render_anomaly_block(pdf, anomaly: Dict[str, Any], chart_bytes: Optional[by
     if png_width_px and png_height_px and png_width_px > 0:
         chart_height = chart_width * (png_height_px / png_width_px)
     else:
-        chart_height = chart_width * 0.55
+        chart_height = chart_width * 0.3
 
-    total_height = block_top_margin + header_height + chart_height + 12
+    total_height = block_top_margin + header_height + chart_height + 8
     _ensure_space(pdf, total_height)
 
     start_x = pdf.l_margin + (content_width - chart_width) / 2.0
@@ -1895,7 +1895,7 @@ def _render_anomaly_block(pdf, anomaly: Dict[str, Any], chart_bytes: Optional[by
     pdf.set_line_width(0.8)
     pdf.rect(start_x, chart_top, chart_width, chart_height)
 
-    pdf.set_y(chart_top + chart_height + 6)
+    pdf.set_y(chart_top + chart_height + 4)
 
 
 def build_email_html(
