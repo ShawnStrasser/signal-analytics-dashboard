@@ -73,7 +73,7 @@
           >
             <div class="text-h5 text-grey">No changepoints match the current filters</div>
           </div>
-          <div v-if="mapIsLoading" class="d-flex justify-center align-center loading-overlay">
+          <div v-if="mapIsLoading && showMapSpinner" class="d-flex justify-center align-center loading-overlay">
             <v-progress-circular indeterminate size="64"></v-progress-circular>
           </div>
         </v-card-text>
@@ -167,7 +167,7 @@
               Select a single changepoint row above to load the travel time comparison.
             </div>
           </div>
-          <div v-else-if="chartIsLoading" class="d-flex justify-center align-center loading-overlay">
+          <div v-else-if="chartIsLoading && showChartSpinner" class="d-flex justify-center align-center loading-overlay">
             <v-progress-circular indeterminate size="64"></v-progress-circular>
           </div>
           <div v-else-if="chartSeriesEmpty" class="d-flex justify-center align-center loading-overlay">
@@ -201,6 +201,7 @@ import { useSignalDimensionsStore } from '@/stores/signalDimensions'
 import { useXdDimensionsStore } from '@/stores/xdDimensions'
 import { useThemeStore } from '@/stores/theme'
 import { changepointColorScale } from '@/utils/colorScale'
+import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
 import {
   normalizeChangepointDetailRow,
   buildChangepointDateSeries,
@@ -228,6 +229,8 @@ const selectedRow = ref(null)
 const detailRows = ref([])
 const chartMode = ref('date')
 const chartIsLoading = ref(false)
+const showMapSpinner = useDelayedBoolean(mapIsLoading)
+const showChartSpinner = useDelayedBoolean(chartIsLoading)
 const chartSeriesEmpty = ref(true)
 
 const initialized = ref(false)

@@ -11,7 +11,7 @@
     >
       <v-card-text class="text-center">
         <v-progress-circular
-          v-if="status === 'connecting' || status === 'reconnecting'"
+          v-if="(status === 'connecting' || status === 'reconnecting') && showConnectingSpinner"
           indeterminate
           size="64"
           color="primary"
@@ -54,6 +54,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
+import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
 
 const props = defineProps({
   status: {
@@ -84,6 +85,8 @@ const statusTitle = computed(() => {
       return ''
   }
 })
+
+const showConnectingSpinner = useDelayedBoolean(() => props.status === 'connecting' || props.status === 'reconnecting')
 
 const statusMessage = computed(() => {
   switch (props.status) {

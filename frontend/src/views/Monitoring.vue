@@ -27,7 +27,7 @@
               Send Sign-In Link
             </v-btn>
             <v-progress-circular
-              v-if="verifyingToken"
+              v-if="verifyingToken && showVerifyingSpinner"
               indeterminate
               size="22"
               class="ml-3"
@@ -163,7 +163,11 @@
       </v-alert>
 
       <div v-if="loading" class="d-flex justify-center py-10">
-        <v-progress-circular indeterminate size="64"></v-progress-circular>
+        <v-progress-circular
+          v-if="showReportSpinner"
+          indeterminate
+          size="64"
+        ></v-progress-circular>
       </div>
 
       <div v-else class="report-sections">
@@ -302,6 +306,7 @@ import { useRoute, useRouter } from 'vue-router'
   import AnomalyMonitoringChart from '@/components/AnomalyMonitoringChart.vue'
 import { useFiltersStore } from '@/stores/filters'
 import { useAuthStore } from '@/stores/auth'
+import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
 import {
   buildChangepointDateSeries,
   buildChangepointTimeOfDaySeries,
@@ -323,8 +328,9 @@ const isSendingLink = ref(false)
 const isSavingSubscription = ref(false)
 const isSendingTestEmail = ref(false)
 const verifyingToken = ref(false)
-
 const loading = ref(false)
+const showVerifyingSpinner = useDelayedBoolean(verifyingToken)
+const showReportSpinner = useDelayedBoolean(loading)
 const error = ref(null)
 const charts = ref([])
 const anomalyCards = ref([])

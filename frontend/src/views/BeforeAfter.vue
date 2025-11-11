@@ -61,7 +61,7 @@
             data-type="before-after"
             @selection-changed="onSelectionChanged"
           />
-          <div v-if="mapIsLoading" class="d-flex justify-center align-center loading-overlay">
+          <div v-if="mapIsLoading && showMapSpinner" class="d-flex justify-center align-center loading-overlay">
             <v-progress-circular indeterminate size="64"></v-progress-circular>
           </div>
           <div v-else-if="!mapIsLoading && mapData.length === 0" class="d-flex justify-center align-center loading-overlay">
@@ -103,7 +103,7 @@
             :is-time-of-day="aggregateByTimeOfDay === 'true'"
             :legend-by="legendBy"
           />
-          <div v-if="chartIsLoading" class="d-flex justify-center align-center loading-overlay">
+          <div v-if="chartIsLoading && showChartSpinner" class="d-flex justify-center align-center loading-overlay">
             <v-progress-circular indeterminate size="64"></v-progress-circular>
           </div>
           <div v-else-if="!chartIsLoading && chartData.length === 0" class="d-flex justify-center align-center loading-overlay">
@@ -148,7 +148,7 @@
           <div v-else-if="smallMultiplesEntity === 'none'" class="d-flex justify-center align-center" style="height: 400px;">
             <div class="text-h6 text-grey">Select a grouping option to view detailed comparison</div>
           </div>
-          <div v-else-if="smallMultiplesIsLoading" class="d-flex justify-center align-center loading-overlay">
+          <div v-else-if="smallMultiplesIsLoading && showSmallMultiplesSpinner" class="d-flex justify-center align-center loading-overlay">
             <v-progress-circular indeterminate size="64"></v-progress-circular>
           </div>
           <div v-else-if="!smallMultiplesIsLoading && smallMultiplesData.length === 0" class="d-flex justify-center align-center loading-overlay">
@@ -172,6 +172,7 @@ import ApiService from '@/services/api'
 import SharedMap from '@/components/SharedMap.vue'
 import BeforeAfterChart from '@/components/BeforeAfterChart.vue'
 import SmallMultiplesChart from '@/components/SmallMultiplesChart.vue'
+import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
 
 const filtersStore = useFiltersStore()
 const beforeAfterFiltersStore = useBeforeAfterFiltersStore()
@@ -207,6 +208,9 @@ const shouldAutoZoomMap = ref(true)
 const mapIsLoading = computed(() => loading.value || loadingMap.value)
 const chartIsLoading = computed(() => loading.value || loadingChart.value)
 const smallMultiplesIsLoading = computed(() => loading.value || loadingSmallMultiples.value)
+const showMapSpinner = useDelayedBoolean(mapIsLoading)
+const showChartSpinner = useDelayedBoolean(chartIsLoading)
+const showSmallMultiplesSpinner = useDelayedBoolean(smallMultiplesIsLoading)
 
 const legendOptions = [
   { title: 'None', value: 'none' },

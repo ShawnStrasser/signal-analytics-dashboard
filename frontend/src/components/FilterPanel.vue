@@ -72,7 +72,11 @@
 
                 <!-- District groups -->
                 <div v-if="signalsStore.loading" class="text-center py-4">
-                  <v-progress-circular indeterminate size="32"></v-progress-circular>
+                  <v-progress-circular
+                    v-if="showSignalsSpinner"
+                    indeterminate
+                    size="32"
+                  ></v-progress-circular>
                 </div>
                 <div v-else-if="Object.keys(filteredDistrictGroups).length === 0" class="text-caption text-grey py-2">
                   No signals found
@@ -310,6 +314,7 @@ import { useBeforeAfterFiltersStore } from '@/stores/beforeAfterFilters'
 import ApiService from '@/services/api'
 import BeforeAfterDateSelector from './BeforeAfterDateSelector.vue'
 import { getMonitoringDateStrings } from '@/utils/monitoringDate'
+import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
 
 const filtersStore = useFiltersStore()
 const signalsStore = useSignalsStore()
@@ -325,6 +330,7 @@ const showsPercentChangeFilter = computed(() => isChangepointsRoute.value || isM
 const showsTimeOfDayFilter = computed(() => !isChangepointsRoute.value && !isMonitoringRoute.value)
 const pctChangeImprovementLocal = ref(filtersStore.pctChangeImprovement)
 const pctChangeDegradationLocal = ref(filtersStore.pctChangeDegradation)
+const showSignalsSpinner = useDelayedBoolean(() => signalsStore.loading)
 
 const activeStartDate = computed(() =>
   isChangepointsRoute.value ? filtersStore.changepointStartDate : filtersStore.startDate

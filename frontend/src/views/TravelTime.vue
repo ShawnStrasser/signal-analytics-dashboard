@@ -32,7 +32,7 @@
       <v-card class="map-card">
         <v-card-title class="py-2 d-flex align-center flex-wrap">
           <div class="d-flex align-center">
-            🗺️ Traffic Signals Map
+            🗺️ Traffic Signals & Road Segments Map
             <span class="map-instruction ml-2 text-medium-emphasis d-none d-md-inline">— Click signals or segments to filter the chart.</span>
           </div>
           <v-spacer></v-spacer>
@@ -66,7 +66,7 @@
             data-type="travel-time"
             @selection-changed="onSelectionChanged"
           />
-          <div v-if="mapIsLoading" class="d-flex justify-center align-center loading-overlay">
+          <div v-if="mapIsLoading && showMapSpinner" class="d-flex justify-center align-center loading-overlay">
             <v-progress-circular indeterminate size="64"></v-progress-circular>
           </div>
           <div v-else-if="!mapIsLoading && mapData.length === 0" class="d-flex justify-center align-center loading-overlay">
@@ -78,7 +78,7 @@
       <!-- Time Series Chart -->
       <v-card class="chart-card">
         <v-card-title class="py-2 d-flex align-center flex-wrap">
-          📈 Travel Time Index Time Series
+          📈 Travel Time Index
           <v-spacer></v-spacer>
           <div class="d-flex align-center flex-wrap gap-2">
             <v-select
@@ -118,7 +118,7 @@
             :is-time-of-day="aggregateByTimeOfDay === 'true'"
             :legend-by="legendBy"
           />
-          <div v-if="chartIsLoading" class="d-flex justify-center align-center loading-overlay">
+          <div v-if="chartIsLoading && showChartSpinner" class="d-flex justify-center align-center loading-overlay">
             <v-progress-circular indeterminate size="64"></v-progress-circular>
           </div>
           <div v-else-if="!chartIsLoading && chartData.length === 0" class="d-flex justify-center align-center loading-overlay">
@@ -141,6 +141,7 @@ import { useThemeStore } from '@/stores/theme'
 import ApiService from '@/services/api'
 import SharedMap from '@/components/SharedMap.vue'
 import TravelTimeChart from '@/components/TravelTimeChart.vue'
+import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
 
 const filtersStore = useFiltersStore()
 const selectionStore = useSelectionStore()
@@ -168,6 +169,8 @@ const shouldAutoZoomMap = ref(true) // Controls whether the map auto-zooms on da
 
 const mapIsLoading = computed(() => loading.value || loadingMap.value)
 const chartIsLoading = computed(() => loading.value || loadingChart.value)
+const showMapSpinner = useDelayedBoolean(mapIsLoading)
+const showChartSpinner = useDelayedBoolean(chartIsLoading)
 
 // Track last known selection state to detect changes when page reactivates
 const lastSelectionState = ref(null)

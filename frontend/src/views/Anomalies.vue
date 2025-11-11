@@ -67,7 +67,7 @@
             :anomaly-type="filtersStore.anomalyType"
             @selection-changed="onSelectionChanged"
           />
-          <div v-if="mapIsLoading" class="d-flex justify-center align-center loading-overlay">
+          <div v-if="mapIsLoading && showMapSpinner" class="d-flex justify-center align-center loading-overlay">
             <v-progress-circular indeterminate size="64"></v-progress-circular>
           </div>
           <div v-else-if="!mapIsLoading && mapData.length === 0" class="d-flex justify-center align-center loading-overlay">
@@ -119,7 +119,7 @@
             :chart-mode="chartMode"
             :legend-by="legendBy"
           />
-          <div v-if="chartIsLoading" class="d-flex justify-center align-center loading-overlay">
+          <div v-if="chartIsLoading && showChartSpinner" class="d-flex justify-center align-center loading-overlay">
             <v-progress-circular indeterminate size="64"></v-progress-circular>
           </div>
           <div v-else-if="!chartIsLoading && chartData.length === 0" class="d-flex justify-center align-center loading-overlay">
@@ -141,6 +141,7 @@ import { useThemeStore } from '@/stores/theme'
 import ApiService from '@/services/api'
 import SharedMap from '@/components/SharedMap.vue'
 import AnomalyChart from '@/components/AnomalyChart.vue'
+import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
 
 const filtersStore = useFiltersStore()
 const selectionStore = useSelectionStore()
@@ -167,6 +168,8 @@ const shouldAutoZoomMap = ref(true) // Controls whether the map auto-zooms on da
 
 const mapIsLoading = computed(() => loading.value || loadingMap.value)
 const chartIsLoading = computed(() => loading.value || loadingChart.value)
+const showMapSpinner = useDelayedBoolean(mapIsLoading)
+const showChartSpinner = useDelayedBoolean(chartIsLoading)
 
 // Track last known selection state to detect changes when page reactivates
 const lastSelectionState = ref(null)
