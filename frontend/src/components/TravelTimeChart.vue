@@ -105,7 +105,7 @@ function updateChart() {
   // Detect mobile screen size
   const isMobile = window.innerWidth < 600
 
-  let xAxisConfig, tooltipFormatter, title
+  let xAxisConfig, tooltipFormatter
   let seriesData = []
 
   if (props.isTimeOfDay) {
@@ -181,10 +181,6 @@ function updateChart() {
     const allMinutes = seriesData.flatMap(([_, data]) => data.map(d => d[0]))
     const minMinutes = Math.min(...allMinutes)
     const maxMinutes = Math.max(...allMinutes)
-
-    title = props.selectedSignal
-      ? `Travel Time Index by Time of Day for Signal ${props.selectedSignal}`
-      : 'Travel Time Index by Time of Day - All Selected Signals'
 
     // Determine appropriate interval for x-axis labels based on data range
     const rangeMinutes = maxMinutes - minMinutes
@@ -289,10 +285,6 @@ function updateChart() {
       ])
       seriesData = [['All Data', singleSeriesData]]
     }
-
-    title = props.selectedSignal
-      ? `Travel Time Index for Signal ${props.selectedSignal}`
-      : 'Travel Time Index - All Selected Signals'
 
     // Determine aggregation level from data timestamps
     let xAxisName = 'Time'
@@ -465,16 +457,12 @@ function updateChart() {
   const yAxisMin = Math.floor(rawMin / interval) * interval
   const yAxisMax = Math.ceil(rawMax / interval) * interval
 
+  const gridTop = hasLegend
+    ? (isMobile ? '80px' : '65px')
+    : (isMobile ? '45px' : '55px')
+
   const option = {
     backgroundColor: backgroundColor,
-    title: {
-      text: title,
-      left: 'center',
-      textStyle: {
-        fontSize: isMobile ? 13 : 16,
-        color: textColor
-      }
-    },
     tooltip: {
       trigger: 'axis',
       formatter: tooltipFormatter
@@ -530,7 +518,7 @@ function updateChart() {
       left: isMobile ? '60px' : '80px',
       right: hasLegend ? (isMobile ? '20px' : '200px') : (isMobile ? '20px' : '50px'),
       bottom: isMobile ? '70px' : '60px',
-      top: hasLegend ? (isMobile ? '100px' : '80px') : (isMobile ? '60px' : '80px')
+      top: gridTop
     },
     dataZoom: [
       {

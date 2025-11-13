@@ -78,7 +78,7 @@
       <!-- Time Series Chart -->
       <v-card class="chart-card">
         <v-card-title class="py-2 d-flex align-center flex-wrap">
-          📈 Travel Time Index
+          {{ chartHeadingText }}
           <v-spacer></v-spacer>
           <div class="d-flex align-center flex-wrap gap-2">
             <v-select
@@ -166,6 +166,21 @@ const legendBy = ref('none') // Legend grouping selection
 const legendClipped = ref(false) // Whether legend entities were clipped
 const maxLegendEntities = ref(10) // Max legend entities from backend config
 const shouldAutoZoomMap = ref(true) // Controls whether the map auto-zooms on data refresh
+
+const aggregationLabelMap = {
+  '15min': '15-minute bins',
+  'hourly': 'Hourly bins',
+  'daily': 'Daily bins'
+}
+
+const chartHeadingText = computed(() => {
+  if (aggregateByTimeOfDay.value === 'true') {
+    return '📈 Travel Time Index - By Time of Day'
+  }
+  const aggregationLevel = filtersStore.aggregationLevel
+  const suffix = aggregationLabelMap[aggregationLevel] || 'Aggregated bins'
+  return `📈 Travel Time Index - ${suffix}`
+})
 
 const mapIsLoading = computed(() => loading.value || loadingMap.value)
 const chartIsLoading = computed(() => loading.value || loadingChart.value)
