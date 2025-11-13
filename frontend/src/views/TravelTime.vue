@@ -412,14 +412,16 @@ async function loadMapData() {
     // Merge XD metrics with dimensions
     const xdObjects = xdMetrics.map(metric => {
       const dimensions = xdDimensionsStore.getXdDimensions(metric.XD)
+      const signalIds = dimensions?.signalIds ?? (dimensions?.ID ? [dimensions.ID] : [])
       return {
         XD: metric.XD,
         TRAVEL_TIME_INDEX: metric.TRAVEL_TIME_INDEX,
-        ID: dimensions?.ID,
+        ID: dimensions?.ID ?? signalIds[0],
         BEARING: dimensions?.BEARING,
         ROADNAME: dimensions?.ROADNAME,
         MILES: dimensions?.MILES,
-        APPROACH: dimensions?.APPROACH
+        APPROACH: dimensions?.APPROACH,
+        signalIds
       }
     })
 

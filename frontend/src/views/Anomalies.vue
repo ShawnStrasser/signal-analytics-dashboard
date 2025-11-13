@@ -411,6 +411,7 @@ async function loadMapData() {
     // Merge XD metrics with dimensions
     const xdObjects = xdMetrics.map(metric => {
       const dimensions = xdDimensionsStore.getXdDimensions(metric.XD)
+      const signalIds = dimensions?.signalIds ?? (dimensions?.ID ? [dimensions.ID] : [])
 
       // Calculate anomaly percentage
       const countColumn = filtersStore.anomalyType === "Point Source" ? 'POINT_SOURCE_COUNT' : 'ANOMALY_COUNT'
@@ -424,11 +425,12 @@ async function loadMapData() {
         POINT_SOURCE_COUNT: metric.POINT_SOURCE_COUNT,
         RECORD_COUNT: metric.RECORD_COUNT,
         ANOMALY_PERCENTAGE: percentage,
-        ID: dimensions?.ID,
+        ID: dimensions?.ID ?? signalIds[0],
         BEARING: dimensions?.BEARING,
         ROADNAME: dimensions?.ROADNAME,
         MILES: dimensions?.MILES,
-        APPROACH: dimensions?.APPROACH
+        APPROACH: dimensions?.APPROACH,
+        signalIds
       }
     })
 

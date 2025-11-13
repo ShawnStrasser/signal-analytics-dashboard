@@ -342,16 +342,18 @@ async function loadMapData() {
 
     const xdObjects = xdMetrics.map(metric => {
       const dimensions = xdDimensionsStore.getXdDimensions(metric.XD)
+      const signalIds = dimensions?.signalIds ?? (dimensions?.ID ? [dimensions.ID] : [])
       return {
         XD: metric.XD,
         TTI_BEFORE: metric.TTI_BEFORE,
         TTI_AFTER: metric.TTI_AFTER,
         TTI_DIFF: metric.TTI_DIFF,
-        ID: dimensions?.ID,
+        ID: dimensions?.ID ?? signalIds[0],
         BEARING: dimensions?.BEARING,
         ROADNAME: dimensions?.ROADNAME,
         MILES: dimensions?.MILES,
-        APPROACH: dimensions?.APPROACH
+        APPROACH: dimensions?.APPROACH,
+        signalIds
       }
     })
 

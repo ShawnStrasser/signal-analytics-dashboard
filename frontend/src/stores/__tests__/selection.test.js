@@ -81,6 +81,22 @@ describe('Selection Store', () => {
 
       expect(store.signalToXdMap.get('1')).toEqual([100])
     })
+
+    it('should expand aggregated XD entries that provide signalIds array', () => {
+      const signals = [
+        createMockSignal({ ID: '03097' }),
+        createMockSignal({ ID: '03098' })
+      ]
+      const xdSegments = [
+        { XD: 1237038553, signalIds: ['03097', '03098'] }
+      ]
+
+      store.updateMappings(signals, xdSegments)
+
+      expect(store.signalToXdMap.get('03097')).toEqual([1237038553])
+      expect(store.signalToXdMap.get('03098')).toEqual([1237038553])
+      expect(store.xdToSignalsMap.get(1237038553).sort()).toEqual(['03097', '03098'])
+    })
   })
 
   describe('toggleSignal', () => {

@@ -70,15 +70,12 @@ export const useXdDimensionsStore = defineStore('xdDimensions', {
         // Build Map for O(1) lookups
         this.dimensions.clear()
         data.forEach(xd => {
-          this.dimensions.set(xd.XD, {
-            ID: xd.ID,
-            BEARING: xd.BEARING,
-            COUNTY: xd.COUNTY,
-            ROADNAME: xd.ROADNAME,
-            MILES: xd.MILES,
-            APPROACH: xd.APPROACH,
-            EXTENDED: xd.EXTENDED
-          })
+          const xdId = xd.XD
+          if (!this.dimensions.has(xdId)) {
+            this.dimensions.set(xdId, this.createDimensionEntry(xd))
+          } else {
+            this.mergeDimensionEntry(this.dimensions.get(xdId), xd)
+          }
         })
 
         this.loaded = true
@@ -100,6 +97,60 @@ export const useXdDimensionsStore = defineStore('xdDimensions', {
       this.dimensions.clear()
       this.loaded = false
       this.error = null
+    },
+
+    createDimensionEntry(xd) {
+      const signalId = xd.ID ? String(xd.ID) : null
+      return {
+        XD: xd.XD,
+        ID: signalId,
+        BEARING: xd.BEARING,
+        COUNTY: xd.COUNTY,
+        ROADNAME: xd.ROADNAME,
+        MILES: xd.MILES,
+        APPROACH: xd.APPROACH,
+        EXTENDED: xd.EXTENDED,
+        VALID_GEOMETRY: xd.VALID_GEOMETRY,
+        signalIds: signalId ? [signalId] : [],
+        signalDetails: signalId ? [this.createSignalDetail(xd)] : []
+      }
+    },
+
+    mergeDimensionEntry(existing, xd) {
+      const signalId = xd.ID ? String(xd.ID) : null
+      if (signalId && !existing.signalIds.includes(signalId)) {
+        existing.signalIds.push(signalId)
+        existing.signalDetails.push(this.createSignalDetail(xd))
+      }
+
+      const hasApproachRecorded = existing.signalDetails.some(detail => detail.APPROACH)
+      if ((xd.APPROACH && !hasApproachRecorded) || (!existing.ID && signalId)) {
+        this.assignPrimaryFields(existing, xd)
+      }
+    },
+
+    assignPrimaryFields(target, source) {
+      target.ID = source.ID ? String(source.ID) : target.ID
+      target.BEARING = source.BEARING ?? target.BEARING
+      target.COUNTY = source.COUNTY ?? target.COUNTY
+      target.ROADNAME = source.ROADNAME ?? target.ROADNAME
+      target.MILES = source.MILES ?? target.MILES
+      target.APPROACH = source.APPROACH ?? target.APPROACH
+      target.EXTENDED = source.EXTENDED ?? target.EXTENDED
+      target.VALID_GEOMETRY = source.VALID_GEOMETRY ?? target.VALID_GEOMETRY
+    },
+
+    createSignalDetail(xd) {
+      return {
+        ID: xd.ID ? String(xd.ID) : null,
+        BEARING: xd.BEARING,
+        COUNTY: xd.COUNTY,
+        ROADNAME: xd.ROADNAME,
+        MILES: xd.MILES,
+        APPROACH: xd.APPROACH,
+        EXTENDED: xd.EXTENDED,
+        VALID_GEOMETRY: xd.VALID_GEOMETRY
+      }
     }
   }
 })

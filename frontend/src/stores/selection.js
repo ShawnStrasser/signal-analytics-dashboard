@@ -36,7 +36,7 @@ export const useSelectionStore = defineStore('selection', () => {
     if (hasXdInSignals) {
       // Legacy path: signals contain XD field (anomaly mode)
       signals.forEach(signal => {
-        const signalId = signal.ID
+        const signalId = signal.ID !== undefined && signal.ID !== null ? String(signal.ID) : null
         const xd = signal.XD
 
         if (signalId && xd !== undefined && xd !== null) {
@@ -59,32 +59,44 @@ export const useSelectionStore = defineStore('selection', () => {
       })
     } else if (xdSegments && xdSegments.length > 0) {
       // New path: use separate xdSegments data (travel-time mode)
-      // Build signal ID set for quick lookup
-      const signalIds = new Set(signals.map(s => s.ID))
+    // Build signal ID set for quick lookup
+    const signalIds = new Set(
+      signals
+        .map(s => (s.ID !== undefined && s.ID !== null ? String(s.ID) : null))
+        .filter(Boolean)
+    )
 
-      xdSegments.forEach(xdSeg => {
-        const xd = xdSeg.XD
-        const signalId = xdSeg.ID
+    xdSegments.forEach(xdSeg => {
+      const xd = xdSeg.XD
+      if (xd === undefined || xd === null) return
 
-        if (signalId && xd !== undefined && xd !== null && signalIds.has(signalId)) {
-          // Signal to XD mapping
-          if (!sigToXd.has(signalId)) {
-            sigToXd.set(signalId, [])
-          }
-          if (!sigToXd.get(signalId).includes(xd)) {
-            sigToXd.get(signalId).push(xd)
-          }
+      const candidateIds = Array.isArray(xdSeg.signalIds) && xdSeg.signalIds.length > 0
+        ? xdSeg.signalIds.map(id => (id !== undefined && id !== null ? String(id) : null)).filter(Boolean)
+        : (xdSeg.ID !== undefined && xdSeg.ID !== null ? [String(xdSeg.ID)] : [])
 
-          // XD to signals mapping
-          if (!xdToSigs.has(xd)) {
-            xdToSigs.set(xd, [])
-          }
-          if (!xdToSigs.get(xd).includes(signalId)) {
-            xdToSigs.get(xd).push(signalId)
-          }
+      candidateIds.forEach(signalId => {
+        if (!signalId || !signalIds.has(signalId)) {
+          return
+        }
+
+        // Signal to XD mapping
+        if (!sigToXd.has(signalId)) {
+          sigToXd.set(signalId, [])
+        }
+        if (!sigToXd.get(signalId).includes(xd)) {
+          sigToXd.get(signalId).push(xd)
+        }
+
+        // XD to signals mapping
+        if (!xdToSigs.has(xd)) {
+          xdToSigs.set(xd, [])
+        }
+        if (!xdToSigs.get(xd).includes(signalId)) {
+          xdToSigs.get(xd).push(signalId)
         }
       })
-    }
+    })
+  }
 
     signalToXdMap.value = sigToXd
     xdToSignalsMap.value = xdToSigs
