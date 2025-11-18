@@ -19,6 +19,7 @@ from config import (
 )
 
 _DB_LOCK = threading.RLock()
+_PENDING_RECLAIM_GRACE = timedelta(minutes=30)
 
 
 def _ensure_parent_directory() -> None:
@@ -377,14 +378,33 @@ def claim_daily_dispatch(email: str, report_date: Union[date, datetime, str]) ->
         except sqlite3.IntegrityError:
             cursor.execute(
                 """
-                SELECT id, status FROM dispatch_log
+                SELECT id, status, claimed_at, completed_at
                 WHERE email = :email AND report_date = :report_date
                 """,
                 {"email": normalized_email, "report_date": date_key},
             )
             row = cursor.fetchone()
-            if not row or row["status"] == "sent":
+            if not row:
                 return None
+
+            status = row["status"]
+            completed_at = row["completed_at"]
+            if status in {"sent", "skipped"}:
+                return None
+
+            if status == "pending" and not completed_at:
+                existing_claimed = row["claimed_at"]
+                existing_claimed_dt: Optional[datetime]
+                if isinstance(existing_claimed, str):
+                    try:
+                        existing_claimed_dt = datetime.fromisoformat(existing_claimed)
+                    except ValueError:
+                        existing_claimed_dt = None
+                else:
+                    existing_claimed_dt = existing_claimed
+
+                if existing_claimed_dt and (claimed_at - existing_claimed_dt) < _PENDING_RECLAIM_GRACE:
+                    return None
 
             cursor.execute(
                 """
