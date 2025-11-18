@@ -569,23 +569,51 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> Tuple[List[Dic
             ROADNAME,
             BEARING
         FROM filtered_dim
+    ),
+    aggregated AS (
+        SELECT
+            t.XD,
+            d.ROADNAME,
+            d.BEARING,
+            s.ASSOCIATED_SIGNALS,
+            COUNT(*) AS TOTAL_SAMPLES,
+            COUNT(CASE WHEN t.ORIGINATED_ANOMALY = TRUE THEN 1 END) AS ANOMALY_SAMPLES,
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN t.ORIGINATED_ANOMALY = TRUE THEN (t.TRAVEL_TIME_SECONDS - t.PREDICTION)
+                        ELSE 0
+                    END
+                ),
+                0
+            ) AS TOTAL_EXCESS_SECONDS
+        FROM TRAVEL_TIME_ANALYTICS t
+        INNER JOIN distinct_dim d ON t.XD = d.XD
+        LEFT JOIN signal_ids s ON t.XD = s.XD
+        WHERE t.DATE_ONLY >= DATEADD(day, -1, DATE_TRUNC('day', CURRENT_TIMESTAMP())){selected_clause_sql}
+        GROUP BY ALL
+    ),
+    scored AS (
+        SELECT
+            a.*,
+            POWER(
+                a.ANOMALY_SAMPLES::FLOAT / NULLIF(a.TOTAL_SAMPLES::FLOAT, 0),
+                2
+            ) * (a.TOTAL_EXCESS_SECONDS / 60.0) * 100 AS SEVERITY_SCORE
+        FROM aggregated a
     )
     SELECT
-        t.XD,
-        d.ROADNAME,
-        d.BEARING,
-        s.ASSOCIATED_SIGNALS
-    FROM TRAVEL_TIME_ANALYTICS t
-    INNER JOIN distinct_dim d ON t.XD = d.XD
-    LEFT JOIN signal_ids s ON t.XD = s.XD
-    WHERE t.DATE_ONLY >= DATEADD(day, -1, DATE_TRUNC('day', CURRENT_TIMESTAMP())){selected_clause_sql}
-    GROUP BY ALL
-    HAVING POWER(
-        COUNT(CASE WHEN t.ORIGINATED_ANOMALY = TRUE THEN 1 END)::FLOAT / NULLIF(COUNT(*)::FLOAT, 0),
-        2
-    ) * (SUM(CASE WHEN t.ORIGINATED_ANOMALY = TRUE THEN (t.TRAVEL_TIME_SECONDS - t.PREDICTION) ELSE 0 END) / 60.0) * 100
-        > {threshold_sql}
-    ORDER BY t.XD
+        XD,
+        ROADNAME,
+        BEARING,
+        ASSOCIATED_SIGNALS,
+        TOTAL_SAMPLES,
+        ANOMALY_SAMPLES,
+        TOTAL_EXCESS_SECONDS,
+        SEVERITY_SCORE
+    FROM scored
+    WHERE SEVERITY_SCORE > {threshold_sql}
+    ORDER BY SEVERITY_SCORE DESC, XD
     """
 
     def execute_query() -> Tuple[List[Dict[str, Any]], float]:
@@ -608,6 +636,26 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> Tuple[List[Dic
             except (TypeError, ValueError):
                 continue
 
+            total_samples_value = data.get("TOTAL_SAMPLES")
+            try:
+                total_samples = int(total_samples_value)
+            except (TypeError, ValueError):
+                total_samples = 0
+
+            anomaly_samples_value = data.get("ANOMALY_SAMPLES")
+            try:
+                anomaly_samples = int(anomaly_samples_value)
+            except (TypeError, ValueError):
+                anomaly_samples = 0
+
+            excess_seconds = _safe_float(data.get("TOTAL_EXCESS_SECONDS"))
+            excess_minutes = (
+                excess_seconds / 60.0 if math.isfinite(excess_seconds) else math.nan
+            )
+            severity_value = _safe_float(data.get("SEVERITY_SCORE"))
+            if math.isnan(severity_value):
+                severity_value = 0.0
+
             row = {
                 "xd": xd,
                 "roadname": data.get("ROADNAME"),
@@ -615,6 +663,10 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> Tuple[List[Dic
                 "associated_signals": data.get("ASSOCIATED_SIGNALS"),
                 "target_date": yesterday,
                 "time_of_day_series": [],
+                "total_sample_count": total_samples,
+                "anomaly_sample_count": anomaly_samples,
+                "excess_travel_time_minutes": excess_minutes,
+                "severity_score": severity_value,
             }
             rows.append(row)
             xds.append(xd)
@@ -675,6 +727,15 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> Tuple[List[Dic
             points = series_map.get(row["xd"], [])
             points.sort(key=lambda item: item["minutes"])
             row["time_of_day_series"] = points
+
+        def _severity_sort_value(item: Dict[str, Any]) -> float:
+            value = _safe_float(item.get("severity_score"))
+            return value if math.isfinite(value) else float("-inf")
+
+        rows.sort(
+            key=lambda item: (_severity_sort_value(item), item.get("xd") or 0),
+            reverse=True,
+        )
 
         return rows, threshold
 
@@ -1620,6 +1681,16 @@ def build_monitoring_pdf(
     content_width = pdf.w - pdf.l_margin - pdf.r_margin
 
     anomaly_rows: List[Dict[str, Any]] = [dict(item) for item in anomalies] if anomalies else []
+    if anomaly_rows:
+        def _anomaly_severity(row: Dict[str, Any]) -> float:
+            value = _safe_float(row.get("severity_score"))
+            return value if math.isfinite(value) else float("-inf")
+
+        anomaly_rows.sort(
+            key=lambda item: (_anomaly_severity(item), item.get("xd") or 0),
+            reverse=True,
+        )
+
     for anomaly in anomaly_rows:
         series = anomaly.get("time_of_day_series") or []
         anomaly.setdefault("chart_image", _render_anomaly_chart(series))
@@ -1825,6 +1896,19 @@ def build_monitoring_pdf(
     pdf.ln(10)
 
     rows_list = list(changepoint_rows)
+    if rows_list:
+        def _changepoint_severity(row: Dict[str, Any]) -> float:
+            pct_change = _safe_float(row.get("pct_change"))
+            if math.isfinite(pct_change):
+                return abs(pct_change)
+            score_value = _safe_float(row.get("score"))
+            return score_value if math.isfinite(score_value) else float("-inf")
+
+        rows_list.sort(
+            key=lambda item: (_changepoint_severity(item), item.get("xd") or 0),
+            reverse=True,
+        )
+
     if not rows_list:
         pdf.set_font("Helvetica", "I", 12)
         _write_full_width(pdf, "No changepoints matched the current filters.", 16)
