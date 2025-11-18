@@ -150,7 +150,8 @@ const initializeConfettiEngine = () => {
 
   confettiEngine = confetti.create(confettiCanvas, {
     resize: true,
-    useWorker: true,
+    // Keep rendering on the main thread so we can safely resize the canvas later.
+    useWorker: false,
     disableForReducedMotion: false,
   })
 }
@@ -398,6 +399,7 @@ onMounted(async () => {
   let movementStartDeadline = 0
   let pendingLaunchMode = 'normal'
   let allowPostVictoryMotion = false
+  let pendingInitPromise = null
 
   function applyResponsiveScaling() {
     const container = canvas.parentElement
@@ -921,7 +923,7 @@ onMounted(async () => {
     if (!captchaNonce.value) {
       updateStatus('Requesting a fresh signal puzzle...', 'warning')
       await loadCaptchaNonce({ announceReady: false })
-      init()
+      await init()
       return
     }
 
@@ -950,7 +952,7 @@ onMounted(async () => {
       showVictoryPrompt.value = false
       stopVictoryCelebration()
       await loadCaptchaNonce({ announceReady: false })
-      init()
+      await init()
     } finally {
       verificationInProgress = false
     }
@@ -1000,52 +1002,76 @@ onMounted(async () => {
   }
 
   function handleResize() {
+    if (isVerified || showVictoryPrompt.value || verificationInProgress) {
+      return
+    }
     if (resizeFrameId) {
       window.cancelAnimationFrame(resizeFrameId)
     }
     resizeFrameId = window.requestAnimationFrame(() => {
       resizeFrameId = 0
-      init()
+      void init()
     })
   }
 
-  function init() {
-    stopVictoryCelebration()
-    applyResponsiveScaling()
-    canvas.classList.remove('dragging')
-    showVictoryPrompt.value = false
+  async function init() {
+    if (pendingInitPromise) {
+      return pendingInitPromise
+    }
 
-    isVerified = false
-    redirected = false
-    isDragging = false
-    dragTarget = null
-    isSignalMoving = false
-    isSpinning = false
-    allowOffPageMovement = false
-    hasEscaped = false
-    fastSpinMessageShown = false
-    signalRotation = 0
-    gameStartTime = 0
-    placedLights = { red: false, yellow: false, green: false }
-    signalMoveX = scaledSignalMove
-    signalMoveY = scaledSignalMove
-    isMovementPending = false
-    movementStartDeadline = 0
-    pendingLaunchMode = 'normal'
-    allowPostVictoryMotion = false
-    updateStatus('')
+    pendingInitPromise = (async () => {
+      stopVictoryCelebration()
+      canvas.classList.remove('dragging')
+      showVictoryPrompt.value = false
 
-    defineComponents()
+      if (!captchaNonce.value) {
+        updateStatus('Requesting a fresh signal puzzle...', 'warning')
+        const loaded = await loadCaptchaNonce({ announceReady: false })
+        if (!loaded) {
+          return
+        }
+      }
 
-    lights.forEach(light => {
-      light.x = light.origX
-      light.y = light.origY
-      light.isPlaced = false
-    })
+      applyResponsiveScaling()
 
-    removeListeners()
-    addListeners()
-    draw()
+      isVerified = false
+      redirected = false
+      isDragging = false
+      dragTarget = null
+      isSignalMoving = false
+      isSpinning = false
+      allowOffPageMovement = false
+      hasEscaped = false
+      fastSpinMessageShown = false
+      signalRotation = 0
+      gameStartTime = 0
+      placedLights = { red: false, yellow: false, green: false }
+      signalMoveX = scaledSignalMove
+      signalMoveY = scaledSignalMove
+      isMovementPending = false
+      movementStartDeadline = 0
+      pendingLaunchMode = 'normal'
+      allowPostVictoryMotion = false
+      updateStatus('')
+
+      defineComponents()
+
+      lights.forEach(light => {
+        light.x = light.origX
+        light.y = light.origY
+        light.isPlaced = false
+      })
+
+      removeListeners()
+      addListeners()
+      draw()
+    })()
+
+    try {
+      return await pendingInitPromise
+    } finally {
+      pendingInitPromise = null
+    }
   }
 
   window.addEventListener('resize', handleResize)
@@ -1054,7 +1080,7 @@ onMounted(async () => {
   difficultyResetHandler = () => {
     redirected = false
     stopVictoryCelebration()
-    init()
+    void init()
   }
 
   enterSiteHandler = () => {
@@ -1072,7 +1098,7 @@ onMounted(async () => {
     stopVictoryCelebration()
     showVictoryPrompt.value = false
     await loadCaptchaNonce({ announceReady: false })
-    init()
+    await init()
   }
 
   detachCanvasListeners = removeListeners
@@ -1084,7 +1110,7 @@ onMounted(async () => {
   }
 
   animationFrameId = window.requestAnimationFrame(animate)
-  init()
+  void init()
 })
 
 onBeforeUnmount(() => {
