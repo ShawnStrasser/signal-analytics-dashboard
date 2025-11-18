@@ -195,6 +195,10 @@ function updateChart() {
     colorPalette = isDark ? darkModePalette : lightModePalette
   }
 
+  // Changepoint comparison colors (Before=baseline, After=current)
+  const changepointBeforeColor = '#1976D2'
+  const changepointAfterColor = themeStore.colorblindMode ? '#E69F00' : '#F57C00'
+
   let xAxisConfig, tooltipFormatter, title, yAxisName
   let seriesData = []
   let series = []
@@ -352,7 +356,10 @@ function updateChart() {
     yAxisName = 'Total Travel Time (seconds)'
     series = []
     seriesData.forEach(([groupName, data], index) => {
-      const color = colorPalette[index % colorPalette.length]
+      const baseColor = colorPalette[index % colorPalette.length]
+      const actualColor = hasLegend ? baseColor : changepointAfterColor
+      const forecastColor = hasLegend ? baseColor : changepointBeforeColor
+      const forecastLineType = hasLegend ? 'dashed' : 'solid'
 
       // Actual series (solid line)
       series.push({
@@ -361,12 +368,12 @@ function updateChart() {
         data: data.actual,
         smooth: true,
         lineStyle: {
-          color: color,
+          color: actualColor,
           width: 2,
           type: 'solid'
         },
         itemStyle: {
-          color: color
+          color: actualColor
         },
         symbol: 'circle',
         symbolSize: hasLegend ? 3 : 4,
@@ -381,12 +388,12 @@ function updateChart() {
         data: data.forecast,
         smooth: true,
         lineStyle: {
-          color: color,
+          color: forecastColor,
           width: 2,
-          type: 'dashed'
+          type: forecastLineType
         },
         itemStyle: {
-          color: color
+          color: forecastColor
         },
         symbol: 'circle',
         symbolSize: hasLegend ? 3 : 4,

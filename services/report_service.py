@@ -351,6 +351,16 @@ def _parse_filters(raw_filters: Dict[str, Any]) -> Dict[str, Any]:
     except (TypeError, ValueError):
         filters["pct_change_degradation"] = 0.0
 
+    threshold_value = raw_filters.get("anomaly_monitoring_threshold")
+    try:
+        threshold_numeric = float(threshold_value)
+    except (TypeError, ValueError):
+        threshold_numeric = ANOMALY_MONITORING_THRESHOLD
+    else:
+        if not math.isfinite(threshold_numeric):
+            threshold_numeric = ANOMALY_MONITORING_THRESHOLD
+    filters["anomaly_monitoring_threshold"] = max(0.0, threshold_numeric)
+
     return filters
 
 
@@ -512,9 +522,18 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
     return handle_auth_error_retry(execute_query)
 
 
-def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], float]:
     """Query Snowflake for yesterday's anomalies using monitoring filters."""
     filters = _parse_filters(raw_filters)
+    threshold_value = filters.get("anomaly_monitoring_threshold", ANOMALY_MONITORING_THRESHOLD)
+    try:
+        threshold = float(threshold_value)
+    except (TypeError, ValueError):
+        threshold = ANOMALY_MONITORING_THRESHOLD
+    if not math.isfinite(threshold):
+        threshold = ANOMALY_MONITORING_THRESHOLD
+    threshold = max(0.0, threshold)
+    threshold_sql = f"{threshold:.6f}"
 
     dimension_join, dimension_where_clause = _build_filtered_dim_components(
         filters["signal_ids"],
@@ -565,18 +584,18 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> List[Dict[str,
         COUNT(CASE WHEN t.ORIGINATED_ANOMALY = TRUE THEN 1 END)::FLOAT / NULLIF(COUNT(*)::FLOAT, 0),
         2
     ) * (SUM(CASE WHEN t.ORIGINATED_ANOMALY = TRUE THEN (t.TRAVEL_TIME_SECONDS - t.PREDICTION) ELSE 0 END) / 60.0) * 100
-        > {ANOMALY_MONITORING_THRESHOLD}
+        > {threshold_sql}
     ORDER BY t.XD
     """
 
-    def execute_query() -> List[Dict[str, Any]]:
+    def execute_query() -> Tuple[List[Dict[str, Any]], float]:
         session = get_snowflake_session(retry=True, max_retries=2)
         if not session:
             raise RuntimeError("Unable to establish database connection for anomaly monitoring")
 
         records = session.sql(query).collect()
         if not records:
-            return []
+            return [], threshold
 
         yesterday = _yesterday_date()
         rows: List[Dict[str, Any]] = []
@@ -601,7 +620,7 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> List[Dict[str,
             xds.append(xd)
 
         if not xds:
-            return rows
+            return rows, threshold
 
         xd_literals = ", ".join(str(xd) for xd in sorted(set(xds)))
         time_query = f"""
@@ -657,7 +676,7 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> List[Dict[str,
             points.sort(key=lambda item: item["minutes"])
             row["time_of_day_series"] = points
 
-        return rows
+        return rows, threshold
 
     return handle_auth_error_retry(execute_query)
 
@@ -1391,6 +1410,10 @@ def _filters_detail_lines(filters: Dict[str, Any]) -> List[str]:
         f"Requires >= {pct_degrade_pct:.1f}% increase or <= {-pct_improve_pct:.1f}% decrease in travel time"
     )
 
+    threshold_display = _safe_float(filters.get("anomaly_monitoring_threshold"))
+    if math.isfinite(threshold_display):
+        lines.append(f"Monitoring score threshold: >= {threshold_display:.1f}")
+
     return lines
 
 
@@ -1955,7 +1978,8 @@ def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject
         filters["end_date"] = end_date
 
     changepoint_rows = fetch_monitoring_rows(filters)
-    anomaly_rows = fetch_monitoring_anomaly_rows(filters)
+    anomaly_rows, resolved_threshold = fetch_monitoring_anomaly_rows(filters)
+    filters["anomaly_monitoring_threshold"] = resolved_threshold
 
     if not changepoint_rows and not anomaly_rows:
         return {"sent": False, "reason": "no_data", "email": email}

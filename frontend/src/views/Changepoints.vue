@@ -100,7 +100,10 @@
             :items-per-page="100"
             :sort-by="tableSortBy"
             :row-props="getRowProps"
-            height="250"
+            density="compact"
+            height="165"
+            style="font-size: 0.78rem; line-height: 1.2;"
+            fixed-header
             hide-default-footer
             @update:sort-by="onSortByChange"
             @click:row="onRowClick"
@@ -142,9 +145,13 @@
 
       <v-card class="chart-card">
         <v-card-title class="py-2 d-flex align-center flex-wrap">
-          <div class="d-flex align-center">
-            <v-icon left>mdi-chart-line</v-icon>
-            <span>Travel Time Before/After</span>
+          <div class="chart-top-meta">
+            <div class="chart-meta-title text-subtitle-1 font-weight-medium">
+              {{ chartTitle }}
+            </div>
+            <div class="chart-meta-subtitle text-body-2 text-medium-emphasis">
+              {{ chartSubtitle }}
+            </div>
           </div>
           <v-spacer></v-spacer>
           <v-btn-toggle
@@ -176,12 +183,24 @@
             </div>
           </div>
           <div v-else class="chart-shell">
-            <ChangepointDetailChart
-              :series="chartSeries"
-              :is-time-of-day="chartMode === 'tod'"
-              :title="chartTitle"
-              :subtitle="chartSubtitle"
-            />
+            <div class="chart-plot">
+              <ChangepointDetailChart
+                :series="chartSeries"
+                :is-time-of-day="chartMode === 'tod'"
+                :show-title="false"
+                :show-legend="false"
+              />
+            </div>
+            <div class="chart-meta-legend">
+              <span class="legend-label">
+                <span class="legend-dot after" :style="{ backgroundColor: chartLegendAfterColor }"></span>
+                After
+              </span>
+              <span class="legend-label">
+                <span class="legend-dot before" :style="{ backgroundColor: chartLegendBeforeColor }"></span>
+                Before
+              </span>
+            </div>
           </div>
         </v-card-text>
       </v-card>
@@ -246,7 +265,7 @@ const chartSelectionReady = computed(() => !!selectedRow.value)
 const tableHeaders = [
   { title: 'Timestamp', value: 'timestamp', key: 'timestamp', sortable: true },
   { title: 'Pct Change', value: 'pct_change', key: 'pct_change', sortable: true },
-  { title: 'Avg Diff (s)', value: 'avg_diff', key: 'avg_diff', sortable: true },
+  { title: 'Avg Diff', value: 'avg_diff', key: 'avg_diff', sortable: true },
   { title: 'Score', value: 'score', key: 'score', sortable: true },
   { title: 'Road & Bearing', value: 'road', key: 'road', sortable: false },
   { title: 'Associated Signal(s)', value: 'associated_signals', key: 'associated_signals', sortable: false },
@@ -277,6 +296,9 @@ const chartSeries = computed(() => {
     : buildChangepointDateSeries(detailRows.value)
 })
 
+const chartLegendBeforeColor = '#1976D2'
+const chartLegendAfterColor = computed(() => (themeStore.colorblindMode ? '#E69F00' : '#F57C00'))
+
 const chartTitle = computed(() => {
   if (!selectedRow.value) {
     return 'Travel Time Before/After'
@@ -296,7 +318,7 @@ const chartSubtitle = computed(() => {
   const pctChange = row.pct_change !== undefined && row.pct_change !== null
     ? `${row.pct_change.toFixed(2)}%`
     : '--'
-  return `Change Timestamp: ${timestampLabel} • Percent Change: ${pctChange}`
+  return `${timestampLabel} • Change: ${pctChange}`
 })
 
 watch(
@@ -730,7 +752,7 @@ function formatScore(value) {
 .content-grid {
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: 1fr auto 1fr;
+  grid-template-rows: minmax(230px, 0.8fr) auto minmax(320px, 1.1fr);
   gap: 12px;
   flex: 1;
   min-height: 0;
@@ -788,12 +810,22 @@ function formatScore(value) {
   font-size: 0.9rem;
 }
 
+.table-card .v-card-title {
+  padding: 4px 12px !important;
+  font-size: 0.9rem;
+}
+
+.table-card .v-card-title .v-icon {
+  font-size: 1rem;
+}
+
 .table-card .v-card-text {
-  padding: 12px !important;
+  padding: 8px 12px !important;
 }
 
 .changepoints-table {
-  --v-data-table-header-height: 44px;
+  --v-data-table-header-height: 36px;
+  --v-data-table-row-height: 32px;
 }
 
 .road-cell {
@@ -810,12 +842,52 @@ function formatScore(value) {
 .chart-container {
   flex: 1;
   position: relative;
-  min-height: 0;
+  min-height: 280px;
   padding: 12px !important;
 }
 
 .chart-shell {
   height: 100%;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 4px;
+  align-items: stretch;
+}
+
+.chart-meta-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  flex: 0 0 96px;
+  align-items: flex-start;
+  padding-top: 4px;
+}
+
+.legend-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.chart-plot {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.chart-top-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
 }
 
 @media (max-width: 960px) {
@@ -823,9 +895,13 @@ function formatScore(value) {
     grid-template-rows: auto auto auto;
   }
 
-  .map-container,
+  .map-container {
+    min-height: 210px;
+  }
+
   .chart-container {
     min-height: 250px;
   }
+
 }
 </style>

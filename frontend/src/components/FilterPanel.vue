@@ -208,6 +208,41 @@
         </v-col>
       </v-row>
 
+      <!-- Monitoring Score Threshold (Monitoring only) -->
+      <v-row v-if="isMonitoringRoute">
+        <v-col cols="12">
+          <v-card variant="outlined" class="monitoring-score-card">
+            <v-card-title class="py-2">
+              Monitoring Score Threshold
+            </v-card-title>
+            <v-card-text>
+              <div class="text-caption text-medium-emphasis mb-4">
+                Monitoring score multiplies how often an anomaly triggers by how large the travel-time gap is. Lower the threshold to cast a wider net; raise it to focus on the most severe corridors.
+              </div>
+              <v-slider
+                v-model.number="anomalyThresholdLocal"
+                color="primary"
+                :min="0"
+                :max="20"
+                :step="0.5"
+                class="mb-3"
+                thumb-label="always"
+              ></v-slider>
+              <v-text-field
+                v-model.number="anomalyThresholdLocal"
+                type="number"
+                label="Score threshold"
+                density="compact"
+                variant="outlined"
+                suffix="score"
+                step="0.1"
+                min="0"
+              />
+            </v-card-text>
+          </v-card>
+        </v-col>
+      </v-row>
+
       <!-- Anomaly Type Filter (only shown on anomalies page) -->
       <v-row v-if="$route.name === 'Anomalies'">
         <v-col cols="12">
@@ -291,6 +326,7 @@
               </div>
               <div v-if="filtersStore.maintainedBy !== 'all'"><strong>Maintained By:</strong> {{ maintainedByDisplayText }}</div>
               <div><strong>Signals:</strong> {{ filtersStore.selectedSignalIds.length || 'All' }}</div>
+              <div v-if="isMonitoringRoute"><strong>Monitoring Score:</strong> >= {{ monitoringScoreLabel }}</div>
               <div v-if="filtersStore.approach !== null"><strong>Approach:</strong> {{ filtersStore.approach ? 'True' : 'False' }}</div>
               <div v-if="filtersStore.validGeometry !== null"><strong>Valid Geometry:</strong> {{ validGeometryDisplayText }}</div>
               <div v-if="$route.name === 'Anomalies'"><strong>Anomaly Type:</strong> {{ filtersStore.anomalyType }}</div>
@@ -330,6 +366,7 @@ const showsPercentChangeFilter = computed(() => isChangepointsRoute.value || isM
 const showsTimeOfDayFilter = computed(() => !isChangepointsRoute.value && !isMonitoringRoute.value)
 const pctChangeImprovementLocal = ref(filtersStore.pctChangeImprovement)
 const pctChangeDegradationLocal = ref(filtersStore.pctChangeDegradation)
+const anomalyThresholdLocal = ref(filtersStore.anomalyMonitoringThreshold)
 const showSignalsSpinner = useDelayedBoolean(() => signalsStore.loading)
 
 const activeStartDate = computed(() =>
@@ -346,6 +383,10 @@ const monitoringDateLabel = computed(() => {
   }
   const { start, end } = getMonitoringDateStrings()
   return `${start} to ${end}`
+})
+const monitoringScoreLabel = computed(() => {
+  const value = Number(filtersStore.anomalyMonitoringThreshold ?? 0)
+  return value.toFixed(1)
 })
 
 // Local date state with debouncing
@@ -426,6 +467,25 @@ watch(pctChangeDegradationLocal, (newVal) => {
   }
   if (numeric !== filtersStore.pctChangeDegradation) {
     filtersStore.setPctChangeDegradation(numeric)
+  }
+})
+
+watch(() => filtersStore.anomalyMonitoringThreshold, (newVal) => {
+  if (newVal !== anomalyThresholdLocal.value) {
+    anomalyThresholdLocal.value = newVal
+  }
+})
+
+watch(anomalyThresholdLocal, (newVal) => {
+  const numeric = Number(newVal)
+  if (!Number.isFinite(numeric)) {
+    if (filtersStore.anomalyMonitoringThreshold !== 0) {
+      filtersStore.setAnomalyMonitoringThreshold(0)
+    }
+    return
+  }
+  if (numeric !== filtersStore.anomalyMonitoringThreshold) {
+    filtersStore.setAnomalyMonitoringThreshold(numeric)
   }
 })
 

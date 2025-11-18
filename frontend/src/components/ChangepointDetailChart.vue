@@ -242,7 +242,7 @@ function updateChart() {
     if (props.showLegend) {
       return props.isTimeOfDay ? (isMobile ? '80px' : '85px') : (isMobile ? '90px' : '95px')
     }
-    return isMobile ? '35px' : '45px'
+    return isMobile ? '10px' : '15px'
   })()
 
   const option = {
@@ -272,7 +272,7 @@ function updateChart() {
     series: combinedSeries,
     grid: {
       left: isMobile ? '60px' : '80px',
-      right: isMobile ? '20px' : '50px',
+      right: isMobile ? '10px' : '18px',
       bottom: isMobile ? '70px' : '60px',
       top: gridTop
     },

@@ -6,7 +6,7 @@ Optimized for low-latency small queries
 import pyarrow as pa
 from flask import Blueprint, request, jsonify
 
-from config import ANOMALY_MONITORING_THRESHOLD, MAX_ANOMALY_LEGEND_ENTITIES
+from config import MAX_ANOMALY_LEGEND_ENTITIES
 from database import get_snowflake_session, is_auth_error
 from services.report_service import fetch_monitoring_anomaly_rows
 from utils.error_handler import handle_auth_error_retry
@@ -800,10 +800,12 @@ def get_monitoring_anomalies():
         "maintained_by": request.args.get("maintained_by"),
         "approach": request.args.get("approach"),
         "valid_geometry": request.args.get("valid_geometry"),
+        "anomaly_monitoring_threshold": request.args.get("anomaly_monitoring_threshold")
+        or request.args.get("monitoring_score_threshold"),
     }
 
     def execute_query():
-        rows = fetch_monitoring_anomaly_rows(filters)
+        rows, threshold = fetch_monitoring_anomaly_rows(filters)
         payload = []
         target_date_value = None
         for row in rows:
@@ -836,7 +838,7 @@ def get_monitoring_anomalies():
         response = {
             "anomalies": payload,
             "target_date": target_date_value,
-            "threshold": ANOMALY_MONITORING_THRESHOLD,
+            "threshold": threshold,
             "generated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
         }
         return jsonify(response)

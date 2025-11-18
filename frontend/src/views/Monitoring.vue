@@ -52,7 +52,7 @@
         </template>
         <template v-else>
           <p class="auth-description">
-            Signed in as <strong>{{ authStore.email }}</strong>. We'll use your current filter selections when sending reports.
+            Signed in as <strong>{{ authStore.email }}</strong>. We'll use your saved subscription when sending reports. Adjust the filters on this page, then click <em>{{ authStore.subscribed ? 'Update Subscription' : 'Subscribe' }}</em> to store those selections in your subscription.
           </p>
           <div class="auth-status-row">
             <v-chip
@@ -139,7 +139,7 @@
           </span>
         </v-card-title>
         <v-card-subtitle class="py-0">
-          Changepoints detected on {{ monitoringDateLabel }}. Filters apply to signals, maintained by, approach, valid geometry, and percent change thresholds.
+          Changepoints detected on {{ monitoringDateLabel }}. These filters mirror what will be emailed the next time you update your subscription.
         </v-card-subtitle>
         <v-card-text class="pt-3 pb-4">
           <div class="summary-row">
@@ -148,7 +148,7 @@
             <div><strong>Approach:</strong> {{ approachLabel }}</div>
             <div><strong>Valid Geometry:</strong> {{ validGeometryLabel }}</div>
             <div><strong>Percent Change:</strong> {{ percentChangeLabel }}</div>
-            <div><strong>Anomaly Threshold:</strong> >= {{ anomalyThresholdLabel }}</div>
+            <div><strong>Monitoring Score Threshold:</strong> >= {{ anomalyThresholdLabel }}</div>
           </div>
         </v-card-text>
       </v-card>
@@ -175,7 +175,7 @@
           <div class="section-header">
             <div class="section-title">Yesterday&apos;s Anomalies</div>
             <div class="section-subtitle">
-              Monitoring score >= {{ anomalyThresholdLabel }} &bull; Data captured on {{ anomalyTargetLabel }}
+              Monitoring score >= {{ anomalyThresholdLabel }}. The score multiplies how often an anomaly fired yesterday by how large the travel-time gap was, so higher values point to the biggest sustained problems. Adjust the score in the filters to widen or narrow this list. Data captured on {{ anomalyTargetLabel }}.
             </div>
           </div>
           <div v-if="anomalyCards.length === 0" class="empty-state text-medium-emphasis">
@@ -406,7 +406,8 @@ const filterSignature = computed(() => JSON.stringify({
   approach: filtersStore.approach,
   validGeometry: filtersStore.validGeometry,
   pctImprove: filtersStore.pctChangeImprovement,
-  pctDegrade: filtersStore.pctChangeDegradation
+  pctDegrade: filtersStore.pctChangeDegradation,
+  monitoringScore: filtersStore.anomalyMonitoringThreshold
 }))
 
 watch(filterSignature, () => {
@@ -644,6 +645,7 @@ function buildRequestParams() {
     end_date: monitoringDateStrings.value.end,
     pct_change_improvement: Number(filtersStore.pctChangeImprovement ?? 0) / 100,
     pct_change_degradation: Number(filtersStore.pctChangeDegradation ?? 0) / 100,
+    anomaly_monitoring_threshold: Math.max(0, Number(filtersStore.anomalyMonitoringThreshold ?? 4)),
     sort_by: 'pct_change',
     sort_dir: 'desc'
   }

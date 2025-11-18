@@ -22,7 +22,11 @@ _STRING_LIST_KEYS = {
 _INT_LIST_KEYS = {"selected_xds"}
 _STRING_KEYS = {"maintained_by", "approach", "valid_geometry"}
 _BOOL_KEYS = {"remove_anomalies"}
-_FLOAT_KEYS = {"pct_change_improvement", "pct_change_degradation"}
+_FLOAT_KEYS = {
+    "pct_change_improvement",
+    "pct_change_degradation",
+    "anomaly_monitoring_threshold",
+}
 
 
 def _dedupe_preserve_order(items: Iterable[Any]) -> Sequence[Any]:

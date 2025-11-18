@@ -83,8 +83,10 @@ function renderChart() {
   const textColor = isDark ? '#E0E0E0' : '#333333'
   const gridColor = isDark ? '#424242' : '#E0E0E0'
 
-  const actualColor = themeStore.colorblindMode ? '#0072B2' : '#1976D2'
-  const forecastColor = themeStore.colorblindMode ? '#000000' : '#1F1F24'
+  const beforeColor = '#1976D2'
+  const afterColor = themeStore.colorblindMode ? '#E69F00' : '#F57C00'
+  const actualColor = afterColor
+  const forecastColor = beforeColor
 
   const option = {
     backgroundColor: 'transparent',
@@ -193,7 +195,7 @@ function renderChart() {
         lineStyle: {
           color: forecastColor,
           width: 1.6,
-          type: 'dotted'
+          type: 'solid'
         },
         itemStyle: {
           color: forecastColor

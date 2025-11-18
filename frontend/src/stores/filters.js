@@ -177,6 +177,15 @@ export const useFiltersStore = defineStore('filters', () => {
     pctChangeDegradation.value = Math.max(0, numeric)
   }
 
+  function setAnomalyMonitoringThreshold(value) {
+    const numeric = Number(value)
+    if (!Number.isFinite(numeric)) {
+      anomalyMonitoringThreshold.value = 0
+      return
+    }
+    anomalyMonitoringThreshold.value = Math.max(0, numeric)
+  }
+
   function selectDistrict(district, signalIds) {
     // Add district to selectedDistricts if not already there
     if (!selectedDistricts.value.includes(district)) {
@@ -287,6 +296,7 @@ export const useFiltersStore = defineStore('filters', () => {
     setRemoveAnomalies,
     setPctChangeImprovement,
     setPctChangeDegradation,
+    setAnomalyMonitoringThreshold,
     selectDistrict,
     deselectDistrict,
     deselectIndividualSignal,
