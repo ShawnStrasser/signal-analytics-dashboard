@@ -159,6 +159,7 @@ def verify_magic_link():
     response = make_response(
         jsonify(
             {
+                "authenticated": True,
                 "email": email,
                 "subscribed": subscription is not None,
                 "settings": subscription["settings"] if subscription else None,
@@ -174,11 +175,14 @@ def current_session():
     """Return session information if the user is authenticated."""
     email = _get_session_email()
     if not email:
-        return jsonify({"error": "Not authenticated"}), 401
+        # Return 200 to avoid noisy console errors on the frontend. The payload still
+        # includes an error flag so callers maintain the same control flow.
+        return jsonify({"authenticated": False, "error": "Not authenticated"}), 200
 
     subscription = subscription_store.get_subscription(email)
     return jsonify(
         {
+            "authenticated": True,
             "email": email,
             "subscribed": subscription is not None,
             "settings": subscription["settings"] if subscription else None,

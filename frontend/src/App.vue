@@ -178,9 +178,13 @@ const onRouteClick = () => {
 }
 
 // Sync Vuetify theme with theme store
-watch(() => themeStore.currentTheme, (newTheme) => {
-  vuetifyTheme.global.name.value = newTheme
-}, { immediate: true })
+watch(
+  () => themeStore.currentTheme,
+  (newTheme) => {
+    vuetifyTheme.change(newTheme)
+  },
+  { immediate: true },
+)
 
 const toggleTheme = () => {
   themeStore.toggleTheme()
