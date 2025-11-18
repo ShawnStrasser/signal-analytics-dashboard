@@ -225,3 +225,6 @@ test_email.py
 subscriptions.db
 debug_reports/*
 joke_state.json
+workingon.ipynb
+emails.csv
+email_migration.py

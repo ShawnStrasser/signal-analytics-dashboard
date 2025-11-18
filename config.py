@@ -119,12 +119,13 @@ EMAIL_SENDER_NAME = "Signal Analytics Reports"
 
 ENABLE_DAILY_REPORTS = True
 DAILY_REPORT_SEND_HOUR = 6
+DAILY_REPORT_SEND_MINUTE = 0
 
 # =============================================================================
 # DEVELOPMENT HELPERS
 # =============================================================================
 
-DEBUG_SAVE_REPORT_PDF = True
+DEBUG_SAVE_REPORT_PDF = False
 
 # =============================================================================
 # PRODUCTION SETTINGS

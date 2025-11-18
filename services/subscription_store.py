@@ -8,9 +8,9 @@ import json
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Union
 
 from config import (
     LOGIN_TOKEN_TTL_MINUTES,
@@ -119,6 +119,20 @@ def initialize() -> None:
                 settings TEXT NOT NULL,
                 created_at TIMESTAMP NOT NULL,
                 updated_at TIMESTAMP NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dispatch_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL,
+                report_date TEXT NOT NULL,
+                status TEXT NOT NULL,
+                claimed_at TIMESTAMP NOT NULL,
+                completed_at TIMESTAMP,
+                error TEXT,
+                UNIQUE(email, report_date)
             )
             """
         )
@@ -325,4 +339,89 @@ def cleanup_expired_artifacts() -> None:
         cursor.execute(
             "DELETE FROM sessions WHERE expires_at < :now",
             {"now": now},
+        )
+
+
+def claim_daily_dispatch(email: str, report_date: Union[date, datetime, str]) -> Optional[int]:
+    """
+    Attempt to claim the daily dispatch for an email + report date combination.
+
+    Returns the dispatch_log row ID that was claimed, or None if another worker
+    already processed the same report.
+    """
+    normalized_email = email.strip().lower()
+    if isinstance(report_date, datetime):
+        date_key = report_date.date().isoformat()
+    elif isinstance(report_date, date):
+        date_key = report_date.isoformat()
+    else:
+        date_key = str(report_date).strip()
+    if not date_key:
+        raise ValueError("report_date must not be empty")
+
+    claimed_at = _utcnow()
+    with _db_cursor() as cursor:
+        try:
+            cursor.execute(
+                """
+                INSERT INTO dispatch_log (email, report_date, status, claimed_at)
+                VALUES (:email, :report_date, 'pending', :claimed_at)
+                """,
+                {
+                    "email": normalized_email,
+                    "report_date": date_key,
+                    "claimed_at": claimed_at,
+                },
+            )
+            return int(cursor.lastrowid)
+        except sqlite3.IntegrityError:
+            cursor.execute(
+                """
+                SELECT id, status FROM dispatch_log
+                WHERE email = :email AND report_date = :report_date
+                """,
+                {"email": normalized_email, "report_date": date_key},
+            )
+            row = cursor.fetchone()
+            if not row or row["status"] == "sent":
+                return None
+
+            cursor.execute(
+                """
+                UPDATE dispatch_log
+                SET status = 'pending',
+                    claimed_at = :claimed_at,
+                    completed_at = NULL,
+                    error = NULL
+                WHERE id = :id
+                """,
+                {"claimed_at": claimed_at, "id": row["id"]},
+            )
+            return int(row["id"])
+
+
+def finalize_daily_dispatch(dispatch_id: Optional[int], status: str, error: Optional[str] = None) -> None:
+    """Update the dispatch log entry with the final status and optional error detail."""
+    if dispatch_id is None:
+        return
+
+    if status not in {"sent", "skipped", "failed"}:
+        raise ValueError(f"Unknown dispatch status: {status}")
+
+    completed_at = _utcnow()
+    with _db_cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE dispatch_log
+            SET status = :status,
+                completed_at = :completed_at,
+                error = :error
+            WHERE id = :id
+            """,
+            {
+                "status": status,
+                "completed_at": completed_at,
+                "error": error,
+                "id": dispatch_id,
+            },
         )

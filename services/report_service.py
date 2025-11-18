@@ -170,6 +170,19 @@ def _resolve_report_date(filters: Dict[str, Any]) -> date:
     except (ZoneInfoNotFoundError, ValueError):
         return datetime.utcnow().date()
 
+def _ordinal_suffix(value: int) -> str:
+    if 10 <= value % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(value % 10, "th")
+    return f"{value}{suffix}"
+
+def _format_report_date(value: Optional[date]) -> str:
+    if not value:
+        return "the selected date range"
+    month_name = value.strftime("%B")
+    return f"{month_name} {_ordinal_suffix(value.day)}, {value.year}"
+
 
 def _safe_float(value: Any) -> float:
     try:
@@ -1904,6 +1917,7 @@ def build_email_html(
     *,
     anomalies: Sequence[Dict[str, Any]] = (),
     joke: Optional[Dict[str, Any]] = None,
+    report_date: Optional[date] = None,
 ) -> str:
     changepoint_list = list(changepoints)
     anomaly_list = list(anomalies or [])
@@ -1911,24 +1925,16 @@ def build_email_html(
     anomaly_count = len(anomaly_list)
     changepoint_plural = "s" if changepoint_count != 1 else ""
     anomaly_plural = "ies" if anomaly_count != 1 else "y"
-    summary = _filters_summary(filters)
-    generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    resolved_report_date = report_date or _resolve_report_date(filters)
+    readable_report_date = _format_report_date(resolved_report_date)
 
-    if anomaly_count and changepoint_count:
-        highlight = (
-            f"<strong>{anomaly_count}</strong> anomal{anomaly_plural} and "
-            f"<strong>{changepoint_count}</strong> changepoint{changepoint_plural}"
-        )
-    elif anomaly_count:
-        highlight = f"<strong>{anomaly_count}</strong> anomal{anomaly_plural}"
-    else:
-        highlight = f"<strong>{changepoint_count}</strong> changepoint{changepoint_plural}"
+    anomaly_text = f"{anomaly_count} anomal{'y' if anomaly_count == 1 else 'ies'}"
+    changepoint_text = f"{changepoint_count} changepoint{changepoint_plural}"
 
     html_output = f"""
     <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;">
         <p>Hello,</p>
-        <p>Your monitoring report covering {summary} includes {highlight}. The PDF version is attached.</p>
-        <p>Generated at {generated_at}.</p>
+        <p>The attached traffic signal travel time analytics report for {readable_report_date} found {anomaly_text} and {changepoint_text}.</p>
         <p style="margin-top:18px;">&mdash; {EMAIL_SENDER_NAME}</p>
     </div>
     """
@@ -1958,7 +1964,7 @@ def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject
     report_date = _resolve_report_date(filters)
     joke = joke_service.prepare_joke(report_date)
     pdf_bytes = build_monitoring_pdf(filters, enriched_rows, anomalies=anomaly_rows, joke=joke)
-    html_content = build_email_html(filters, enriched_rows, anomalies=anomaly_rows)
+    html_content = build_email_html(filters, enriched_rows, anomalies=anomaly_rows, report_date=report_date)
     subject = f"{subject_prefix} - {filters['end_date']}"
 
     if DEBUG_SAVE_REPORT_PDF:
@@ -2011,10 +2017,19 @@ def run_daily_dispatch() -> List[Dict[str, Any]]:
         filters["end_date"] = end_date
         if "selected_signals" not in filters and filters.get("signal_ids"):
             filters["selected_signals"] = filters["signal_ids"]
+        report_date = _resolve_report_date(filters)
+        dispatch_id = subscription_store.claim_daily_dispatch(email, report_date)
+        if dispatch_id is None:
+            results.append({"sent": False, "email": email, "reason": "duplicate_dispatch"})
+            continue
         try:
             result = generate_and_send_report(email, filters, subject_prefix="Daily Monitoring Report")
         except Exception as exc:  # pragma: no cover - defensive logging
+            subscription_store.finalize_daily_dispatch(dispatch_id, "failed", error=str(exc))
             results.append({"sent": False, "email": email, "error": str(exc)})
             continue
+        status = "sent" if result.get("sent") else "skipped"
+        reason = result.get("reason")
+        subscription_store.finalize_daily_dispatch(dispatch_id, status, error=reason)
         results.append(result)
     return results

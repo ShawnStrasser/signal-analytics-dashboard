@@ -16,7 +16,7 @@ except ImportError:  # pragma: no cover - optional dependency
     CronTrigger = None  # type: ignore
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from config import DAILY_REPORT_SEND_HOUR, ENABLE_DAILY_REPORTS, TIMEZONE
+from config import DAILY_REPORT_SEND_HOUR, DAILY_REPORT_SEND_MINUTE, ENABLE_DAILY_REPORTS, TIMEZONE
 from services import report_service
 
 LOGGER = logging.getLogger(__name__)
@@ -48,7 +48,11 @@ def start_scheduler() -> None:
 
     timezone = _resolve_timezone()
     scheduler = BackgroundScheduler(timezone=timezone)
-    trigger = CronTrigger(hour=DAILY_REPORT_SEND_HOUR, minute=0, timezone=timezone)
+    trigger = CronTrigger(
+        hour=DAILY_REPORT_SEND_HOUR,
+        minute=DAILY_REPORT_SEND_MINUTE,
+        timezone=timezone,
+    )
     scheduler.add_job(report_service.run_daily_dispatch, trigger, name="daily-monitoring-report")
     scheduler.start()
     _scheduler = scheduler
