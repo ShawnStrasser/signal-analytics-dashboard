@@ -184,6 +184,31 @@ def _format_report_date(value: Optional[date]) -> str:
     return f"{month_name} {_ordinal_suffix(value.day)}, {value.year}"
 
 
+def _coerce_date(value: Any) -> Optional[date]:
+    """Best-effort conversion of assorted values into a date."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(candidate, fmt).date()
+            except ValueError:
+                continue
+        try:
+            return date.fromisoformat(candidate)
+        except ValueError:
+            try:
+                return datetime.fromisoformat(candidate).date()
+            except ValueError:
+                return None
+    return None
+
+
 def _safe_float(value: Any) -> float:
     try:
         return float(value)
@@ -1954,6 +1979,10 @@ def _render_anomaly_block(pdf, anomaly: Dict[str, Any], chart_bytes: Optional[by
     associated = _clean_text(anomaly.get("associated_signals"), "--")
     road_with_bearing = f"{road} ({bearing_value})" if bearing_value else road
     location_text = f"XD {xd_label} | {road_with_bearing} | Signal(s): {associated}"
+    target_date = _coerce_date(anomaly.get("target_date"))
+    if target_date:
+        readable_date = _format_report_date(target_date)
+        location_text = f"{location_text} - {readable_date}"
 
     location_line_height = 9.5
     top_padding = 6
