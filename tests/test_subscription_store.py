@@ -40,8 +40,7 @@ def test_subscription_crud_and_cleanup():
     "start_date": "2024-01-01",
     "end_date": "2024-01-31",
     "signal_ids": ["1001", "1002"],
-    "pct_change_improvement": 0.1,
-    "pct_change_degradation": 0.2,
+    "changepoint_severity_threshold": 30.0,
   }
 
   subscription_store.upsert_subscription(email, settings)

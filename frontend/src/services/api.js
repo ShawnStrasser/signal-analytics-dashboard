@@ -34,49 +34,59 @@ class ApiService {
     this.baseURL = baseURL
   }
 
-  async fetchArrowData(endpoint, params = {}, retries = 3, retryDelay = 1000) {
-    // Simple URL construction that works with Vite proxy
-    let url = `${this.baseURL}${endpoint}`
-
-    // Add query parameters
-    const searchParams = new URLSearchParams()
-    Object.keys(params).forEach(key => {
-      const value = params[key]
-      if (value !== null && value !== undefined) {
-        if (Array.isArray(value)) {
-          value.forEach(v => searchParams.append(key, v))
-        } else {
-          searchParams.append(key, value)
-        }
+  async fetchArrowData(endpoint, params = {}, retriesOrOptions = 3, retryDelay = 1000) {
+    let method = 'GET'
+    let retries = 3
+    let retryDelayMs = typeof retryDelay === 'number' ? retryDelay : 1000
+    if (typeof retriesOrOptions === 'object' && retriesOrOptions !== null) {
+      method = (retriesOrOptions.method || 'GET').toUpperCase()
+      retries = typeof retriesOrOptions.retries === 'number' ? retriesOrOptions.retries : 3
+      if (typeof retriesOrOptions.retryDelay === 'number') {
+        retryDelayMs = retriesOrOptions.retryDelay
       }
-    })
-
-    if (searchParams.toString()) {
-      url += '?' + searchParams.toString()
+    } else {
+      retries = typeof retriesOrOptions === 'number' ? retriesOrOptions : 3
     }
 
-    // Retry logic for 503 errors (database reconnecting)
+    let url = `${this.baseURL}${endpoint}`
+    const fetchOptions = { method, headers: { Accept: 'application/vnd.apache.arrow.file' } }
+
+    if (method === 'GET') {
+      const searchParams = new URLSearchParams()
+      Object.keys(params).forEach(key => {
+        const value = params[key]
+        if (value !== null && value !== undefined) {
+          if (Array.isArray(value)) {
+            value.forEach(v => searchParams.append(key, v))
+          } else {
+            searchParams.append(key, value)
+          }
+        }
+      })
+
+      if (searchParams.toString()) {
+        url += '?' + searchParams.toString()
+      }
+    } else {
+      fetchOptions.headers['Content-Type'] = 'application/json'
+      fetchOptions.body = JSON.stringify(params || {})
+    }
+
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const response = await fetch(url)
+        const response = await fetch(url, fetchOptions)
         await ensureCaptchaAllowed(response)
 
-        // Handle 503 (Service Unavailable - database reconnecting)
-        if (response.status === 503) {
-          const errorText = await response.text()
-
-          // If this is a reconnection error and we have retries left
-          if (attempt < retries && errorText.includes('reconnecting')) {
-            console.log(`🔄 Database reconnecting (attempt ${attempt + 1}/${retries + 1}), retrying in ${retryDelay}ms...`)
-            await new Promise(resolve => setTimeout(resolve, retryDelay))
-            continue
-          }
-
-          // Out of retries
-          throw new Error(`Service unavailable: ${errorText}`)
-        }
-
         if (!response.ok) {
+          if (response.status === 503) {
+            const errorText = await response.text()
+            if (attempt < retries && errorText.includes('reconnecting')) {
+              console.log(`dY", Database reconnecting (attempt ${attempt + 1}/${retries + 1}), retrying in ${retryDelayMs}ms...`)
+              await new Promise(resolve => setTimeout(resolve, retryDelayMs))
+              continue
+            }
+            throw new Error(`Service unavailable: ${errorText}`)
+          }
           const errorText = await response.text()
           console.error('Response error:', errorText)
           throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`)
@@ -87,15 +97,13 @@ class ApiService {
 
         return table
       } catch (error) {
-        // If this is the last attempt or not a retryable error, throw
         if (attempt === retries || !error.message.includes('Service unavailable')) {
           console.error('Error fetching Arrow data:', error)
           throw error
         }
 
-        // Otherwise retry
-        console.log(`🔄 Request failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${retryDelay}ms...`)
-        await new Promise(resolve => setTimeout(resolve, retryDelay))
+        console.log(`dY", Request failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${retryDelayMs}ms...`)
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs))
       }
     }
   }
@@ -373,15 +381,15 @@ class ApiService {
 
   // Changepoints API Methods
   async getChangepointMapSignals(filters) {
-    return this.fetchArrowData('/changepoints-map-signals', filters)
+    return this.fetchArrowData('/changepoints-map-signals', filters, { method: 'POST' })
   }
 
   async getChangepointMapXd(filters) {
-    return this.fetchArrowData('/changepoints-map-xd', filters)
+    return this.fetchArrowData('/changepoints-map-xd', filters, { method: 'POST' })
   }
 
   async getChangepointTable(filters) {
-    return this.fetchArrowData('/changepoints-table', filters)
+    return this.fetchArrowData('/changepoints-table', filters, { method: 'POST' })
   }
 
   async getChangepointDetail(params) {
@@ -389,7 +397,7 @@ class ApiService {
   }
 
   async getMonitoringAnomalies(filters) {
-    return this.fetchJson('/monitoring-anomalies', filters)
+    return this.fetchJson('/monitoring-anomalies', filters, { method: 'POST' })
   }
 
   async getConfig() {
@@ -407,49 +415,65 @@ class ApiService {
     }
   }
 
-  async fetchJson(endpoint, params = {}, retries = 3, retryDelay = 1000) {
-    let url = `${this.baseURL}${endpoint}`
-
-    const searchParams = new URLSearchParams()
-    Object.keys(params).forEach(key => {
-      const value = params[key]
-      if (value !== null && value !== undefined) {
-        if (Array.isArray(value)) {
-          value.forEach(v => searchParams.append(key, v))
-        } else {
-          searchParams.append(key, value)
-        }
+  async fetchJson(endpoint, params = {}, retriesOrOptions = 3, retryDelay = 1000) {
+    let method = 'GET'
+    let retries = 3
+    let retryDelayMs = typeof retryDelay === 'number' ? retryDelay : 1000
+    if (typeof retriesOrOptions === 'object' && retriesOrOptions !== null) {
+      method = (retriesOrOptions.method || 'GET').toUpperCase()
+      retries = typeof retriesOrOptions.retries === 'number' ? retriesOrOptions.retries : 3
+      if (typeof retriesOrOptions.retryDelay === 'number') {
+        retryDelayMs = retriesOrOptions.retryDelay
       }
-    })
+    } else {
+      retries = typeof retriesOrOptions === 'number' ? retriesOrOptions : 3
+    }
 
-    if (searchParams.toString()) {
-      url += '?' + searchParams.toString()
+    let url = `${this.baseURL}${endpoint}`
+    const fetchOptions = { method, headers: {} }
+
+    if (method === 'GET') {
+      const searchParams = new URLSearchParams()
+      Object.keys(params).forEach(key => {
+        const value = params[key]
+        if (value !== null && value !== undefined) {
+          if (Array.isArray(value)) {
+            value.forEach(v => searchParams.append(key, v))
+          } else {
+            searchParams.append(key, value)
+          }
+        }
+      })
+
+      if (searchParams.toString()) {
+        url += `?${searchParams.toString()}`
+      }
+    } else {
+      fetchOptions.headers['Content-Type'] = 'application/json'
+      fetchOptions.body = JSON.stringify(params || {})
     }
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const response = await fetch(url)
+        const response = await fetch(url, fetchOptions)
         await ensureCaptchaAllowed(response)
-        if (response.status === 503) {
-          const errorText = await response.text()
-          if (attempt < retries && errorText.includes('reconnecting')) {
-            await new Promise(resolve => setTimeout(resolve, retryDelay))
-            continue
-          }
-          throw new Error(`Service unavailable: ${errorText}`)
-        }
 
         if (!response.ok) {
+          if (response.status === 503 && attempt < retries) {
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs))
+            continue
+          }
           const errorText = await response.text()
+          console.error('Response error:', errorText)
           throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`)
         }
 
         return await response.json()
       } catch (error) {
-        if (attempt === retries || !(error.message || '').includes('Service unavailable')) {
+        if (attempt >= retries) {
           throw error
         }
-        await new Promise(resolve => setTimeout(resolve, retryDelay))
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs))
       }
     }
   }

@@ -6,6 +6,7 @@ export const useFiltersStore = defineStore('filters', () => {
   const defaultStartHour = ref(6)   // Default from config.py
   const defaultEndHour = ref(19)    // Default from config.py
   const anomalyMonitoringThreshold = ref(4.0)
+  const changepointSeverityThreshold = ref(30.0)
 
   function formatDateOnly(date) {
     return date.toISOString().split('T')[0]
@@ -44,8 +45,6 @@ export const useFiltersStore = defineStore('filters', () => {
   const timeFilterEnabled = ref(true)  // Time-of-day filter always enabled
   const dayOfWeek = ref([])  // Selected days of week (1=Mon, 2=Tue, ..., 7=Sun)
   const removeAnomalies = ref(false)  // Filter to remove anomalous data points
-  const pctChangeImprovement = ref(1.0) // Percent threshold for improvements (displayed as whole number, sent as decimal)
-  const pctChangeDegradation = ref(1.0) // Percent threshold for degradations (displayed as whole number, sent as decimal)
 
   // Computed
   const hasSignalFilters = computed(() => selectedSignalIds.value.length > 0)
@@ -94,8 +93,7 @@ export const useFiltersStore = defineStore('filters', () => {
     approach: approach.value,
     valid_geometry: validGeometry.value !== 'all' ? validGeometry.value : undefined,
     maintained_by: maintainedBy.value !== 'all' ? maintainedBy.value : undefined,
-    pct_change_improvement: pctChangeImprovement.value / 100, // Convert from whole number to decimal
-    pct_change_degradation: pctChangeDegradation.value / 100  // Convert from whole number to decimal
+    changepoint_severity_threshold: changepointSeverityThreshold.value
   }))
 
   // Computed property that groups signals by district and filters by maintainedBy
@@ -159,24 +157,6 @@ export const useFiltersStore = defineStore('filters', () => {
     removeAnomalies.value = value
   }
 
-  function setPctChangeImprovement(value) {
-    const numeric = Number(value)
-    if (!Number.isFinite(numeric)) {
-      pctChangeImprovement.value = 0
-      return
-    }
-    pctChangeImprovement.value = Math.max(0, numeric)
-  }
-
-  function setPctChangeDegradation(value) {
-    const numeric = Number(value)
-    if (!Number.isFinite(numeric)) {
-      pctChangeDegradation.value = 0
-      return
-    }
-    pctChangeDegradation.value = Math.max(0, numeric)
-  }
-
   function setAnomalyMonitoringThreshold(value) {
     const numeric = Number(value)
     if (!Number.isFinite(numeric)) {
@@ -184,6 +164,15 @@ export const useFiltersStore = defineStore('filters', () => {
       return
     }
     anomalyMonitoringThreshold.value = Math.max(0, numeric)
+  }
+
+  function setChangepointSeverityThreshold(value) {
+    const numeric = Number(value)
+    if (!Number.isFinite(numeric)) {
+      changepointSeverityThreshold.value = 0
+      return
+    }
+    changepointSeverityThreshold.value = Math.max(0, numeric)
   }
 
   function selectDistrict(district, signalIds) {
@@ -243,6 +232,12 @@ export const useFiltersStore = defineStore('filters', () => {
           anomalyMonitoringThreshold.value = numericThreshold
         }
       }
+      if (config.changepointSeverityThreshold !== undefined) {
+        const numericSeverity = Number(config.changepointSeverityThreshold)
+        if (Number.isFinite(numericSeverity)) {
+          changepointSeverityThreshold.value = numericSeverity
+        }
+      }
     } catch (error) {
       console.error('Failed to load config:', error)
       // Keep default values on error
@@ -271,8 +266,7 @@ export const useFiltersStore = defineStore('filters', () => {
     defaultStartHour,
     defaultEndHour,
     anomalyMonitoringThreshold,
-    pctChangeImprovement,
-    pctChangeDegradation,
+    changepointSeverityThreshold,
 
     // Computed
     hasSignalFilters,
@@ -294,9 +288,8 @@ export const useFiltersStore = defineStore('filters', () => {
     setTimeFilterEnabled,
     setDayOfWeek,
     setRemoveAnomalies,
-    setPctChangeImprovement,
-    setPctChangeDegradation,
     setAnomalyMonitoringThreshold,
+    setChangepointSeverityThreshold,
     selectDistrict,
     deselectDistrict,
     deselectIndividualSignal,

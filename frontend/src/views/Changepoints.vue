@@ -242,7 +242,7 @@ const shouldAutoZoomMap = ref(true)
 const tableRows = ref([])
 const tableTotal = ref(0)
 const tableIsLoading = ref(true)
-const tableSortBy = ref([{ key: 'pct_change', order: 'desc' }])
+const tableSortBy = ref([{ key: 'score', order: 'desc' }])
 
 const selectedRow = ref(null)
 const detailRows = ref([])
@@ -266,7 +266,7 @@ const tableHeaders = [
   { title: 'Timestamp', value: 'timestamp', key: 'timestamp', sortable: true },
   { title: 'Pct Change', value: 'pct_change', key: 'pct_change', sortable: true },
   { title: 'Avg Diff', value: 'avg_diff', key: 'avg_diff', sortable: true },
-  { title: 'Score', value: 'score', key: 'score', sortable: true },
+  { title: 'Severity Score', value: 'score', key: 'score', sortable: true },
   { title: 'Road & Bearing', value: 'road', key: 'road', sortable: false },
   { title: 'Associated Signal(s)', value: 'associated_signals', key: 'associated_signals', sortable: false },
   { title: 'XD', value: 'xd', key: 'xd', sortable: false }
@@ -276,12 +276,12 @@ const tableSortLabelMap = {
   timestamp: 'Timestamp',
   pct_change: 'Percent Change',
   avg_diff: 'Average Diff',
-  score: 'Score'
+  score: 'Severity Score'
 }
 
 const activeSortLabel = computed(() => {
   const current = tableSortBy.value[0]
-  if (!current) return 'Timestamp (Newest)'
+  if (!current) return 'Severity Score (High -> Low)'
   const label = tableSortLabelMap[current.key] || 'Timestamp'
   const direction = current.order === 'asc' ? '(Low -> High)' : '(High -> Low)'
   return `${label} ${direction}`
@@ -469,8 +469,7 @@ function buildFilterSignature() {
     maintained_by: params.maintained_by,
     approach: params.approach,
     valid_geometry: params.valid_geometry,
-    pct_change_improvement: params.pct_change_improvement,
-    pct_change_degradation: params.pct_change_degradation,
+    changepoint_severity_threshold: params.changepoint_severity_threshold,
     signal_ids: (params.signal_ids || []).slice().sort()
   })
 }
@@ -510,7 +509,7 @@ function buildMapParams() {
 
 function buildTableParams() {
   const params = buildBaseFilterParams()
-  const sort = tableSortBy.value[0] || { key: 'pct_change', order: 'desc' }
+  const sort = tableSortBy.value[0] || { key: 'score', order: 'desc' }
   params.sort_by = sort.key
   params.sort_dir = sort.order === 'asc' ? 'asc' : 'desc'
 
@@ -616,7 +615,7 @@ async function loadTableData() {
       timestamp: row.TIMESTAMP,
       pct_change: Number(row.PCT_CHANGE ?? 0),
       avg_diff: Number(row.AVG_DIFF ?? 0),
-      score: Number(row.SCORE ?? 0),
+      score: Number(row.CHANGEPOINT_SEVERITY ?? row.SEVERITY_SCORE ?? row.SCORE ?? 0),
       road_name: row.ROADNAME,
       bearing: row.BEARING,
       xd: row.XD,
@@ -663,7 +662,7 @@ function onSelectionChanged(payload) {
 }
 
 function onSortByChange(sortBy) {
-    tableSortBy.value = sortBy.length > 0 ? sortBy : [{ key: 'pct_change', order: 'desc' }]
+    tableSortBy.value = sortBy.length > 0 ? sortBy : [{ key: 'score', order: 'desc' }]
     loadTableData()
 }
 

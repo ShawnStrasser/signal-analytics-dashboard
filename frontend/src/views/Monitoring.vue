@@ -5,7 +5,7 @@
         <div class="auth-heading">Email Monitoring Reports</div>
         <template v-if="!authStore.isAuthenticated">
           <p class="auth-description">
-            Sign in with your .gov email to subscribe to daily monitoring summaries. You can request up to three sign-in links per day—we will email you a link, no password required.
+            Sign in with your public agency email to subscribe to daily monitoring summaries. You can request up to three sign-in links per day—we will email you a link, no password required.
           </p>
           <v-text-field
             v-model="emailInput"
@@ -147,8 +147,8 @@
             <div><strong>Maintained By:</strong> {{ maintainedByLabel }}</div>
             <div><strong>Approach:</strong> {{ approachLabel }}</div>
             <div><strong>Valid Geometry:</strong> {{ validGeometryLabel }}</div>
-            <div><strong>Percent Change:</strong> {{ percentChangeLabel }}</div>
             <div><strong>Monitoring Score Threshold:</strong> >= {{ anomalyThresholdLabel }}</div>
+            <div><strong>Changepoint Severity Threshold:</strong> >= {{ changepointSeverityLabel }}</div>
           </div>
         </v-card-text>
       </v-card>
@@ -217,7 +217,7 @@
           <div class="section-header">
             <div class="section-title">Changepoints</div>
             <div class="section-subtitle">
-              Detected on {{ monitoringDateLabel }}. Filters apply to signals, maintained by, approach, valid geometry, and percent change thresholds.
+              Detected on {{ monitoringDateLabel }} with changepoint severity >= {{ changepointSeverityLabel }}. Severity multiplies the percent change by the travel-time delta (seconds) and scales by 100, so higher scores surface bigger, longer-lasting shifts. Filters apply to signals, maintained by, approach, and geometry selections.
             </div>
           </div>
           <div v-if="charts.length === 0" class="empty-state text-medium-emphasis">
@@ -354,6 +354,11 @@ const monitoringDateStrings = computed(() => getMonitoringDateStrings())
     return Number.isFinite(storeValue) ? storeValue : 4
   })
   const anomalyThresholdLabel = computed(() => anomalyThreshold.value.toFixed(1))
+  const changepointSeverityThreshold = computed(() => {
+    const storeValue = Number(filtersStore.changepointSeverityThreshold ?? 0)
+    return Number.isFinite(storeValue) ? Math.max(0, storeValue) : 0
+  })
+  const changepointSeverityLabel = computed(() => changepointSeverityThreshold.value.toFixed(1))
   const anomalyTargetLabel = computed(() => {
     const target = anomalyMetadata.value?.targetDate
     if (!target) {
@@ -392,22 +397,13 @@ const validGeometryLabel = computed(() => {
   return 'All'
 })
 
-const percentChangeLabel = computed(() => {
-  const improve = Number(filtersStore.pctChangeImprovement ?? 0)
-  const degrade = Number(filtersStore.pctChangeDegradation ?? 0)
-  const improveText = improve > 0 ? `<= -${improve.toFixed(1)}%` : '<= 0%'
-  const degradeText = degrade > 0 ? `>= +${degrade.toFixed(1)}%` : '>= 0%'
-  return `${improveText} / ${degradeText}`
-})
-
 const filterSignature = computed(() => JSON.stringify({
   signals: (filtersStore.selectedSignalIds || []).slice().sort(),
   maintainedBy: filtersStore.maintainedBy,
   approach: filtersStore.approach,
   validGeometry: filtersStore.validGeometry,
-  pctImprove: filtersStore.pctChangeImprovement,
-  pctDegrade: filtersStore.pctChangeDegradation,
-  monitoringScore: filtersStore.anomalyMonitoringThreshold
+  monitoringScore: filtersStore.anomalyMonitoringThreshold,
+  severity: filtersStore.changepointSeverityThreshold
 }))
 
 watch(filterSignature, () => {
@@ -419,6 +415,9 @@ watch(() => authStore.email, (value) => {
     emailInput.value = value
   }
 })
+
+const PUBLIC_AGENCY_SUFFIXES = ['.gov', '.us']
+const PUBLIC_AGENCY_EXCEPTIONS = new Set(['cityofsalem.net', 'cityofmedford.org'])
 
 onMounted(async () => {
   await authStore.fetchSession()
@@ -456,7 +455,14 @@ function isValidEmail(value) {
   if (trimmed.length === 0) return false
   const basicPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   if (!basicPattern.test(trimmed)) return false
-  return trimmed.toLowerCase().endsWith('.gov')
+
+  const normalized = trimmed.toLowerCase()
+  const parts = normalized.split('@')
+  const domain = parts[parts.length - 1] || ''
+  if (domain.length === 0) return false
+
+  const hasAllowedSuffix = PUBLIC_AGENCY_SUFFIXES.some((suffix) => domain.endsWith(suffix))
+  return hasAllowedSuffix || PUBLIC_AGENCY_EXCEPTIONS.has(domain)
 }
 
 function buildSubscriptionSettings() {
@@ -472,7 +478,7 @@ async function sendLoginLink() {
   loginError.value = ''
 
   if (!isValidEmail(emailInput.value)) {
-    loginError.value = 'Enter a valid .gov email address.'
+    loginError.value = 'Enter a valid public agency email address.'
     return
   }
 
@@ -643,10 +649,9 @@ function buildRequestParams() {
   const params = {
     start_date: monitoringDateStrings.value.start,
     end_date: monitoringDateStrings.value.end,
-    pct_change_improvement: Number(filtersStore.pctChangeImprovement ?? 0) / 100,
-    pct_change_degradation: Number(filtersStore.pctChangeDegradation ?? 0) / 100,
     anomaly_monitoring_threshold: Math.max(0, Number(filtersStore.anomalyMonitoringThreshold ?? 4)),
-    sort_by: 'pct_change',
+    changepoint_severity_threshold: Math.max(0, Number(filtersStore.changepointSeverityThreshold ?? 0)),
+    sort_by: 'score',
     sort_dir: 'desc'
   }
 

@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Blueprint, request
 
-from config import DEBUG_BACKEND_TIMING, TIMEZONE
+from config import DEBUG_BACKEND_TIMING, TIMEZONE, CHANGEPOINT_SEVERITY_THRESHOLD
 from database import get_snowflake_session, is_auth_error
 from utils.arrow_utils import (
     create_arrow_response,
@@ -54,6 +54,9 @@ def _sanitize_int_list(values):
         except (TypeError, ValueError):
             continue
     return ints
+
+
+_CHANGEPOINT_SEVERITY_SQL = "COALESCE(ABS(t.PCT_CHANGE * t.AVG_DIFF) * 100, 0)"
 
 
 def _local_zone() -> Optional[ZoneInfo]:
@@ -108,41 +111,18 @@ def _normalize_change_timestamp(value: str) -> str:
     return sanitized
 
 
-def _build_percent_change_condition(improvement, degradation):
-    """
-    Build SQL condition for percent-change thresholds (decimal values).
-
-    Returns a string like:
-      "(t.PCT_CHANGE <= -0.01 OR t.PCT_CHANGE >= 0.01)"
-    Falls back to "1=1" (no filtering) if both thresholds are zero.
-    """
-    conditions = []
-
-    if improvement > 0:
-        conditions.append(f"t.PCT_CHANGE <= {-improvement}")
-    if degradation > 0:
-        conditions.append(f"t.PCT_CHANGE >= {degradation}")
-
-    if not conditions:
-        return "1=1"
-
-    joined = " OR ".join(conditions)
-    return f"({joined})"
-
-
 def _assemble_where_clause(
     start_date,
     end_date,
     filter_where,
-    improvement,
-    degradation,
     selected_signals=None,
-    selected_xds=None
+    selected_xds=None,
+    *,
+    severity_threshold=None
 ):
     """Compose WHERE clause for changepoint queries."""
     where_parts = [
-        f"DATE(t.TIMESTAMP) BETWEEN '{start_date}' AND '{end_date}'",
-        _build_percent_change_condition(improvement, degradation)
+        f"DATE(t.TIMESTAMP) BETWEEN '{start_date}' AND '{end_date}'"
     ]
 
     if filter_where:
@@ -157,6 +137,13 @@ def _assemble_where_clause(
     if sanitized_xds:
         xds_str = ", ".join(sanitized_xds)
         where_parts.append(f"t.XD IN ({xds_str})")
+
+    threshold_value = severity_threshold
+    if threshold_value is None or not isinstance(threshold_value, (int, float)):
+        threshold_value = CHANGEPOINT_SEVERITY_THRESHOLD
+    if threshold_value < 0:
+        threshold_value = abs(threshold_value)
+    where_parts.append(f"{_CHANGEPOINT_SEVERITY_SQL} >= {threshold_value:.6f}")
 
     return " AND ".join(where_parts)
 
@@ -214,21 +201,44 @@ def _execute_arrow_query(query):
     return create_arrow_response(arrow_bytes)
 
 
-@changepoints_bp.route('/changepoints-map-signals')
+@changepoints_bp.route('/changepoints-map-signals', methods=['GET', 'POST'])
 def get_changepoints_map_signals():
     """Aggregate changepoints by signal for map visualization."""
     request_start = time.time()
 
-    # Base filters
-    start_date = normalize_date(request.args.get('start_date'))
-    end_date = normalize_date(request.args.get('end_date'))
-    signal_ids = request.args.getlist('signal_ids')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
+    payload = request.get_json(silent=True) if request.method == 'POST' else None
 
-    improvement = _parse_positive_float(request.args.get('pct_change_improvement'), 0.01)
-    degradation = _parse_positive_float(request.args.get('pct_change_degradation'), 0.01)
+    def _param(name, default=None):
+        if request.method == 'POST':
+            if not payload:
+                return default
+            return payload.get(name, default)
+        return request.args.get(name, default)
+
+    def _param_list(name):
+        if request.method == 'POST':
+            if not payload:
+                return []
+            value = payload.get(name)
+            if value is None:
+                return []
+            if isinstance(value, (list, tuple, set)):
+                return list(value)
+            return [value]
+        return request.args.getlist(name)
+
+    # Base filters
+    start_date = normalize_date(_param('start_date'))
+    end_date = normalize_date(_param('end_date'))
+    signal_ids = _param_list('signal_ids')
+    maintained_by = _param('maintained_by', 'all')
+    approach = _param('approach')
+    valid_geometry = _param('valid_geometry')
+
+    severity_threshold = _parse_positive_float(
+        _param('changepoint_severity_threshold'),
+        CHANGEPOINT_SEVERITY_THRESHOLD
+    )
 
     filter_join, filter_where = build_filter_joins_and_where(
         signal_ids,
@@ -244,8 +254,7 @@ def get_changepoints_map_signals():
         start_date,
         end_date,
         filter_where,
-        improvement,
-        degradation
+        severity_threshold=severity_threshold
     )
 
     query = f"""
@@ -255,7 +264,7 @@ def get_changepoints_map_signals():
             t.TIMESTAMP,
             t.PCT_CHANGE,
             t.AVG_DIFF,
-            t.SCORE,
+            {_CHANGEPOINT_SEVERITY_SQL} AS SCORE,
             xd.ID AS SIGNAL_ID,
             xd.ROADNAME,
             xd.BEARING
@@ -281,9 +290,10 @@ def get_changepoints_map_signals():
             AVG_DIFF,
             ROADNAME,
             BEARING,
+            SCORE,
             ROW_NUMBER() OVER (
                 PARTITION BY SIGNAL_ID
-                ORDER BY ABS(PCT_CHANGE) DESC, TIMESTAMP DESC
+                ORDER BY SCORE DESC, ABS(PCT_CHANGE) DESC, TIMESTAMP DESC
             ) AS RN
         FROM filtered_cp
     )
@@ -297,7 +307,8 @@ def get_changepoints_map_signals():
         top.PCT_CHANGE AS TOP_PCT_CHANGE,
         top.AVG_DIFF AS TOP_AVG_DIFF,
         top.ROADNAME AS TOP_ROADNAME,
-        top.BEARING AS TOP_BEARING
+        top.BEARING AS TOP_BEARING,
+        top.SCORE AS TOP_SCORE
     FROM signal_stats stats
     LEFT JOIN (SELECT * FROM top_cp WHERE RN = 1) top
         ON stats.SIGNAL_ID = top.SIGNAL_ID
@@ -324,20 +335,43 @@ def get_changepoints_map_signals():
         return f"Error fetching changepoint map signal data: {e}", 500
 
 
-@changepoints_bp.route('/changepoints-map-xd')
+@changepoints_bp.route('/changepoints-map-xd', methods=['GET', 'POST'])
 def get_changepoints_map_xd():
     """Aggregate changepoints by XD segment for map visualization."""
     request_start = time.time()
 
-    start_date = normalize_date(request.args.get('start_date'))
-    end_date = normalize_date(request.args.get('end_date'))
-    signal_ids = request.args.getlist('signal_ids')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
+    payload = request.get_json(silent=True) if request.method == 'POST' else None
 
-    improvement = _parse_positive_float(request.args.get('pct_change_improvement'), 0.01)
-    degradation = _parse_positive_float(request.args.get('pct_change_degradation'), 0.01)
+    def _param(name, default=None):
+        if request.method == 'POST':
+            if not payload:
+                return default
+            return payload.get(name, default)
+        return request.args.get(name, default)
+
+    def _param_list(name):
+        if request.method == 'POST':
+            if not payload:
+                return []
+            value = payload.get(name)
+            if value is None:
+                return []
+            if isinstance(value, (list, tuple, set)):
+                return list(value)
+            return [value]
+        return request.args.getlist(name)
+
+    start_date = normalize_date(_param('start_date'))
+    end_date = normalize_date(_param('end_date'))
+    signal_ids = _param_list('signal_ids')
+    maintained_by = _param('maintained_by', 'all')
+    approach = _param('approach')
+    valid_geometry = _param('valid_geometry')
+
+    severity_threshold = _parse_positive_float(
+        _param('changepoint_severity_threshold'),
+        CHANGEPOINT_SEVERITY_THRESHOLD
+    )
 
     filter_join, filter_where = build_filter_joins_and_where(
         signal_ids,
@@ -353,8 +387,7 @@ def get_changepoints_map_xd():
         start_date,
         end_date,
         filter_where,
-        improvement,
-        degradation
+        severity_threshold=severity_threshold
     )
 
     query = f"""
@@ -364,7 +397,7 @@ def get_changepoints_map_xd():
             t.TIMESTAMP,
             t.PCT_CHANGE,
             t.AVG_DIFF,
-            t.SCORE,
+            {_CHANGEPOINT_SEVERITY_SQL} AS SCORE,
             xd.ROADNAME,
             xd.BEARING
         FROM CHANGEPOINTS t
@@ -391,9 +424,10 @@ def get_changepoints_map_xd():
             AVG_DIFF,
             ROADNAME,
             BEARING,
+            SCORE,
             ROW_NUMBER() OVER (
                 PARTITION BY XD
-                ORDER BY ABS(PCT_CHANGE) DESC, TIMESTAMP DESC
+                ORDER BY SCORE DESC, ABS(PCT_CHANGE) DESC, TIMESTAMP DESC
             ) AS RN
         FROM filtered_cp
     )
@@ -406,7 +440,8 @@ def get_changepoints_map_xd():
         top.PCT_CHANGE AS TOP_PCT_CHANGE,
         top.AVG_DIFF AS TOP_AVG_DIFF,
         top.ROADNAME AS TOP_ROADNAME,
-        top.BEARING AS TOP_BEARING
+        top.BEARING AS TOP_BEARING,
+        top.SCORE AS TOP_SCORE
     FROM xd_stats stats
     LEFT JOIN (SELECT * FROM top_cp WHERE RN = 1) top
         ON stats.XD = top.XD
@@ -433,24 +468,47 @@ def get_changepoints_map_xd():
         return f"Error fetching changepoint map XD data: {e}", 500
 
 
-@changepoints_bp.route('/changepoints-table')
+@changepoints_bp.route('/changepoints-table', methods=['GET', 'POST'])
 def get_changepoints_table():
     """Return top changepoints (limit 100) for the table with server-side sorting."""
     request_start = time.time()
 
+    payload = request.get_json(silent=True) if request.method == 'POST' else None
+
+    def _param(name, default=None):
+        if request.method == 'POST':
+            if not payload:
+                return default
+            return payload.get(name, default)
+        return request.args.get(name, default)
+
+    def _param_list(name):
+        if request.method == 'POST':
+            if not payload:
+                return []
+            value = payload.get(name)
+            if value is None:
+                return []
+            if isinstance(value, (list, tuple, set)):
+                return list(value)
+            return [value]
+        return request.args.getlist(name)
+
     # Base filters
-    start_date = normalize_date(request.args.get('start_date'))
-    end_date = normalize_date(request.args.get('end_date'))
-    signal_ids = request.args.getlist('signal_ids')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
+    start_date = normalize_date(_param('start_date'))
+    end_date = normalize_date(_param('end_date'))
+    signal_ids = _param_list('signal_ids')
+    maintained_by = _param('maintained_by', 'all')
+    approach = _param('approach')
+    valid_geometry = _param('valid_geometry')
 
-    improvement = _parse_positive_float(request.args.get('pct_change_improvement'), 0.01)
-    degradation = _parse_positive_float(request.args.get('pct_change_degradation'), 0.01)
+    severity_threshold = _parse_positive_float(
+        _param('changepoint_severity_threshold'),
+        CHANGEPOINT_SEVERITY_THRESHOLD
+    )
 
-    selected_signals = request.args.getlist('selected_signals')
-    selected_xds = request.args.getlist('selected_xds')
+    selected_signals = _param_list('selected_signals')
+    selected_xds = _param_list('selected_xds')
 
     dimension_join, dimension_where_clause = _build_filtered_dim_components(
         signal_ids,
@@ -463,20 +521,19 @@ def get_changepoints_table():
         start_date,
         end_date,
         "",
-        improvement,
-        degradation,
         selected_signals=selected_signals,
-        selected_xds=selected_xds
+        selected_xds=selected_xds,
+        severity_threshold=severity_threshold
     )
 
-    sort_by = request.args.get('sort_by', 'timestamp').lower()
-    sort_dir = request.args.get('sort_dir', 'desc').lower()
+    sort_by = (_param('sort_by', 'score') or 'score').lower()
+    sort_dir = (_param('sort_dir', 'desc') or 'desc').lower()
 
     sort_column_map = {
         'timestamp': 't.TIMESTAMP',
         'pct_change': 't.PCT_CHANGE',
         'avg_diff': 't.AVG_DIFF',
-        'score': 't.SCORE'
+        'score': 'SCORE'
     }
     sort_column = sort_column_map.get(sort_by, 't.TIMESTAMP')
     sort_direction = 'ASC' if sort_dir == 'asc' else 'DESC'
@@ -489,7 +546,7 @@ def get_changepoints_table():
         t.AVG_DIFF,
         t.AVG_BEFORE,
         t.AVG_AFTER,
-        t.SCORE,
+        {_CHANGEPOINT_SEVERITY_SQL} AS SCORE,
         xd.ROADNAME,
         xd.BEARING,
         LISTAGG(DISTINCT xd.ID, ', ') WITHIN GROUP (ORDER BY xd.ID) AS ASSOCIATED_SIGNALS

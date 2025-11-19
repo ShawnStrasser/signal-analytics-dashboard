@@ -67,6 +67,9 @@ MAX_BEFORE_AFTER_SMALL_MULTIPLES_ENTITIES = 12
 # Threshold applied to anomaly monitoring score when selecting segments
 ANOMALY_MONITORING_THRESHOLD = float(os.environ.get('ANOMALY_MONITORING_THRESHOLD', 4.0))
 
+# Threshold applied to changepoint severity score before surfacing results
+CHANGEPOINT_SEVERITY_THRESHOLD = float(os.environ.get('CHANGEPOINT_SEVERITY_THRESHOLD', 30.0))
+
 # =============================================================================
 # TIME OF DAY FILTER SETTINGS
 # =============================================================================

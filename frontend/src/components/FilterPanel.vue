@@ -166,58 +166,51 @@
         </v-col>
       </v-row>
 
-      <!-- Percent Change Filter (Changepoints & Monitoring) -->
-      <v-row v-if="showsPercentChangeFilter">
+      <!-- Changepoint Severity (Changepoints + Monitoring) -->
+      <v-row v-if="isChangepointsRoute || isMonitoringRoute">
         <v-col cols="12">
-          <v-card variant="outlined" class="pct-change-card">
+          <v-card variant="outlined" class="monitoring-score-card">
             <v-card-title class="py-2">
-              Percent Change Thresholds
+              Changepoint Severity
             </v-card-title>
             <v-card-text>
-              <div class="text-caption text-medium-emphasis mb-2">
-                Include changepoints where PCT_CHANGE is at or beyond these thresholds. Defaults capture |PCT_CHANGE| ≥ 1%.
+              <div class="text-caption text-medium-emphasis mb-4">
+                Severity multiplies the percent change by the travel-time delta (seconds). Try values between 10-50 to focus on sustained shifts.
               </div>
-              <v-row dense>
-                <v-col cols="12" sm="6">
-                  <v-text-field
-                    v-model.number="pctChangeImprovementLocal"
-                    type="number"
-                    label="Improvement threshold (≤ -%)"
-                    suffix="%"
-                    density="compact"
-                    variant="outlined"
-                    step="0.1"
-                    min="0"
-                  />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-text-field
-                    v-model.number="pctChangeDegradationLocal"
-                    type="number"
-                    label="Degradation threshold (≥ +%)"
-                    suffix="%"
-                    density="compact"
-                    variant="outlined"
-                    step="0.1"
-                    min="0"
-                  />
-                </v-col>
-              </v-row>
+              <v-slider
+                v-model.number="changepointSeverityLocal"
+                color="primary"
+                :min="5"
+                :max="80"
+                :step="1"
+                class="mb-3"
+                thumb-label="always"
+              ></v-slider>
+              <v-text-field
+                v-model.number="changepointSeverityLocal"
+                type="number"
+                label="Severity threshold"
+                density="compact"
+                variant="outlined"
+                suffix="score"
+                step="1"
+                min="0"
+              />
             </v-card-text>
           </v-card>
         </v-col>
       </v-row>
 
-      <!-- Monitoring Score Threshold (Monitoring only) -->
+      <!-- Anomaly Score (Monitoring only) -->
       <v-row v-if="isMonitoringRoute">
         <v-col cols="12">
           <v-card variant="outlined" class="monitoring-score-card">
             <v-card-title class="py-2">
-              Monitoring Score Threshold
+              Anomaly Score
             </v-card-title>
             <v-card-text>
               <div class="text-caption text-medium-emphasis mb-4">
-                Monitoring score multiplies how often an anomaly triggers by how large the travel-time gap is. Lower the threshold to cast a wider net; raise it to focus on the most severe corridors.
+                Score multiplies anomaly frequency by the travel-time gap. Lower it to widen alerts; raise it to focus on the worst corridors.
               </div>
               <v-slider
                 v-model.number="anomalyThresholdLocal"
@@ -326,12 +319,12 @@
               </div>
               <div v-if="filtersStore.maintainedBy !== 'all'"><strong>Maintained By:</strong> {{ maintainedByDisplayText }}</div>
               <div><strong>Signals:</strong> {{ filtersStore.selectedSignalIds.length || 'All' }}</div>
-              <div v-if="isMonitoringRoute"><strong>Monitoring Score:</strong> >= {{ monitoringScoreLabel }}</div>
+              <div v-if="isMonitoringRoute"><strong>Anomaly Score:</strong> >= {{ monitoringScoreLabel }}</div>
+              <div v-if="isChangepointsRoute || isMonitoringRoute"><strong>Changepoint Severity:</strong> >= {{ changepointSeverityLabel }}</div>
               <div v-if="filtersStore.approach !== null"><strong>Approach:</strong> {{ filtersStore.approach ? 'True' : 'False' }}</div>
               <div v-if="filtersStore.validGeometry !== null"><strong>Valid Geometry:</strong> {{ validGeometryDisplayText }}</div>
               <div v-if="$route.name === 'Anomalies'"><strong>Anomaly Type:</strong> {{ filtersStore.anomalyType }}</div>
               <div v-if="showsTimeOfDayFilter"><strong>Time of Day:</strong> {{ formatTimeDetailed(filtersStore.startHour, filtersStore.startMinute) }} - {{ formatTimeDetailed(filtersStore.endHour, filtersStore.endMinute) }}</div>
-              <div v-if="showsPercentChangeFilter"><strong>Percent Change:</strong> {{ percentChangeSummaryText }}</div>
             <div v-if="filtersStore.dayOfWeek.length > 0"><strong>Days:</strong> {{ dayOfWeekDisplayText }}</div>
             <div v-if="($route.name === 'TravelTime' || $route.name === 'BeforeAfter') && filtersStore.removeAnomalies"><strong>Remove Anomalies:</strong> Yes</div>
           </div>
@@ -362,11 +355,9 @@ const signalSelectorExpanded = ref(true) // Start expanded by default
 const route = useRoute()
 const isChangepointsRoute = computed(() => route.name === 'Changepoints')
 const isMonitoringRoute = computed(() => route.name === 'Monitoring')
-const showsPercentChangeFilter = computed(() => isChangepointsRoute.value || isMonitoringRoute.value)
 const showsTimeOfDayFilter = computed(() => !isChangepointsRoute.value && !isMonitoringRoute.value)
-const pctChangeImprovementLocal = ref(filtersStore.pctChangeImprovement)
-const pctChangeDegradationLocal = ref(filtersStore.pctChangeDegradation)
 const anomalyThresholdLocal = ref(filtersStore.anomalyMonitoringThreshold)
+const changepointSeverityLocal = ref(filtersStore.changepointSeverityThreshold)
 const showSignalsSpinner = useDelayedBoolean(() => signalsStore.loading)
 
 const activeStartDate = computed(() =>
@@ -386,6 +377,10 @@ const monitoringDateLabel = computed(() => {
 })
 const monitoringScoreLabel = computed(() => {
   const value = Number(filtersStore.anomalyMonitoringThreshold ?? 0)
+  return value.toFixed(1)
+})
+const changepointSeverityLabel = computed(() => {
+  const value = Number(filtersStore.changepointSeverityThreshold ?? 0)
   return value.toFixed(1)
 })
 
@@ -432,44 +427,6 @@ watch([localStartDate, localEndDate], ([newStart, newEnd]) => {
   }, 500) // 500ms debounce delay
 })
 
-watch(() => filtersStore.pctChangeImprovement, (newVal) => {
-  if (newVal !== pctChangeImprovementLocal.value) {
-    pctChangeImprovementLocal.value = newVal
-  }
-})
-
-watch(() => filtersStore.pctChangeDegradation, (newVal) => {
-  if (newVal !== pctChangeDegradationLocal.value) {
-    pctChangeDegradationLocal.value = newVal
-  }
-})
-
-watch(pctChangeImprovementLocal, (newVal) => {
-  const numeric = Number(newVal)
-  if (!Number.isFinite(numeric)) {
-    if (filtersStore.pctChangeImprovement !== 0) {
-      filtersStore.setPctChangeImprovement(0)
-    }
-    return
-  }
-  if (numeric !== filtersStore.pctChangeImprovement) {
-    filtersStore.setPctChangeImprovement(numeric)
-  }
-})
-
-watch(pctChangeDegradationLocal, (newVal) => {
-  const numeric = Number(newVal)
-  if (!Number.isFinite(numeric)) {
-    if (filtersStore.pctChangeDegradation !== 0) {
-      filtersStore.setPctChangeDegradation(0)
-    }
-    return
-  }
-  if (numeric !== filtersStore.pctChangeDegradation) {
-    filtersStore.setPctChangeDegradation(numeric)
-  }
-})
-
 watch(() => filtersStore.anomalyMonitoringThreshold, (newVal) => {
   if (newVal !== anomalyThresholdLocal.value) {
     anomalyThresholdLocal.value = newVal
@@ -486,6 +443,25 @@ watch(anomalyThresholdLocal, (newVal) => {
   }
   if (numeric !== filtersStore.anomalyMonitoringThreshold) {
     filtersStore.setAnomalyMonitoringThreshold(numeric)
+  }
+})
+
+watch(() => filtersStore.changepointSeverityThreshold, (newVal) => {
+  if (newVal !== changepointSeverityLocal.value) {
+    changepointSeverityLocal.value = newVal
+  }
+})
+
+watch(changepointSeverityLocal, (newVal) => {
+  const numeric = Number(newVal)
+  if (!Number.isFinite(numeric)) {
+    if (filtersStore.changepointSeverityThreshold !== 0) {
+      filtersStore.setChangepointSeverityThreshold(0)
+    }
+    return
+  }
+  if (numeric !== filtersStore.changepointSeverityThreshold) {
+    filtersStore.setChangepointSeverityThreshold(numeric)
   }
 })
 
@@ -676,18 +652,6 @@ const dayOfWeekDisplayText = computed(() => {
     .join(', ')
 })
 
-const percentChangeSummaryText = computed(() => {
-  const improvement = Number(filtersStore.pctChangeImprovement ?? 0)
-  const degradation = Number(filtersStore.pctChangeDegradation ?? 0)
-  const improvementText = improvement > 0
-    ? `≤ -${improvement.toFixed(1)}%`
-    : '≤ 0%'
-  const degradationText = degradation > 0
-    ? `≥ +${degradation.toFixed(1)}%`
-    : '≥ 0%'
-  return `${improvementText} or ${degradationText}`
-})
-
 onMounted(async () => {
   await filtersStore.initializeConfig()
 
@@ -768,3 +732,4 @@ async function loadSignals() {
   padding-bottom: 8px;
 }
 </style>
+

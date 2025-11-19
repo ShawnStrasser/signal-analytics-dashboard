@@ -31,6 +31,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from config import (
     ANOMALY_MONITORING_THRESHOLD,
+    CHANGEPOINT_SEVERITY_THRESHOLD,
     BASE_DIR,
     DAILY_REPORT_SEND_HOUR,
     DEBUG_SAVE_REPORT_PDF,
@@ -68,6 +69,11 @@ COMPOSITE_FIG_WIDTH_IN = 6.8
 COMPOSITE_FIG_HEIGHT_IN = 3.3
 COMPOSITE_FIG_RATIO = COMPOSITE_FIG_HEIGHT_IN / COMPOSITE_FIG_WIDTH_IN
 ANOMALY_FIG_HEIGHT_IN = 2.8
+
+# SQL expression that mirrors the severity score used to rank changepoints
+_CHANGEPOINT_SEVERITY_SQL = (
+    "COALESCE(ABS(t.PCT_CHANGE * t.AVG_DIFF) * 100, 0)"
+)
 
 
 def _trend_callout(pct_change: Any) -> Tuple[str, Tuple[int, int, int], Tuple[int, int, int], Tuple[int, int, int]]:
@@ -363,19 +369,6 @@ def _parse_filters(raw_filters: Dict[str, Any]) -> Dict[str, Any]:
         "valid_geometry": raw_filters.get("valid_geometry"),
     }
 
-    improvement = raw_filters.get("pct_change_improvement", 0)
-    degradation = raw_filters.get("pct_change_degradation", 0)
-
-    try:
-        filters["pct_change_improvement"] = abs(float(improvement))
-    except (TypeError, ValueError):
-        filters["pct_change_improvement"] = 0.0
-
-    try:
-        filters["pct_change_degradation"] = abs(float(degradation))
-    except (TypeError, ValueError):
-        filters["pct_change_degradation"] = 0.0
-
     threshold_value = raw_filters.get("anomaly_monitoring_threshold")
     try:
         threshold_numeric = float(threshold_value)
@@ -385,6 +378,16 @@ def _parse_filters(raw_filters: Dict[str, Any]) -> Dict[str, Any]:
         if not math.isfinite(threshold_numeric):
             threshold_numeric = ANOMALY_MONITORING_THRESHOLD
     filters["anomaly_monitoring_threshold"] = max(0.0, threshold_numeric)
+
+    cp_threshold_value = raw_filters.get("changepoint_severity_threshold", CHANGEPOINT_SEVERITY_THRESHOLD)
+    try:
+        cp_threshold_numeric = float(cp_threshold_value)
+    except (TypeError, ValueError):
+        cp_threshold_numeric = CHANGEPOINT_SEVERITY_THRESHOLD
+    else:
+        if not math.isfinite(cp_threshold_numeric):
+            cp_threshold_numeric = CHANGEPOINT_SEVERITY_THRESHOLD
+    filters["changepoint_severity_threshold"] = max(0.0, cp_threshold_numeric)
 
     return filters
 
@@ -460,19 +463,16 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
         filters["valid_geometry"],
     )
 
-    pct_conditions: List[str] = []
-    improvement = _safe_float(filters.get("pct_change_improvement"))
-    degradation = _safe_float(filters.get("pct_change_degradation"))
-    if improvement > 0:
-        pct_conditions.append(f"t.PCT_CHANGE <= {-improvement}")
-    if degradation > 0:
-        pct_conditions.append(f"t.PCT_CHANGE >= {degradation}")
-    pct_clause = "1=1" if not pct_conditions else "(" + " OR ".join(pct_conditions) + ")"
-
     where_parts = [
         "t.TIMESTAMP >= DATEADD(day, -9, DATE_TRUNC('day', CURRENT_TIMESTAMP()))",
-        pct_clause,
     ]
+
+    severity_threshold = _safe_float(filters.get("changepoint_severity_threshold"))
+    if not math.isfinite(severity_threshold):
+        severity_threshold = CHANGEPOINT_SEVERITY_THRESHOLD
+    severity_threshold = max(0.0, severity_threshold)
+    severity_clause = f"{_CHANGEPOINT_SEVERITY_SQL} >= {severity_threshold:.6f}"
+    where_parts.append(severity_clause)
 
     sanitized_selected_signals = _sanitize_string_list(filters.get("selected_signals"))
     if sanitized_selected_signals:
@@ -496,7 +496,7 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
         t.AVG_DIFF,
         t.AVG_BEFORE,
         t.AVG_AFTER,
-        t.SCORE,
+        {_CHANGEPOINT_SEVERITY_SQL} AS SCORE,
         xd.ROADNAME,
         xd.BEARING,
         LISTAGG(DISTINCT xd.ID, ', ') WITHIN GROUP (ORDER BY xd.ID) AS ASSOCIATED_SIGNALS
@@ -511,7 +511,7 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
     ) xd ON t.XD = xd.XD
     WHERE {where_clause}
     GROUP BY ALL
-    ORDER BY t.PCT_CHANGE DESC
+    ORDER BY SCORE DESC, ABS(t.PCT_CHANGE) DESC, t.TIMESTAMP DESC
     LIMIT {limit}
     """
 
@@ -528,6 +528,10 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
             if isinstance(timestamp_value, datetime):
                 timestamp_value = _to_local_naive(timestamp_value)
 
+            try:
+                severity_value = _safe_float(row["SCORE"])
+            except KeyError:
+                severity_value = float("nan")
             record = {
                 "xd": row["XD"],
                 "timestamp": timestamp_value,
@@ -535,7 +539,8 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
                 "avg_diff": row["AVG_DIFF"],
                 "avg_before": row["AVG_BEFORE"],
                 "avg_after": row["AVG_AFTER"],
-                "score": row["SCORE"],
+                "score": severity_value,
+                "severity_score": severity_value,
                 "roadname": row["ROADNAME"],
                 "bearing": row["BEARING"],
                 "associated_signals": row["ASSOCIATED_SIGNALS"],
@@ -1424,17 +1429,9 @@ def _filters_summary(filters: Dict[str, Any]) -> str:
     if valid_geometry and valid_geometry != "all":
         parts.append(f"Valid Geometry: {valid_geometry}")
 
-    pct_improve = _safe_float(filters.get("pct_change_improvement"))
-    if math.isnan(pct_improve):
-        pct_improve = 0.0
-    pct_degrade = _safe_float(filters.get("pct_change_degradation"))
-    if math.isnan(pct_degrade):
-        pct_degrade = 0.0
-    pct_improve_pct = pct_improve * 100.0
-    pct_degrade_pct = pct_degrade * 100.0
-    parts.append(
-        f"Percent Change Threshold: +{pct_degrade_pct:.2f}% / {-pct_improve_pct:.2f}%"
-    )
+    severity_value = _safe_float(filters.get("changepoint_severity_threshold"))
+    if math.isfinite(severity_value):
+        parts.append(f"Changepoint Severity >= {severity_value:.1f}")
 
     display = _ensure_signal_filter_display(filters)
     if display.get("metadata_resolved"):
@@ -1484,21 +1481,13 @@ def _filters_detail_lines(filters: Dict[str, Any]) -> List[str]:
     elif display["total_selected"]:
         lines.append(f"Signals filtered: {display['total_selected']} IDs")
 
-    pct_improve = _safe_float(filters.get("pct_change_improvement"))
-    if math.isnan(pct_improve):
-        pct_improve = 0.0
-    pct_degrade = _safe_float(filters.get("pct_change_degradation"))
-    if math.isnan(pct_degrade):
-        pct_degrade = 0.0
-    pct_improve_pct = pct_improve * 100.0
-    pct_degrade_pct = pct_degrade * 100.0
-    lines.append(
-        f"Requires >= {pct_degrade_pct:.1f}% increase or <= {-pct_improve_pct:.1f}% decrease in travel time"
-    )
-
     threshold_display = _safe_float(filters.get("anomaly_monitoring_threshold"))
     if math.isfinite(threshold_display):
-        lines.append(f"Monitoring score threshold: >= {threshold_display:.1f}")
+        lines.append(f"Anomaly score threshold: >= {threshold_display:.1f}")
+
+    cp_threshold_display = _safe_float(filters.get("changepoint_severity_threshold"))
+    if math.isfinite(cp_threshold_display):
+        lines.append(f"Changepoint severity threshold: >= {cp_threshold_display:.1f}")
 
     return lines
 
@@ -1923,11 +1912,13 @@ def build_monitoring_pdf(
     rows_list = list(changepoint_rows)
     if rows_list:
         def _changepoint_severity(row: Dict[str, Any]) -> float:
+            severity_value = _safe_float(row.get("severity_score") or row.get("score"))
+            if math.isfinite(severity_value):
+                return severity_value
             pct_change = _safe_float(row.get("pct_change"))
             if math.isfinite(pct_change):
                 return abs(pct_change)
-            score_value = _safe_float(row.get("score"))
-            return score_value if math.isfinite(score_value) else float("-inf")
+            return float("-inf")
 
         rows_list.sort(
             key=lambda item: (_changepoint_severity(item), item.get("xd") or 0),

@@ -785,23 +785,43 @@ def get_anomaly_percent_by_time_of_day():
         return f"Error fetching time-of-day anomaly percent data: {e}", 500
 
 
-@anomalies_bp.route('/monitoring-anomalies')
+@anomalies_bp.route('/monitoring-anomalies', methods=['GET', 'POST'])
 def get_monitoring_anomalies():
     """Return anomaly segments for the monitoring report as JSON."""
     from datetime import datetime, date  # Local import to avoid circular issues in some environments
 
+    payload = request.get_json(silent=True) if request.method == 'POST' else None
+
+    def _param(name, default=None):
+        if request.method == 'POST':
+            if payload is None:
+                return default
+            return payload.get(name, default)
+        return request.args.get(name, default)
+
+    def _param_list(name):
+        if request.method == 'POST':
+            if not payload:
+                return []
+            value = payload.get(name)
+            if value is None:
+                return []
+            if isinstance(value, (list, tuple, set)):
+                return list(value)
+            return [value]
+        return request.args.getlist(name)
+
     filters = {
-        "start_date": request.args.get("start_date"),
-        "end_date": request.args.get("end_date"),
-        "signal_ids": request.args.getlist("signal_ids"),
-        "selected_signals": request.args.getlist("selected_signals"),
-        "selected_xds": request.args.getlist("selected_xds"),
-        "selected_signal_groups": request.args.getlist("selected_signal_groups"),
-        "maintained_by": request.args.get("maintained_by"),
-        "approach": request.args.get("approach"),
-        "valid_geometry": request.args.get("valid_geometry"),
-        "anomaly_monitoring_threshold": request.args.get("anomaly_monitoring_threshold")
-        or request.args.get("monitoring_score_threshold"),
+        "start_date": _param("start_date"),
+        "end_date": _param("end_date"),
+        "signal_ids": _param_list("signal_ids"),
+        "selected_signals": _param_list("selected_signals"),
+        "selected_xds": _param_list("selected_xds"),
+        "selected_signal_groups": _param_list("selected_signal_groups"),
+        "maintained_by": _param("maintained_by"),
+        "approach": _param("approach"),
+        "valid_geometry": _param("valid_geometry"),
+        "anomaly_monitoring_threshold": _param("anomaly_monitoring_threshold") or _param("monitoring_score_threshold"),
     }
 
     def execute_query():

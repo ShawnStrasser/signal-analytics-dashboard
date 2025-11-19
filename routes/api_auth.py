@@ -19,6 +19,9 @@ from services.rate_limiter import rate_limiter
 
 auth_bp = Blueprint("auth", __name__)
 
+PUBLIC_AGENCY_SUFFIXES = (".gov", ".us")
+PUBLIC_AGENCY_EXCEPTIONS = {"cityofsalem.net", "cityofmedford.org"}
+
 SESSION_COOKIE_NAME = "monitoring_session"
 EMAIL_REQUESTS_PER_DAY = 3
 EMAIL_DAILY_WINDOW_SECONDS = 24 * 60 * 60
@@ -40,8 +43,10 @@ def _validate_email(email: Optional[str]) -> str:
     if not parsed or "@" not in parsed:
         raise ValueError("Invalid email address")
     normalized = parsed.lower()
-    if not normalized.endswith(".gov"):
-        raise ValueError("Only .gov email addresses are allowed")
+    domain = normalized.rsplit("@", 1)[-1]
+    allowed_suffix = any(domain.endswith(suffix) for suffix in PUBLIC_AGENCY_SUFFIXES)
+    if not allowed_suffix and domain not in PUBLIC_AGENCY_EXCEPTIONS:
+        raise ValueError("A public agency email address is required")
     return normalized
 
 

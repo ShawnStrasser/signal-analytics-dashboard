@@ -23,9 +23,8 @@ _INT_LIST_KEYS = {"selected_xds"}
 _STRING_KEYS = {"maintained_by", "approach", "valid_geometry"}
 _BOOL_KEYS = {"remove_anomalies"}
 _FLOAT_KEYS = {
-    "pct_change_improvement",
-    "pct_change_degradation",
     "anomaly_monitoring_threshold",
+    "changepoint_severity_threshold",
 }
 
 

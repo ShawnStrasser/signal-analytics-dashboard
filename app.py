@@ -107,6 +107,7 @@ def get_config():
         DEFAULT_START_HOUR,
         DEFAULT_END_HOUR,
         ANOMALY_MONITORING_THRESHOLD,
+        CHANGEPOINT_SEVERITY_THRESHOLD,
     )
     return jsonify({
         'maxLegendEntities': MAX_LEGEND_ENTITIES,
@@ -115,6 +116,7 @@ def get_config():
         'defaultStartHour': DEFAULT_START_HOUR,
         'defaultEndHour': DEFAULT_END_HOUR,
         'anomalyMonitoringThreshold': ANOMALY_MONITORING_THRESHOLD,
+        'changepointSeverityThreshold': CHANGEPOINT_SEVERITY_THRESHOLD,
     })
 
 # Register blueprints
