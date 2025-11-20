@@ -16,6 +16,7 @@ from routes.api_changepoints import changepoints_bp
 from routes.api_travel_time import travel_time_bp
 from routes.api_subscriptions import subscriptions_bp
 from routes.api_captcha import captcha_bp
+from routes.api_admin import admin_bp
 from services import subscription_store
 from services.scheduler import start_scheduler
 from services.rate_limiter import rate_limiter
@@ -127,6 +128,7 @@ app.register_blueprint(changepoints_bp, url_prefix='/api')
 app.register_blueprint(auth_bp, url_prefix='/api')
 app.register_blueprint(subscriptions_bp, url_prefix='/api')
 app.register_blueprint(captcha_bp, url_prefix='/api')
+app.register_blueprint(admin_bp, url_prefix='/api')
 
 CAPTCHA_EXEMPT_PATHS = (
     "/api/captcha",

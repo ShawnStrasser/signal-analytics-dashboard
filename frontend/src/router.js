@@ -4,7 +4,9 @@ import Anomalies from './views/Anomalies.vue'
 import BeforeAfter from './views/BeforeAfter.vue'
 import Changepoints from './views/Changepoints.vue'
 import Monitoring from './views/Monitoring.vue'
+import Admin from './views/Admin.vue'
 import Captcha from './views/Captcha.vue'
+import NotFound from './views/NotFound.vue'
 import { fetchCaptchaStatus, isCaptchaVerifiedCached, resetCaptchaCache } from './utils/captchaSession'
 
 const routes = [
@@ -42,6 +44,18 @@ const routes = [
     path: '/monitoring',
     name: 'Monitoring',
     component: Monitoring
+  },
+  {
+    path: '/admin',
+    name: 'Admin',
+    component: Admin,
+    meta: { showFilters: false }
+  },
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'NotFound',
+    component: NotFound,
+    meta: { showFilters: false }
   }
 ]
 

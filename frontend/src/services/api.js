@@ -587,6 +587,61 @@ class ApiService {
 
     return response.json()
   }
+
+  async adminLogin(password) {
+    const response = await fetch(`${this.baseURL}/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ password })
+    })
+
+    await ensureCaptchaAllowed(response)
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      const error = new Error(payload.error || 'Failed to authenticate admin')
+      error.code = payload?.error
+      throw error
+    }
+
+    return payload
+  }
+
+  async fetchAdminTables() {
+    const response = await fetch(`${this.baseURL}/admin/tables`, {
+      method: 'GET',
+      credentials: 'include'
+    })
+
+    await ensureCaptchaAllowed(response)
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      const error = new Error(payload.error || 'Failed to fetch tables')
+      error.code = payload?.error
+      throw error
+    }
+
+    return payload
+  }
+
+  async runAdminQuery(sql) {
+    const response = await fetch(`${this.baseURL}/admin/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ sql })
+    })
+
+    await ensureCaptchaAllowed(response)
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      const error = new Error(payload.error || 'Query failed')
+      error.code = payload?.error
+      throw error
+    }
+
+    return payload
+  }
 }
 
 export default new ApiService()
