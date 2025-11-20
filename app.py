@@ -22,6 +22,7 @@ from services.scheduler import start_scheduler
 from services.rate_limiter import rate_limiter
 from services import captcha_sessions
 from config import SECRET_KEY
+from utils.exceptions import InvalidQueryParameter
 
 # Download timezone database on Windows if needed
 if sys.platform == 'win32':
@@ -149,6 +150,12 @@ def enforce_captcha_verification():
     if captcha_sessions.is_verified(request):
         return None
     return jsonify({"error": "captcha_required"}), 401
+
+
+@app.errorhandler(InvalidQueryParameter)
+def handle_invalid_query_parameter(error):
+    message = str(error) or "Invalid request parameter."
+    return jsonify({"error": message}), 400
 
 # Serve Vue.js app in production
 @app.route('/', defaults={'path': ''})

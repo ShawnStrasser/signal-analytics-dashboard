@@ -19,7 +19,11 @@ from utils.arrow_utils import (
     snowflake_result_to_arrow
 )
 from utils.error_handler import handle_auth_error_retry
-from utils.query_utils import normalize_date, build_filter_joins_and_where
+from utils.query_utils import (
+    normalize_date,
+    build_filter_joins_and_where,
+    sanitize_identifier_list,
+)
 
 changepoints_bp = Blueprint('changepoints', __name__)
 
@@ -35,14 +39,9 @@ def _parse_positive_float(value, default=0.0):
         return default
 
 
-def _sanitize_string_list(values):
-    """Escape single quotes in string list for SQL IN clauses."""
-    sanitized = []
-    for val in values or []:
-        if val is None:
-            continue
-        sanitized.append(str(val).replace("'", "''"))
-    return sanitized
+def _sanitize_string_list(values, param_name: str = "signal_id"):
+    """Validate signal identifier strings before using them in SQL clauses."""
+    return sanitize_identifier_list(values, param_name)
 
 
 def _sanitize_int_list(values):

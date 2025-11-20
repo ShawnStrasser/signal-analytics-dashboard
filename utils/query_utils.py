@@ -1,27 +1,59 @@
 """
-Query utilities for building common SQL patterns and handling Snowflake results
+Query utilities for building common SQL patterns and handling Snowflake results.
 """
 
-import pandas as pd
-from typing import List, Optional, Dict, Any
+import re
 from datetime import datetime
+from typing import Any, Dict, Iterable, List, Optional
+
+import pandas as pd
+
+from utils.exceptions import InvalidQueryParameter
+
+_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9_\-]+$")
 
 
 def normalize_date(date_str: str) -> str:
     """
     Normalize date string to YYYY-MM-DD format.
-    Handles various input formats gracefully.
-
-    Args:
-        date_str: Date string in various formats
-
-    Returns:
-        Normalized date string in YYYY-MM-DD format
+    Raises InvalidQueryParameter if parsing fails.
     """
+    if date_str is None or str(date_str).strip() == "":
+        raise InvalidQueryParameter("Missing required date parameter.")
+
     try:
-        return pd.to_datetime(date_str).strftime('%Y-%m-%d')
-    except Exception:
-        return str(date_str)
+        parsed = pd.to_datetime(date_str, errors="raise")
+    except Exception as exc:
+        raise InvalidQueryParameter("Invalid date parameter.") from exc
+
+    if pd.isna(parsed):
+        raise InvalidQueryParameter("Invalid date parameter.")
+
+    return parsed.strftime("%Y-%m-%d")
+
+
+def _sanitize_identifier(value: Any, param_name: str) -> Optional[str]:
+    text = str(value).strip()
+    if not text:
+        return None
+    if not _IDENTIFIER_PATTERN.fullmatch(text):
+        raise InvalidQueryParameter(f"Invalid {param_name} value.")
+    return text
+
+
+def sanitize_identifier_list(
+    values: Optional[Iterable[Any]],
+    param_name: str = "identifier",
+) -> List[str]:
+    """
+    Validate and normalize identifier lists used in SQL IN clauses.
+    """
+    sanitized: List[str] = []
+    for raw in values or []:
+        clean = _sanitize_identifier(raw, param_name)
+        if clean is not None:
+            sanitized.append(clean)
+    return sanitized
 
 
 def build_xd_dimension_query(
@@ -61,8 +93,9 @@ def build_xd_dimension_query(
     AND LONGITUDE IS NOT NULL
     """
 
-    if signal_ids:
-        ids_str = "', '".join(map(str, signal_ids))
+    sanitized_signal_ids = sanitize_identifier_list(signal_ids, "signal_id")
+    if sanitized_signal_ids:
+        ids_str = "', '".join(sanitized_signal_ids)
         query += f" AND ID IN ('{ids_str}')"
 
     if approach is not None and approach != '':
@@ -144,8 +177,15 @@ def build_xd_filter_with_joins(
     Returns:
         List of XD integers, or None if no filters applied (query all XDs)
     """
+    sanitized_ids = sanitize_identifier_list(signal_ids, "signal_id") if signal_ids else []
+
     # If no filters, return None to indicate "query all"
-    if not signal_ids and maintained_by == 'all' and not approach and (not valid_geometry or valid_geometry == 'all'):
+    if (
+        not sanitized_ids
+        and maintained_by == 'all'
+        and not approach
+        and (not valid_geometry or valid_geometry == 'all')
+    ):
         return None
 
     # Build the filtered XD query with joins
@@ -158,15 +198,15 @@ def build_xd_filter_with_joins(
     """
 
     # Add join to DIM_SIGNALS if needed
-    needs_signal_join = signal_ids or maintained_by != 'all'
+    needs_signal_join = bool(sanitized_ids) or maintained_by != 'all'
     if needs_signal_join:
         query += " INNER JOIN DIM_SIGNALS AS SIG_TABLE ON XD_TABLE.ID = SIG_TABLE.ID"
 
     # Build WHERE clause
     where_parts = []
 
-    if signal_ids:
-        ids_str = "', '".join(map(str, signal_ids))
+    if sanitized_ids:
+        ids_str = "', '".join(sanitized_ids)
         where_parts.append(f"SIG_TABLE.ID IN ('{ids_str}')")
 
     if maintained_by == 'odot':
@@ -242,7 +282,12 @@ def build_filter_joins_and_where(
     where_parts = []
 
     if signal_ids:
-        ids_str = "', '".join(map(str, signal_ids))
+        sanitized_ids = sanitize_identifier_list(signal_ids, "signal_id")
+    else:
+        sanitized_ids = []
+
+    if sanitized_ids:
+        ids_str = "', '".join(sanitized_ids)
         where_parts.append(f"s.ID IN ('{ids_str}')")
 
     if maintained_by == 'odot':
