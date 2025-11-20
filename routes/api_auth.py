@@ -9,6 +9,7 @@ from email.utils import parseaddr
 from typing import Optional
 
 from flask import Blueprint, jsonify, make_response, request
+from utils.client_identity import get_client_id
 
 from config import (
     PUBLIC_BASE_URL,
@@ -28,12 +29,6 @@ EMAIL_DAILY_WINDOW_SECONDS = 24 * 60 * 60
 EMAIL_SHORT_WINDOW_LIMIT = 1
 EMAIL_SHORT_WINDOW_SECONDS = 60
 
-
-def _client_ip() -> str:
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.remote_addr or "unknown"
 
 
 def _validate_email(email: Optional[str]) -> str:
@@ -118,10 +113,11 @@ def request_magic_link():
         return response, 429
 
     # Throttle repeated attempts from the same client IP
-    ip_key = f"magic-link-ip:{_client_ip()}"
-    allowed_ip, retry_after_ip = rate_limiter.allow(ip_key, 5, 60)
-    if not allowed_ip:
-        wait_seconds = max(1, int(retry_after_ip or EMAIL_SHORT_WINDOW_SECONDS))
+    client_id = get_client_id()
+    client_key = f"magic-link-client:{client_id}"
+    allowed_client, retry_after_client = rate_limiter.allow(client_key, 5, 60)
+    if not allowed_client:
+        wait_seconds = max(1, int(retry_after_client or EMAIL_SHORT_WINDOW_SECONDS))
         response = jsonify({"error": "Too many requests from this client. Please slow down."})
         response.headers["Retry-After"] = str(wait_seconds)
         return response, 429

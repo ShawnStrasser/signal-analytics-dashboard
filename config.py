@@ -65,10 +65,10 @@ MAX_BEFORE_AFTER_SMALL_MULTIPLES_ENTITIES = 12
 # =============================================================================
 
 # Threshold applied to anomaly monitoring score when selecting segments
-ANOMALY_MONITORING_THRESHOLD = float(os.environ.get('ANOMALY_MONITORING_THRESHOLD', 4.0))
+ANOMALY_MONITORING_THRESHOLD = 4.0
 
 # Threshold applied to changepoint severity score before surfacing results
-CHANGEPOINT_SEVERITY_THRESHOLD = float(os.environ.get('CHANGEPOINT_SEVERITY_THRESHOLD', 30.0))
+CHANGEPOINT_SEVERITY_THRESHOLD = 30.0
 
 # =============================================================================
 # TIME OF DAY FILTER SETTINGS
@@ -84,6 +84,9 @@ DEFAULT_END_HOUR = 19    # 19:00
 # =============================================================================
 
 SECRET_KEY = os.environ.get('SECRET_KEY')
+CLIENT_ID_COOKIE_NAME = 'signal_client_id'
+CLIENT_ID_TOKEN_BYTES = 32
+CLIENT_ID_COOKIE_MAX_AGE = 365 * 24 * 60 * 60
 
 # =============================================================================
 # SUBSCRIPTION & AUTH SETTINGS
@@ -111,7 +114,7 @@ PUBLIC_BASE_URL = os.environ.get('PUBLIC_BASE_URL')
 # =============================================================================
 
 BREVO_API_KEY = os.environ.get('BREVO_API_KEY')
-BREVO_DISABLE_SSL_VERIFY = os.environ.get('BREVO_DISABLE_SSL_VERIFY', 'true').lower() != 'false'
+BREVO_DISABLE_SSL_VERIFY = os.environ.get('BREVO_DISABLE_SSL_VERIFY', 'false').lower() == 'true'
 
 EMAIL_SENDER_ADDRESS = os.environ.get('EMAIL_SENDER_EMAIL', os.environ.get('BREVO_SENDER_EMAIL', 'no-reply@example.com'))
 EMAIL_SENDER_NAME = "Signal Analytics Reports"
@@ -137,7 +140,7 @@ DEBUG_SAVE_REPORT_PDF = False
 # In production, set all DEBUG flags to False for minimal logging
 # Only critical errors and warnings will be logged
 
-PRODUCTION_MODE = False  # Set to True in production deployment
+PRODUCTION_MODE = os.environ.get('APP_PRODUCTION_MODE', 'false').lower() == 'true'
 
 if PRODUCTION_MODE:
     DEBUG_BACKEND_TIMING = False

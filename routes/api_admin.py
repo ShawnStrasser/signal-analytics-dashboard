@@ -10,6 +10,7 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Tuple
 
 from flask import Blueprint, jsonify, request, session
+from utils.client_identity import get_client_id
 
 from config import SECRET_KEY, SUBSCRIPTION_DB_PATH
 from services.rate_limiter import rate_limiter
@@ -21,12 +22,6 @@ ADMIN_LOGIN_WINDOW_SECONDS = 24 * 60 * 60
 ADMIN_SESSION_TTL_SECONDS = 60 * 60  # Require re-authentication after an hour
 MAX_RESULT_ROWS = 500
 
-
-def _client_ip() -> str:
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.remote_addr or "unknown"
 
 
 def _check_secret_key() -> Tuple[bool, Any]:
@@ -96,7 +91,8 @@ def admin_login():
     if not password:
         return jsonify({"error": "Password is required"}), 400
 
-    key = f"admin-login:{_client_ip()}"
+    client_id = get_client_id()
+    key = f"admin-login:cid:{client_id}"
     allowed, retry_after = rate_limiter.allow(key, ADMIN_LOGIN_LIMIT, ADMIN_LOGIN_WINDOW_SECONDS)
     if not allowed:
         wait_seconds = max(1, int(retry_after or ADMIN_LOGIN_WINDOW_SECONDS))

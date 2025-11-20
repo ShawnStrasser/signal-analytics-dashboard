@@ -23,7 +23,7 @@ CAPTCHA_COOKIE_NAME = "captcha_token"
 @dataclass
 class CaptchaNonce:
     nonce: str
-    client_ip: str
+    client_id: str
     issued_at: float
     min_drag_distance: float
     min_duration_ms: int
@@ -42,8 +42,8 @@ def _now() -> float:
     return time.time()
 
 
-def create_nonce(client_ip: str) -> str:
-    """Generate and store a captcha nonce for the supplied client IP."""
+def create_nonce(client_id: str) -> str:
+    """Generate and store a captcha nonce for the supplied client identifier."""
     nonce = secrets.token_urlsafe(24)
     now = _now()
     min_distance = random.uniform(*MIN_DRAG_DISTANCE_RANGE)
@@ -52,7 +52,7 @@ def create_nonce(client_ip: str) -> str:
     with _lock:
         _nonces[nonce] = CaptchaNonce(
             nonce=nonce,
-            client_ip=client_ip,
+            client_id=client_id,
             issued_at=now,
             min_drag_distance=min_distance,
             min_duration_ms=min_duration,

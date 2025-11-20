@@ -8,6 +8,7 @@ from flask import Blueprint, jsonify, make_response, request
 
 from services import captcha_sessions
 from services.rate_limiter import rate_limiter
+from utils.client_identity import get_client_id
 
 captcha_bp = Blueprint("captcha", __name__)
 
@@ -17,12 +18,6 @@ CAPTCHA_VERIFY_LIMIT = (10, 60)      # 10 attempts per minute
 EXPECTED_FINAL_STATE = ["red", "yellow", "green"]
 EXPECTED_FINAL_STATE_SET = set(EXPECTED_FINAL_STATE)
 
-
-def _client_ip() -> str:
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.remote_addr or "unknown"
 
 
 def _rate_limit(key: str, limit: int, window_seconds: int):
@@ -86,11 +81,11 @@ def _validate_metrics(meta: captcha_sessions.CaptchaNonce, metrics):
 @captcha_bp.route("/captcha/start", methods=["POST"])
 def start_captcha():
     """Issue a captcha nonce so the frontend can render the puzzle."""
-    ip = _client_ip()
-    limit = _rate_limit(f"captcha:start:{ip}", *CAPTCHA_START_LIMIT)
+    client_id = get_client_id()
+    limit = _rate_limit(f"captcha:start:cid:{client_id}", *CAPTCHA_START_LIMIT)
     if limit:
         return limit
-    nonce = captcha_sessions.create_nonce(ip)
+    nonce = captcha_sessions.create_nonce(client_id)
     return jsonify({"nonce": nonce})
 
 
@@ -99,8 +94,8 @@ def verify_captcha():
     """
     Validate the submitted nonce and, if successful, issue a signed captcha token cookie.
     """
-    ip = _client_ip()
-    limit = _rate_limit(f"captcha:verify:{ip}", *CAPTCHA_VERIFY_LIMIT)
+    client_id = get_client_id()
+    limit = _rate_limit(f"captcha:verify:cid:{client_id}", *CAPTCHA_VERIFY_LIMIT)
     if limit:
         return limit
 
@@ -112,7 +107,7 @@ def verify_captcha():
         return jsonify({"error": "invalid_nonce"}), 400
 
     meta = captcha_sessions.consume_nonce(nonce)
-    if not meta or meta.client_ip != ip:
+    if not meta or meta.client_id != client_id:
         return jsonify({"error": "invalid_or_expired_nonce"}), 400
 
     metrics_valid, metrics_error = _validate_metrics(meta, metrics)

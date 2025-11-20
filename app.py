@@ -22,6 +22,7 @@ from services.scheduler import start_scheduler
 from services.rate_limiter import rate_limiter
 from services import captcha_sessions
 from config import SECRET_KEY
+from utils.client_identity import ensure_client_id_cookie, get_client_id
 from utils.exceptions import InvalidQueryParameter
 
 # Download timezone database on Windows if needed
@@ -49,12 +50,6 @@ GENERAL_RATE_LIMIT_ENDPOINT_EXEMPTIONS = {"health_check", "connection_status"}
 GENERAL_RATE_LIMIT_PATH_PREFIX_EXEMPTIONS = ("/static/", "/favicon.ico")
 
 
-def _get_client_ip() -> str:
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.remote_addr or "unknown"
-
 
 @app.before_request
 def apply_global_rate_limit():
@@ -69,9 +64,9 @@ def apply_global_rate_limit():
     if any(path.startswith(prefix) for prefix in GENERAL_RATE_LIMIT_PATH_PREFIX_EXEMPTIONS):
         return None
 
-    client_ip = _get_client_ip()
+    client_id = get_client_id()
     for name, limit, window in GENERAL_RATE_LIMITS:
-        key = f"rate:{name}:{client_ip}"
+        key = f"rate:{name}:cid:{client_id}"
         allowed, retry_after = rate_limiter.allow(key, limit, window)
         if not allowed:
             wait_seconds = max(1, int(retry_after or window))
@@ -80,6 +75,11 @@ def apply_global_rate_limit():
             return response, 429
 
     return None
+
+@app.after_request
+def deliver_client_id_cookie(response):
+    return ensure_client_id_cookie(response)
+
 
 @app.route('/api/health')
 def health_check():
