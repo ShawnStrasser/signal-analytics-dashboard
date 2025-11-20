@@ -312,6 +312,84 @@ onMounted(async () => {
     console.warn('Captcha status check failed:', error)
   }
 
+  const SLOT_IDS = ['red', 'yellow', 'green']
+  let interactionStats = createInteractionStats()
+  let slotAssignments = createSlotAssignments()
+
+  function createInteractionStats() {
+    return {
+      startedAt: 0,
+      lastPos: null,
+      totalDistance: 0,
+      moveEvents: 0,
+      placementOrder: []
+    }
+  }
+
+  function createSlotAssignments() {
+    return SLOT_IDS.reduce((acc, slot) => {
+      acc[slot] = null
+      return acc
+    }, {})
+  }
+
+  function resetInteractionTracking() {
+    interactionStats = createInteractionStats()
+    slotAssignments = createSlotAssignments()
+  }
+
+  function beginInteractionIfNeeded(pos) {
+    if (!interactionStats.startedAt) {
+      interactionStats.startedAt = Date.now()
+    }
+    if (pos) {
+      interactionStats.lastPos = { x: pos.x, y: pos.y }
+    }
+  }
+
+  function recordPointerMovement(pos) {
+    if (!pos) {
+      return
+    }
+    if (!interactionStats.startedAt) {
+      beginInteractionIfNeeded(pos)
+      return
+    }
+    if (interactionStats.lastPos) {
+      const dx = pos.x - interactionStats.lastPos.x
+      const dy = pos.y - interactionStats.lastPos.y
+      interactionStats.totalDistance += Math.hypot(dx, dy)
+    }
+    interactionStats.moveEvents += 1
+    interactionStats.lastPos = { x: pos.x, y: pos.y }
+  }
+
+  function pauseInteractionTracking() {
+    interactionStats.lastPos = null
+  }
+
+  function recordSuccessfulPlacement(lightId, slotId) {
+    if (!interactionStats.placementOrder.includes(lightId)) {
+      interactionStats.placementOrder.push(lightId)
+    }
+    slotAssignments[slotId] = lightId
+  }
+
+  function buildInteractionMetrics() {
+    const now = Date.now()
+    const duration = interactionStats.startedAt ? now - interactionStats.startedAt : 0
+    return {
+      elapsed_ms: duration,
+      total_distance: Math.round(interactionStats.totalDistance),
+      move_events: interactionStats.moveEvents,
+      placement_order: [...interactionStats.placementOrder]
+    }
+  }
+
+  function buildFinalStateSnapshot() {
+    return SLOT_IDS.map(slot => slotAssignments[slot])
+  }
+
   await loadCaptchaNonce({ announceReady: false })
 
   const BASE_CANVAS_WIDTH = 630
@@ -588,6 +666,9 @@ onMounted(async () => {
   }
 
   function draw() {
+    if (!signalHead || !backplate || !Array.isArray(lights)) {
+      return
+    }
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     drawBackplate()
     drawSignalHead()
@@ -599,6 +680,7 @@ onMounted(async () => {
     try {
       const nonce = await requestCaptchaNonce()
       captchaNonce.value = nonce
+      resetInteractionTracking()
       if (announceReady) {
         updateStatus('New challenge loaded. Configure the signal head to continue.', 'success')
       }
@@ -646,7 +728,13 @@ onMounted(async () => {
   }
 
   function updateSignalPosition() {
+    if (!signalHead || !backplate || !Array.isArray(lights) || lights.length === 0) {
+      return
+    }
     const dropZones = getDropZoneCenters()
+    if (dropZones.length === 0) {
+      return
+    }
 
     if (isVerified && !allowPostVictoryMotion) {
       syncPlacedLights(dropZones)
@@ -772,6 +860,9 @@ onMounted(async () => {
   }
 
   function getDropZoneCenters() {
+    if (!signalHead) {
+      return []
+    }
     const cx = signalHead.x + signalHead.width / 2
     const cy = signalHead.y + signalHead.height / 2
     const halfHeight = signalHead.height / 2
@@ -847,6 +938,7 @@ onMounted(async () => {
 
     for (let i = lights.length - 1; i >= 0; i -= 1) {
       if (isPointInCircle(pos.x, pos.y, lights[i])) {
+        beginInteractionIfNeeded(pos)
         isDragging = true
         canvas.classList.add('dragging')
         dragTarget = lights[i]
@@ -856,6 +948,7 @@ onMounted(async () => {
         if (dragTarget.isPlaced) {
           placedLights[dragTarget.id] = false
           dragTarget.isPlaced = false
+          slotAssignments[dragTarget.id] = null
         }
 
         const item = lights.splice(i, 1)[0]
@@ -878,6 +971,7 @@ onMounted(async () => {
     }
     e.preventDefault()
     const pos = getEventPos(e)
+    recordPointerMovement(pos)
     let nextX = pos.x - offsetX
     let nextY = pos.y - offsetY
 
@@ -901,6 +995,7 @@ onMounted(async () => {
     e.preventDefault()
     canvas.classList.remove('dragging')
     isDragging = false
+    pauseInteractionTracking()
 
     const actualDropZones = getDropZoneCenters()
     for (const zone of actualDropZones) {
@@ -930,7 +1025,9 @@ onMounted(async () => {
     verificationInProgress = true
     removeListeners()
     try {
-      await submitCaptchaSolve(captchaNonce.value)
+      const metrics = buildInteractionMetrics()
+      const finalState = buildFinalStateSnapshot()
+      await submitCaptchaSolve(captchaNonce.value, { metrics, finalState })
       captchaNonce.value = ''
       isVerified = true
       allowPostVictoryMotion = wasMoving
@@ -964,6 +1061,7 @@ onMounted(async () => {
 
     placedLights[dragTarget.id] = true
     dragTarget.isPlaced = true
+    recordSuccessfulPlacement(dragTarget.id, zone.id)
     emitLocalizedConfetti(canvas, zone.x, zone.y)
 
     const allPlaced = Object.values(placedLights).every(status => status === true)
@@ -1023,6 +1121,7 @@ onMounted(async () => {
       stopVictoryCelebration()
       canvas.classList.remove('dragging')
       showVictoryPrompt.value = false
+      resetInteractionTracking()
 
       if (!captchaNonce.value) {
         updateStatus('Requesting a fresh signal puzzle...', 'warning')

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import random
 import secrets
 import threading
 import time
@@ -24,11 +25,17 @@ class CaptchaNonce:
     nonce: str
     client_ip: str
     issued_at: float
-    verified: bool = False
+    min_drag_distance: float
+    min_duration_ms: int
+    min_move_events: int
 
 
 _nonces: Dict[str, CaptchaNonce] = {}
 _lock = threading.Lock()
+
+MIN_DRAG_DISTANCE_RANGE = (260.0, 420.0)
+MIN_DURATION_RANGE = (1500, 2600)
+MIN_MOVE_EVENTS_RANGE = (12, 24)
 
 
 def _now() -> float:
@@ -39,25 +46,25 @@ def create_nonce(client_ip: str) -> str:
     """Generate and store a captcha nonce for the supplied client IP."""
     nonce = secrets.token_urlsafe(24)
     now = _now()
+    min_distance = random.uniform(*MIN_DRAG_DISTANCE_RANGE)
+    min_duration = random.randint(*MIN_DURATION_RANGE)
+    min_moves = random.randint(*MIN_MOVE_EVENTS_RANGE)
     with _lock:
-        _nonces[nonce] = CaptchaNonce(nonce=nonce, client_ip=client_ip, issued_at=now)
+        _nonces[nonce] = CaptchaNonce(
+            nonce=nonce,
+            client_ip=client_ip,
+            issued_at=now,
+            min_drag_distance=min_distance,
+            min_duration_ms=min_duration,
+            min_move_events=min_moves,
+        )
     return nonce
 
 
-def mark_verified(nonce: str, client_ip: str) -> bool:
-    """
-    Mark the nonce as verified if it exists, is not expired, and matches the client IP.
-    """
+def consume_nonce(nonce: str) -> CaptchaNonce | None:
+    """Remove and return the nonce metadata for verification."""
     with _lock:
-        meta = _nonces.get(nonce)
-        if not meta:
-            return False
-        if meta.client_ip != client_ip:
-            return False
-        meta.verified = True
-        # Once verified we no longer need to keep it around.
-        _nonces.pop(nonce, None)
-        return True
+        return _nonces.pop(nonce, None)
 
 
 def _sign(nonce: str, timestamp: int) -> str:

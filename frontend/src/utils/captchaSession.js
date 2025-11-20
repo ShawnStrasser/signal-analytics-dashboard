@@ -38,12 +38,19 @@ export async function requestCaptchaNonce() {
   return data.nonce
 }
 
-export async function submitCaptchaSolve(nonce) {
+export async function submitCaptchaSolve(nonce, details = {}) {
+  const body = { nonce }
+  if (details.metrics) {
+    body.metrics = details.metrics
+  }
+  if (details.finalState) {
+    body.final_state = details.finalState
+  }
   const response = await fetch(`${CAPTCHA_BASE}/verify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ nonce })
+    body: JSON.stringify(body)
   })
   const data = await handleResponse(response)
   setCachedVerified(true)
