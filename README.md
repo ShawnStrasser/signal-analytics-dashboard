@@ -1,163 +1,42 @@
-# signal-analytics-dashboard
-Dashboard to visualize traffic signal travel time analytics.
+# Signal Analytics Dashboard
+Flask API plus Vue.js frontend for visualizing travel time analytics from Snowflake and emailing monitoring reports.
 
-## Database Schema Reference
+DISCLAIMER: This README was AI generated.
 
-### Snowflake Connection
-Two connection methods are supported:
-1. Using active session (preferred): `from snowflake.snowpark.context import get_active_session`
-2. Using connection parameters: `from snowflake.snowpark.session import Session`
+## What's inside
+- Flask backend in `app.py` serving `/api` endpoints defined under `routes/` and static assets from `static/dist`.
+- Snowflake access via Snowpark (`database.py`) with Arrow IPC responses; uses an active session when available or `SNOWFLAKE_CONNECTION` credentials.
+- Vue 3 + Vite + Vuetify + ECharts + Leaflet UI in `frontend/`, built into `static/dist` (Vite dev server proxies `/api` to `localhost:5000`).
+- Email-based authentication and monitoring subscriptions persisted in SQLite (`services/subscription_store.py`), with Brevo sending login links and PDF reports from `services/report_service.py`.
+- APScheduler dispatches daily monitoring reports when `ENABLE_DAILY_REPORTS` is enabled.
 
-### Table Definitions
+## Requirements
+- Python with pip (dependencies in `requirements.txt`).
+- Node.js and npm for building the frontend.
+- Snowflake credentials: either an active Snowpark session or `SNOWFLAKE_CONNECTION='{\"account\":\"...\",\"user\":\"...\",\"password\":\"...\",\"warehouse\":\"...\",\"database\":\"...\",\"schema\":\"...\"}'`.
+- `SECRET_KEY` for Flask sessions.
+- Brevo credentials for email features: `BREVO_API_KEY` and optional `EMAIL_SENDER_EMAIL`/`BREVO_SENDER_EMAIL`; TLS verification can be relaxed with `BREVO_DISABLE_SSL_VERIFY=true`.
+- Optional configuration: `PUBLIC_BASE_URL` for magic links, `SUBSCRIPTION_DB_PATH` for the SQLite file (defaults to `/data/subscriptions.db` when `/data` exists, otherwise the project root), `TIMEZONE`, `ENABLE_DAILY_REPORTS`, `ANOMALY_MONITORING_THRESHOLD`, `CHANGEPOINT_SEVERITY_THRESHOLD`.
 
-#### DIM_SIGNALS_XD
-```sql
-CREATE TABLE DIM_SIGNALS_XD (
-    ID VARCHAR,
-    --LAT/LONG WERE REMOVED!
-    --LATITUDE DOUBLE,
-    --LONGITUDE DOUBLE,
-    VALID_GEOMETRY BOOLEAN,
-    XD INT,
-    BEARING VARCHAR,
-    COUNTY VARCHAR,
-    ROADNAME VARCHAR,
-    MILES DOUBLE,
-    APPROACH BOOLEAN,
-    EXTENDED BOOLEAN
-);
-```
-NEW TABLE ADDED:
-```sql
-CREATE TABLE DIM_SIGNALS (
-    ID VARCHAR,
-    DISTRICT VARCHAR,
-    LATITUDE DOUBLE,
-    LONGITUDE DOUBLE,
-    ODOT_MAINTAINED BOOLEAN,
-    NAME VARCHAR
-);
-```
+## Backend setup
+1) Create and activate a virtual environment.  
+2) Install dependencies: `pip install -r requirements.txt`.  
+3) Export Snowflake credentials (`SNOWFLAKE_CONNECTION` if no active session) and `SECRET_KEY`.  
+4) Set Brevo variables if you need to send emails.
 
-#### TRAVEL_TIME_ANALYTICS
-```sql
-CREATE OR REPLACE TABLE TRAVEL_TIME_ANALYTICS (
-    XD INT,
-    TIMESTAMP TIMESTAMP,
-    TRAVEL_TIME_SECONDS NUMBER,
-    PREDICTION NUMBER,
-    ANOMALY BOOLEAN,
-    ORIGINATED_ANOMALY BOOLEAN
-);
-```
+## Running
+- API (dev): `python app.py` - serves `http://localhost:5000`, starts the scheduler (unless `ENABLE_DAILY_REPORTS` is false), and serves `static/dist`.
+- API (prod): `gunicorn --bind 0.0.0.0:$PORT app:app` (see `Procfile`).
+- Frontend (dev): `cd frontend && npm install && npm run dev` - Vite proxies API calls to the Flask server.
+- Frontend build for Flask: `cd frontend && npm run build` - outputs to `static/dist` consumed by `app.py`.
 
-#### CHANGEPOINTS
-```sql
-CREATE TABLE CHANGEPOINTS (
-    XD INTEGER,
-    TIMESTAMP TIMESTAMP,
-    SCORE FLOAT,
-    AVG_BEFORE FLOAT,
-    AVG_AFTER FLOAT,
-    AVG_DIFF FLOAT,
-    PCT_CHANGE FLOAT
-);
-```
+## Tests
+- Backend: `pytest`
+- Frontend: `cd frontend && npm test` (Vitest)
 
-#### FREEFLOW
-```sql
-CREATE TABLE FREEFLOW (
-    XD INTEGER,
-    TRAVEL_TIME_SECONDS FLOAT
-);
-```
-
-## Running the App
-
-### Prerequisites
-- Python 3.8 or higher
-- Access to Snowflake database with the required tables
-- Snowflake connection configured (see connection methods below)
-
-### Installation
-
-1. Clone the repository and navigate to the project directory:
-   ```bash
-   cd signal-analytics-dashboard
-   ```
-
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. Set up your Snowflake connection (choose one method):
-   
-   **Method 1: Active Session (Preferred)**
-   - Ensure you have an active Snowflake session in your environment
-   - The app will automatically detect and use the active session
-
-   **Method 2: Connection Parameters**
-   - Set the `SNOWFLAKE_CONNECTION` environment variable with your connection details:
-   ```bash
-   export SNOWFLAKE_CONNECTION='{"account":"your_account","user":"your_user","password":"your_password","warehouse":"your_warehouse","database":"your_database","schema":"your_schema"}'
-   ```
-
-4. Run the application:
-   ```bash
-   streamlit run main.py
-   ```
-   
-   Or use the provided startup scripts:
-   - Windows: `run.bat`
-   - Linux/Mac: `./run.sh`
-
-### Features
-
-#### Travel Time Page
-- **Interactive Map**: Visualize traffic signals with bubble size representing total travel time and color indicating average travel time
-- **Time Series Chart**: Analyze travel time trends over time with anomaly highlighting
-- **Filters**: Date range, approach type, valid geometry, and signal selection
-
-#### Monitoring Email Subscriptions
-- Simple magic-link authentication—users enter an email address on the Monitoring page and receive a sign-in link (no password).
-- After signing in, users can subscribe, unsubscribe, and trigger a one-off "Send Test Email" that delivers the current report as an attached PDF.
-- The backend stores subscriptions (email + filter selections) in a SQLite database and automatically sends daily reports at 6:00 AM when alerts are detected.
-- Required environment/setup:
-  - `BREVO_API_KEY` – transactional email API key (Brevo/Sendinblue).
-  - `EMAIL_SENDER_EMAIL` – sender address used in outgoing messages (display name is fixed to "Signal Analytics Reports").
-- Optional environment overrides:
-  - `SUBSCRIPTION_DB_PATH` - change where the SQLite file lives; defaults to `/data/subscriptions.db` when that directory exists, otherwise the project root.
-  - `PUBLIC_BASE_URL` – set a public hostname for production magic links; when omitted we assume a local/dev environment and fall back to the request host.
-  - `BREVO_DISABLE_SSL_VERIFY` – defaults to `true`; set to `false` only if you need strict TLS verification for Brevo’s API.
-- **Interactive Selection**: Click on map markers to filter the time series chart
-- **Summary Statistics**: Key metrics including averages, anomaly counts, and record counts
-
-#### Anomalies Page  
-- **Anomaly Map**: Shows signals sized by anomaly count with color-coded intensity
-- **Dual-Series Chart**: Compare actual vs predicted travel times with anomaly highlighting
-- **Anomaly Types**: Filter between "All" anomalies and "Point Source" anomalies
-- **Detailed Analysis**: Downloadable anomaly data table with timestamps and predictions
-- **Cross-Page State**: All filters persist when switching between pages
-
-#### Changepoints Page
-- **Changepoint Map & Table**: Surfaces the most significant changepoints from the [`CHANGEPOINTS` schema](#changepoints) with geography-aware filtering, sortable table (Top 100 rows), and synchronized selections
-- **Percent Change Filter**: Default focus on events where `PCT_CHANGE` is less than -1% or greater than +1%, adjustable by the analyst
-- **Visual Encoding**: Map bubble size reflects the absolute sum of `PCT_CHANGE` while color tracks the mean `PCT_CHANGE`, aligned with the rest of the app's light/dark/colorblind themes
-- **Detail Drilldown**: Selecting a single changepoint reveals a before/after travel time comparison chart using the same styling conventions as the dedicated Before/After page
-
-### Project Structure
-```
-signal-analytics-dashboard/
-├── main.py                 # Main application entry point
-├── config.py              # Application configuration
-├── requirements.txt       # Python dependencies
-├── pages/
-│   ├── travel_time.py    # Travel time analysis page
-│   ├── anomalies.py      # Anomaly analysis page
-│   └── __init__.py
-└── utils/
-    ├── database.py       # Snowflake connection and queries
-    ├── session_state.py  # Cross-page state management
-    └── __init__.py
-```
+## Repository layout
+- `app.py` - Flask entry point, static file serving, scheduler startup.
+- `routes/` - API blueprints for travel time, anomalies, before/after, changepoints, auth, subscriptions, captcha, and admin utilities.
+- `services/` - report generation, Brevo email sending, subscription storage, scheduler, rate limiting, and captcha session helpers.
+- `frontend/` - Vue/Vuetify source (built via Vite) with output in `static/dist`.
+- `tests/` - backend tests and schema fixtures.

@@ -38,6 +38,7 @@ def _set_captcha_cookie(response, token: str):
         secure=request.is_secure,
         samesite="Strict",
         path="/",
+        max_age=captcha_sessions.TOKEN_TTL_SECONDS,
     )
 
 

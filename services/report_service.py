@@ -2062,7 +2062,6 @@ def build_email_html(
     <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;">
         <p>Hello,</p>
         <p>The attached traffic signal travel time analytics report for {readable_report_date} found {anomaly_text} and {changepoint_text}.</p>
-        <p style="color:#9c4700;">Heads up: the interactive website is not launched yet, so any dashboard links referenced here or in the PDF won't work until it goes live.</p>
         <p style="margin-top:18px;">&mdash; {EMAIL_SENDER_NAME}</p>
     </div>
     """

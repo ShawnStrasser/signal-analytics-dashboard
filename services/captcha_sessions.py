@@ -18,6 +18,8 @@ from flask import Request
 from config import SECRET_KEY
 
 CAPTCHA_COOKIE_NAME = "captcha_token"
+TOKEN_TTL_SECONDS = 90 * 24 * 60 * 60  # 90 days
+_FUTURE_SKEW_SECONDS = 300  # allow modest clock skew
 
 
 @dataclass
@@ -94,6 +96,11 @@ def token_is_valid(token: str) -> bool:
     if not parsed:
         return False
     nonce, timestamp, signature = parsed
+    now = int(_now())
+    if timestamp > now + _FUTURE_SKEW_SECONDS:
+        return False
+    if now - timestamp > TOKEN_TTL_SECONDS:
+        return False
     expected_sig = _sign(nonce, timestamp)
     if not hmac.compare_digest(expected_sig, signature):
         return False
