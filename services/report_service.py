@@ -2061,7 +2061,15 @@ def build_email_html(
     html_output = f"""
     <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;">
         <p>Hello,</p>
-        <p>The attached traffic signal travel time analytics report for {readable_report_date} found {anomaly_text} and {changepoint_text}.</p>
+        <p>Your monitoring report for <strong>{readable_report_date}</strong> is ready. We observed <strong>{changepoint_text}</strong> and <strong>{anomaly_text}</strong> in the watchlist defined by your saved filters.</p>
+        <div style="margin-top:22px;padding:14px 18px;background-color:#f6f9fc;border:1px solid #dbe7fb;border-radius:8px;">
+            <p style="margin:0 0 8px 0;font-weight:bold;color:#1b4079;">Latest Changelog</p>
+            <ul style="margin:0;padding-left:20px;color:#1b1b1b;line-height:1.4;">
+                <li><strong>Nov 25, 2025:</strong> Changepoint detection now filters out transient shifts that last only a few days, so alerts should be fewer but more meaningful.</li>
+                <li><strong>Dashboard polish:</strong> We fixed several interaction bugs&mdash;please let us know if you notice anything odd.</li>
+                <li><strong>Remove anomalies:</strong> The filter now correctly excludes flagged time periods.</li>
+            </ul>
+        </div>
         <p style="margin-top:18px;">&mdash; {EMAIL_SENDER_NAME}</p>
     </div>
     """

@@ -73,7 +73,7 @@ Periodically update CLAUDE.md as needed to keep it accurate and up to date with 
 4. **Shared state**: Pinia stores enable filter persistence when switching between pages
 5. **Responsive layout**: CSS Grid with flexbox for dynamic height management; Travel Time and Anomalies use no scrolling, Before/After allows scrolling
 6. **Before/After comparison**: CTE-based SQL queries calculate TTI for before and after periods separately, then join/union results with PERIOD column
-7. **Remove anomalies filter**: Available on Travel Time and Before/After pages, adds `WHERE IS_ANOMALY = FALSE` to backend queries
+7. **Remove anomalies filter**: Available on Travel Time and Before/After pages, adds `WHERE ANOMALY = FALSE` to backend queries
 8. **Color scales**: Shared color scheme (green→yellow→orange→red) with different mappings: TTI (1.0-3.0), Anomaly % (0-10%), Before/After difference (-0.25 to +0.25)
 
 ### Chart Styling Standards

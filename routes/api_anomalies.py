@@ -883,6 +883,7 @@ def get_travel_time_data():
     maintained_by = request.args.get('maintained_by', 'all')
     approach = request.args.get('approach')
     valid_geometry = request.args.get('valid_geometry')
+    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -943,6 +944,7 @@ def get_travel_time_data():
         WHERE TIMESTAMP >= '{start_date_str}'
         AND TIMESTAMP <= '{end_date_str}'
         {xd_filter}
+        {"AND ANOMALY = FALSE" if remove_anomalies else ""}
         ORDER BY TIMESTAMP
         """
 

@@ -19,7 +19,7 @@ admin_bp = Blueprint("admin", __name__)
 
 ADMIN_LOGIN_LIMIT = 3
 ADMIN_LOGIN_WINDOW_SECONDS = 24 * 60 * 60
-ADMIN_SESSION_TTL_SECONDS = 60 * 60  # Require re-authentication after an hour
+ADMIN_SESSION_TTL_SECONDS = 90 * 24 * 60 * 60  # Require re-authentication after 90 days
 MAX_RESULT_ROWS = 500
 
 
@@ -107,7 +107,7 @@ def admin_login():
     rate_limiter.clear(key)
     session["admin_authenticated"] = True
     session["admin_authenticated_at"] = int(time.time())
-    session.permanent = False
+    session.permanent = True
 
     return jsonify({"authenticated": True})
 

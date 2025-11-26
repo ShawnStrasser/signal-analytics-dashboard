@@ -84,7 +84,7 @@ def get_before_after_summary():
                 clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
                 where_parts.append(clean_time)
             if remove_anomalies:
-                where_parts.append("t.IS_ANOMALY = FALSE")
+                where_parts.append("t.ANOMALY = FALSE")
             return " AND ".join(where_parts)
 
         before_where = build_where_clause(before_start_str, before_end_str)
@@ -209,7 +209,7 @@ def get_before_after_summary_xd():
                 clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
                 where_parts.append(clean_time)
             if remove_anomalies:
-                where_parts.append("t.IS_ANOMALY = FALSE")
+                where_parts.append("t.ANOMALY = FALSE")
             return " AND ".join(where_parts)
 
         before_where = build_where_clause(before_start_str, before_end_str)
@@ -361,7 +361,7 @@ def get_before_after_aggregated():
                 clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
                 where_parts.append(clean_time)
             if remove_anomalies:
-                where_parts.append("t.IS_ANOMALY = FALSE")
+                where_parts.append("t.ANOMALY = FALSE")
             return " AND ".join(where_parts)
 
         before_where = build_where_clause(before_start_str, before_end_str)
@@ -529,7 +529,7 @@ def get_before_after_by_time_of_day():
                 clean_time = clean_time.replace('TIME_15MIN', 't.TIME_15MIN')
                 where_parts.append(clean_time)
             if remove_anomalies:
-                where_parts.append("t.IS_ANOMALY = FALSE")
+                where_parts.append("t.ANOMALY = FALSE")
             return " AND ".join(where_parts)
 
         before_where = build_where_clause(before_start_str, before_end_str)

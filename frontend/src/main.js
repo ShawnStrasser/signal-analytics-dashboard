@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import { createVuetify } from 'vuetify'
 import router from './router'
 import App from './App.vue'
+import './config'
 
 // Vuetify
 import 'vuetify/styles'

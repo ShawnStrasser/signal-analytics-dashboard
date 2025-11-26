@@ -6,7 +6,7 @@ page. Responses use Apache Arrow streams for consistency with the rest of the AP
 """
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -14,6 +14,7 @@ from flask import Blueprint, request
 
 from config import DEBUG_BACKEND_TIMING, TIMEZONE, CHANGEPOINT_SEVERITY_THRESHOLD
 from database import get_snowflake_session, is_auth_error
+from utils.exceptions import InvalidQueryParameter
 from utils.arrow_utils import (
     create_arrow_response,
     snowflake_result_to_arrow
@@ -108,6 +109,34 @@ def _normalize_change_timestamp(value: str) -> str:
     if sanitized.endswith("Z"):
         sanitized = sanitized[:-1]
     return sanitized
+
+
+def _default_changepoint_window() -> tuple[str, str]:
+    """
+    Mirror the frontend changepoint default window:
+    end date = today minus 7 days, start date = end minus 21 days.
+    """
+    zone = _local_zone()
+    now = datetime.now(zone) if zone else datetime.utcnow()
+    end_date = (now - timedelta(days=7)).date()
+    start_date = end_date - timedelta(days=21)
+    return start_date.isoformat(), end_date.isoformat()
+
+
+def _resolve_date_range(start_value, end_value) -> tuple[str, str]:
+    """
+    Normalize date inputs; on failure, fall back to the default window
+    to avoid 500s when filters are cleared or missing.
+    """
+    try:
+        return normalize_date(start_value), normalize_date(end_value)
+    except InvalidQueryParameter as exc:
+        fallback_start, fallback_end = _default_changepoint_window()
+        print(
+            f"[WARN] Invalid changepoint date range ({start_value}, {end_value}); "
+            f"using default window {fallback_start} to {fallback_end}: {exc}"
+        )
+        return fallback_start, fallback_end
 
 
 def _assemble_where_clause(
@@ -227,8 +256,10 @@ def get_changepoints_map_signals():
         return request.args.getlist(name)
 
     # Base filters
-    start_date = normalize_date(_param('start_date'))
-    end_date = normalize_date(_param('end_date'))
+    start_date, end_date = _resolve_date_range(
+        _param('start_date'),
+        _param('end_date')
+    )
     signal_ids = _param_list('signal_ids')
     maintained_by = _param('maintained_by', 'all')
     approach = _param('approach')
@@ -360,8 +391,10 @@ def get_changepoints_map_xd():
             return [value]
         return request.args.getlist(name)
 
-    start_date = normalize_date(_param('start_date'))
-    end_date = normalize_date(_param('end_date'))
+    start_date, end_date = _resolve_date_range(
+        _param('start_date'),
+        _param('end_date')
+    )
     signal_ids = _param_list('signal_ids')
     maintained_by = _param('maintained_by', 'all')
     approach = _param('approach')
@@ -494,8 +527,10 @@ def get_changepoints_table():
         return request.args.getlist(name)
 
     # Base filters
-    start_date = normalize_date(_param('start_date'))
-    end_date = normalize_date(_param('end_date'))
+    start_date, end_date = _resolve_date_range(
+        _param('start_date'),
+        _param('end_date')
+    )
     signal_ids = _param_list('signal_ids')
     maintained_by = _param('maintained_by', 'all')
     approach = _param('approach')

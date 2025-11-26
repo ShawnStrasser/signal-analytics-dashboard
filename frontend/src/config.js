@@ -4,8 +4,42 @@
  */
 
 // Enable/disable verbose console logging
-// Set to false in production to reduce console noise
-export const DEBUG_FRONTEND_LOGGING = true
+// Mirrors backend APP_PRODUCTION_MODE flag so prod builds stay quiet
+const env = import.meta.env || {}
+
+function parseBoolean(value, fallback = false) {
+  if (value === undefined || value === null) {
+    return fallback
+  }
+  if (typeof value === 'boolean') {
+    return value
+  }
+  if (typeof value === 'string') {
+    return value.toLowerCase() === 'true'
+  }
+  return fallback
+}
+
+export const APP_PRODUCTION_MODE = parseBoolean(env.APP_PRODUCTION_MODE, false)
+export const DEBUG_FRONTEND_LOGGING = !APP_PRODUCTION_MODE
+
+let consoleSilenced = false
+
+export function applyLoggingPreferences() {
+  if (consoleSilenced || DEBUG_FRONTEND_LOGGING) {
+    return
+  }
+
+  if (typeof console !== 'undefined') {
+    const noop = () => {}
+    console.log = noop
+    console.debug = noop
+    console.info = noop
+    consoleSilenced = true
+  }
+}
+
+applyLoggingPreferences()
 
 // Helper function to conditionally log
 export function debugLog(...args) {

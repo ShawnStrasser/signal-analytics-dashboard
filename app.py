@@ -5,6 +5,7 @@ Serves Arrow data directly from Snowflake
 
 import os
 import sys
+from datetime import timedelta
 import pyarrow as pa
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -35,6 +36,7 @@ if sys.platform == 'win32':
 
 app = Flask(__name__, static_folder='static/dist')
 app.config['SECRET_KEY'] = SECRET_KEY
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=90)
 CORS(app)
 
 subscription_store.initialize()

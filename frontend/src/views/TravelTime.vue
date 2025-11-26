@@ -142,6 +142,7 @@ import ApiService from '@/services/api'
 import SharedMap from '@/components/SharedMap.vue'
 import TravelTimeChart from '@/components/TravelTimeChart.vue'
 import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
+import { useMapFilterReloads } from '@/utils/useMapFilterReloads'
 
 const filtersStore = useFiltersStore()
 const selectionStore = useSelectionStore()
@@ -221,66 +222,35 @@ const legendByLabel = computed(() => {
   return labels[legendBy.value] || 'items'
 })
 
-// Watch for geometry/signal filter changes (triggers auto-zoom)
-watch(() => [
-  filtersStore.selectedSignalIds,
-  filtersStore.maintainedBy,
-  filtersStore.approach,
-  filtersStore.validGeometry
-], async () => {
-  if (loading.value) {
-    console.log('⏸️ Already loading - skipping filter change')
-    return
+useMapFilterReloads({
+  loggerPrefix: 'TravelTime',
+  geometrySources: () => [
+    filtersStore.selectedSignalIds,
+    filtersStore.maintainedBy,
+    filtersStore.approach,
+    filtersStore.validGeometry
+  ],
+  dataSources: () => [
+    filtersStore.startDate,
+    filtersStore.endDate,
+    filtersStore.startHour,
+    filtersStore.startMinute,
+    filtersStore.endHour,
+    filtersStore.endMinute,
+    filtersStore.timeFilterEnabled,
+    filtersStore.dayOfWeek,
+    filtersStore.removeAnomalies
+  ],
+  shouldAutoZoomRef: shouldAutoZoomMap,
+  loadingRef: loading,
+  selectionStore,
+  reloadOnGeometryChange: async () => {
+    await Promise.all([loadMapData(), loadChartData()])
+  },
+  reloadOnDataChange: async () => {
+    await Promise.all([loadMapData(), loadChartData()])
   }
-
-  shouldAutoZoomMap.value = true
-  console.log('🔄 Geometry filters changed - reloading with auto-zoom')
-  loading.value = true
-  try {
-    // Reset map selections when these filters change
-    if (selectionStore.hasMapSelections) {
-      selectionStore.clearAllSelections()
-    }
-
-    // Reload data (map will auto-zoom via SharedMap watch)
-    await Promise.all([
-      loadMapData(),
-      loadChartData()
-    ])
-  } finally {
-    loading.value = false
-  }
-}, { deep: true })
-
-// Watch for date/time filter changes only (no auto-zoom needed)
-watch(() => [
-  filtersStore.startDate,
-  filtersStore.endDate,
-  filtersStore.startHour,
-  filtersStore.startMinute,
-  filtersStore.endHour,
-  filtersStore.endMinute,
-  filtersStore.timeFilterEnabled,
-  filtersStore.dayOfWeek
-], async () => {
-  if (loading.value) {
-    console.log('⏸️ Already loading - skipping filter change')
-    return
-  }
-
-  shouldAutoZoomMap.value = false
-  console.log('📅 Date/time filters changed - reloading data only (no zoom)')
-  loading.value = true
-  try {
-    // Don't reset selections on date changes - just refresh data
-    await Promise.all([
-      loadMapData(),
-      loadChartData()
-    ])
-  } finally {
-    loading.value = false
-  }
-}, { deep: true })
+})
 
 // Watch for time-of-day aggregation toggle
 watch(aggregateByTimeOfDay, async () => {

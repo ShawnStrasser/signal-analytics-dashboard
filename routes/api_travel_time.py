@@ -261,7 +261,7 @@ def get_travel_time_summary():
             where_parts.append(clean_time)
 
         if remove_anomalies:
-            where_parts.append("t.IS_ANOMALY = FALSE")
+            where_parts.append("t.ANOMALY = FALSE")
 
         where_clause = " AND ".join(where_parts)
 
@@ -371,7 +371,7 @@ def get_travel_time_summary_xd():
             where_parts.append(clean_time)
 
         if remove_anomalies:
-            where_parts.append("t.IS_ANOMALY = FALSE")
+            where_parts.append("t.ANOMALY = FALSE")
 
         where_clause = " AND ".join(where_parts)
 
@@ -536,7 +536,7 @@ def get_travel_time_aggregated():
             where_parts.append(clean_time)
 
         if remove_anomalies:
-            where_parts.append("t.IS_ANOMALY = FALSE")
+            where_parts.append("t.ANOMALY = FALSE")
 
         where_clause = " AND ".join(where_parts)
 
@@ -700,7 +700,7 @@ def get_travel_time_by_time_of_day():
             where_parts.append(clean_time)
 
         if remove_anomalies:
-            where_parts.append("t.IS_ANOMALY = FALSE")
+            where_parts.append("t.ANOMALY = FALSE")
 
         where_clause = " AND ".join(where_parts)
 

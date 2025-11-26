@@ -3,7 +3,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick, computed, onActivated } from 'vue'
 import { useTheme } from 'vuetify'
 import { useThemeStore } from '@/stores/theme'
 import * as echarts from 'echarts'
@@ -25,6 +25,8 @@ const props = defineProps({
 
 const chartContainer = ref(null)
 let chart = null
+let windowResizeHandler = null
+let needsResizeAfterShow = false
 const theme = useTheme()
 const themeStore = useThemeStore()
 
@@ -62,6 +64,15 @@ onMounted(() => {
   updateChart()
 })
 
+onActivated(() => {
+  nextTick(() => {
+    requestChartResize(true)
+    if (needsResizeAfterShow) {
+      requestAnimationFrame(() => requestChartResize(true))
+    }
+  })
+})
+
 watch(() => theme.global.current.value.dark, () => {
   updateChart()
 })
@@ -72,9 +83,15 @@ watch(() => themeStore.colorblindMode, () => {
 })
 
 onUnmounted(() => {
+  if (windowResizeHandler) {
+    window.removeEventListener('resize', windowResizeHandler)
+    windowResizeHandler = null
+  }
   if (chart) {
     chart.dispose()
+    chart = null
   }
+  needsResizeAfterShow = false
 })
 
 watch(() => [props.data, props.isTimeOfDay, props.entityType], () => {
@@ -84,11 +101,39 @@ watch(() => [props.data, props.isTimeOfDay, props.entityType], () => {
 }, { deep: true })
 
 function initializeChart() {
+  if (!chartContainer.value || chart) {
+    return
+  }
+
   chart = echarts.init(chartContainer.value)
-  window.addEventListener('resize', () => {
-    chart?.resize()
+  windowResizeHandler = () => {
+    requestChartResize()
     updateChart()
-  })
+  }
+  window.addEventListener('resize', windowResizeHandler)
+}
+
+function requestChartResize(immediate = false) {
+  const resizeAction = () => {
+    if (!chart || !chartContainer.value) {
+      return
+    }
+
+    const { offsetWidth, offsetHeight } = chartContainer.value
+    if (!offsetWidth || !offsetHeight) {
+      needsResizeAfterShow = true
+      return
+    }
+
+    chart.resize()
+    needsResizeAfterShow = false
+  }
+
+  if (immediate) {
+    resizeAction()
+  } else {
+    nextTick(resizeAction)
+  }
 }
 
 function updateChart() {
@@ -97,9 +142,7 @@ function updateChart() {
     return
   }
 
-  nextTick(() => {
-    chart?.resize()
-  })
+  requestChartResize()
 
   const isDark = theme.global.current.value.dark
   const textColor = isDark ? '#E0E0E0' : '#333333'

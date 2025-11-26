@@ -9,6 +9,7 @@ export default defineConfig({
       autoImport: true,
     }),
   ],
+  envPrefix: ['VITE_', 'APP_'],
   server: {
     port: 5173,
     proxy: {

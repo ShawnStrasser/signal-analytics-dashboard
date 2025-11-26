@@ -661,6 +661,7 @@ watch(() => themeStore.currentTheme, () => {
 
   updateTileLayer()
   updateSelectionStyles()
+  updateGeometry()
 })
 
 // Watch for colorblind mode changes to update marker and geometry colors
@@ -946,8 +947,9 @@ function updateGeometry() {
       }
     }
 
+    const highlightedStrokeColor = themeStore.currentTheme === 'dark' ? '#ffffff' : '#000000'
     const newStyle = {
-      color: isSelected ? '#000000' : (isInFilteredSet ? fillColor : '#808080'),
+      color: isSelected ? highlightedStrokeColor : (isInFilteredSet ? fillColor : '#808080'),
       weight: isSelected ? 3 : 1,
       opacity: isSelected ? 1 : (isInFilteredSet ? 0.8 : 0.3),
       fillColor: isInFilteredSet ? fillColor : '#cccccc',
@@ -2360,6 +2362,9 @@ function updateSelectionStyles() {
         const totalRecords = dataValue.RECORD_COUNT || 0
         const percentage = totalRecords > 0 ? (count / totalRecords) * 100 : 0
         fillColor = anomalyColorScale(percentage)
+      } else if (props.dataType === 'changepoints') {
+        const avgPct = dataValue.AVG_PCT_CHANGE || 0
+        fillColor = changepointColorScale(avgPct * 100)
       } else if (props.dataType === 'before-after') {
         const diff = dataValue.TTI_DIFF || 0
         fillColor = beforeAfterDifferenceColorScale(diff)

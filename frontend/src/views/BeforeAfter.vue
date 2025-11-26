@@ -173,6 +173,7 @@ import SharedMap from '@/components/SharedMap.vue'
 import BeforeAfterChart from '@/components/BeforeAfterChart.vue'
 import SmallMultiplesChart from '@/components/SmallMultiplesChart.vue'
 import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
+import { useMapFilterReloads } from '@/utils/useMapFilterReloads'
 
 const filtersStore = useFiltersStore()
 const beforeAfterFiltersStore = useBeforeAfterFiltersStore()
@@ -243,35 +244,36 @@ const smallMultiplesLabel = computed(() => {
   return labels[smallMultiplesEntity.value] || 'items'
 })
 
-// Watch for filter changes
-watch(() => [
-  beforeAfterFiltersStore.beforeStartDate,
-  beforeAfterFiltersStore.beforeEndDate,
-  beforeAfterFiltersStore.afterStartDate,
-  beforeAfterFiltersStore.afterEndDate,
-  filtersStore.selectedSignalIds,
-  filtersStore.maintainedBy,
-  filtersStore.approach,
-  filtersStore.validGeometry,
-  filtersStore.startHour,
-  filtersStore.startMinute,
-  filtersStore.endHour,
-  filtersStore.endMinute,
-  filtersStore.dayOfWeek,
-  filtersStore.removeAnomalies
-], async () => {
-  if (loading.value) return
-  shouldAutoZoomMap.value = true
-  loading.value = true
-  try {
-    if (selectionStore.hasMapSelections) {
-      selectionStore.clearAllSelections()
-    }
+useMapFilterReloads({
+  loggerPrefix: 'BeforeAfter',
+  geometrySources: () => [
+    filtersStore.selectedSignalIds,
+    filtersStore.maintainedBy,
+    filtersStore.approach,
+    filtersStore.validGeometry
+  ],
+  dataSources: () => [
+    beforeAfterFiltersStore.beforeStartDate,
+    beforeAfterFiltersStore.beforeEndDate,
+    beforeAfterFiltersStore.afterStartDate,
+    beforeAfterFiltersStore.afterEndDate,
+    filtersStore.startHour,
+    filtersStore.startMinute,
+    filtersStore.endHour,
+    filtersStore.endMinute,
+    filtersStore.dayOfWeek,
+    filtersStore.removeAnomalies
+  ],
+  shouldAutoZoomRef: shouldAutoZoomMap,
+  loadingRef: loading,
+  selectionStore,
+  reloadOnGeometryChange: async () => {
     await Promise.all([loadMapData(), loadChartData(), loadSmallMultiplesData()])
-  } finally {
-    loading.value = false
+  },
+  reloadOnDataChange: async () => {
+    await Promise.all([loadMapData(), loadChartData(), loadSmallMultiplesData()])
   }
-}, { deep: true })
+})
 
 watch(aggregateByTimeOfDay, async () => {
   await loadChartData()

@@ -226,6 +226,7 @@ import {
   buildChangepointDateSeries,
   buildChangepointTimeOfDaySeries
 } from '@/utils/changepointSeries'
+import { useMapFilterReloads } from '@/utils/useMapFilterReloads'
 
 const filtersStore = useFiltersStore()
 const selectionStore = useSelectionStore()
@@ -238,6 +239,7 @@ const mapData = ref([])
 const xdData = ref([])
 const mapIsLoading = ref(true)
 const shouldAutoZoomMap = ref(true)
+const loading = ref(false)
 
 const tableRows = ref([])
 const tableTotal = ref(0)
@@ -321,18 +323,31 @@ const chartSubtitle = computed(() => {
   return `${timestampLabel} • Change: ${pctChange}`
 })
 
-watch(
-  () => buildFilterSignature(),
-  async () => {
-    if (!initialized.value) {
-      return
-    }
+useMapFilterReloads({
+  loggerPrefix: 'Changepoints',
+  geometrySources: () => [
+    filtersStore.selectedSignalIds,
+    filtersStore.maintainedBy,
+    filtersStore.approach,
+    filtersStore.validGeometry,
+    filtersStore.changepointSeverityThreshold
+  ],
+  dataSources: () => [
+    filtersStore.changepointStartDate,
+    filtersStore.changepointEndDate
+  ],
+  shouldAutoZoomRef: shouldAutoZoomMap,
+  loadingRef: loading,
+  selectionStore,
+  reloadOnGeometryChange: async () => {
     resetDetailSelection()
-    shouldAutoZoomMap.value = true
-    await loadMapData({ autoZoom: true })
-    await loadTableData()
+    await loadAllData({ autoZoom: true })
+  },
+  reloadOnDataChange: async () => {
+    resetDetailSelection()
+    await loadAllData({ autoZoom: false })
   }
-)
+})
 
 watch(
   () => buildSelectionSignature(),
@@ -420,7 +435,12 @@ onMounted(async () => {
     console.error('Failed to load dimension data for changepoints:', error)
   }
 
-  await loadAllData({ autoZoom: true })
+  loading.value = true
+  try {
+    await loadAllData({ autoZoom: true })
+  } finally {
+    loading.value = false
+  }
   initialized.value = true
   lastSelectionState.value = captureSelectionState()
 })
@@ -459,19 +479,6 @@ async function ensureDimensions() {
     signalDimensionsStore.loadDimensions(),
     xdDimensionsStore.loadDimensions()
   ])
-}
-
-function buildFilterSignature() {
-  const params = filtersStore.changepointFilterParams
-  return JSON.stringify({
-    start_date: params.start_date,
-    end_date: params.end_date,
-    maintained_by: params.maintained_by,
-    approach: params.approach,
-    valid_geometry: params.valid_geometry,
-    changepoint_severity_threshold: params.changepoint_severity_threshold,
-    signal_ids: (params.signal_ids || []).slice().sort()
-  })
 }
 
 function buildSelectionSignature() {
@@ -568,9 +575,25 @@ async function loadMapData({ autoZoom = false } = {}) {
 
     const enrichedXd = xdRows.map(row => {
       const dimensions = xdDimensionsStore.getXdDimensions(row.XD) || {}
+      const signalIdsFromDimensions = Array.isArray(dimensions.signalIds)
+        ? dimensions.signalIds.map(id => String(id))
+        : []
+      const signalIdFromRow = row.SIGNAL_ID != null ? String(row.SIGNAL_ID) : null
+      const mergedIds = new Set(signalIdsFromDimensions)
+      if (signalIdFromRow) {
+        mergedIds.add(signalIdFromRow)
+      }
+      if (mergedIds.size === 0 && dimensions.ID) {
+        mergedIds.add(String(dimensions.ID))
+      }
+
+      const signalIds = Array.from(mergedIds)
+      const primarySignalId = signalIds.length > 0 ? signalIds[0] : (dimensions.ID ? String(dimensions.ID) : null)
+
       return {
         XD: row.XD,
-        SIGNAL_ID: row.SIGNAL_ID ?? dimensions.ID,
+        ID: primarySignalId,
+        signalIds,
         ABS_PCT_SUM: Number(row.ABS_PCT_SUM ?? 0),
         AVG_PCT_CHANGE: Number(row.AVG_PCT_CHANGE ?? 0),
         CHANGEPOINT_COUNT: Number(row.CHANGEPOINT_COUNT ?? 0),
