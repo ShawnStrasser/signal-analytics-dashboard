@@ -1,4 +1,5 @@
 import * as arrow from 'apache-arrow'
+import { debugLog } from '@/config'
 
 function buildCaptchaError() {
   const error = new Error('captcha_required')
@@ -81,7 +82,7 @@ class ApiService {
           if (response.status === 503) {
             const errorText = await response.text()
             if (attempt < retries && errorText.includes('reconnecting')) {
-              console.log(`dY", Database reconnecting (attempt ${attempt + 1}/${retries + 1}), retrying in ${retryDelayMs}ms...`)
+              debugLog(`dY", Database reconnecting (attempt ${attempt + 1}/${retries + 1}), retrying in ${retryDelayMs}ms...`)
               await new Promise(resolve => setTimeout(resolve, retryDelayMs))
               continue
             }
@@ -102,7 +103,7 @@ class ApiService {
           throw error
         }
 
-        console.log(`dY", Request failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${retryDelayMs}ms...`)
+        debugLog(`dY", Request failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${retryDelayMs}ms...`)
         await new Promise(resolve => setTimeout(resolve, retryDelayMs))
       }
     }
@@ -234,12 +235,12 @@ class ApiService {
       // Fetch Arrow data instead of JSON
       const arrowTable = await this.fetchArrowData('/xd-geometry')
       const t1 = performance.now()
-      console.log(`📍 API: fetchArrowData took ${(t1 - t0).toFixed(2)}ms`)
+      debugLog(`📍 API: fetchArrowData took ${(t1 - t0).toFixed(2)}ms`)
 
       // Convert Arrow table to objects
       const rows = this.arrowTableToObjects(arrowTable)
       const t2 = performance.now()
-      console.log(`📍 API: arrowTableToObjects took ${(t2 - t1).toFixed(2)}ms`)
+      debugLog(`📍 API: arrowTableToObjects took ${(t2 - t1).toFixed(2)}ms`)
 
       // Parse GeoJSON strings and build FeatureCollection
       const parseStart = performance.now()
@@ -261,8 +262,8 @@ class ApiService {
       }
 
       const t3 = performance.now()
-      console.log(`📍 API: GeoJSON parsing took ${(t3 - parseStart).toFixed(2)}ms (${features.length} features)`)
-      console.log(`📍 API: getXdGeometry TOTAL ${(t3 - t0).toFixed(2)}ms`)
+      debugLog(`📍 API: GeoJSON parsing took ${(t3 - parseStart).toFixed(2)}ms (${features.length} features)`)
+      debugLog(`📍 API: getXdGeometry TOTAL ${(t3 - t0).toFixed(2)}ms`)
 
       return {
         type: 'FeatureCollection',

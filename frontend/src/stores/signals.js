@@ -1,3 +1,4 @@
+import { debugLog } from '@/config'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import ApiService from '@/services/api'
@@ -22,7 +23,7 @@ export const useSignalsStore = defineStore('signals', () => {
     try {
       const arrowTable = await ApiService.getDimSignals()
       dimSignals.value = ApiService.arrowTableToObjects(arrowTable)
-      console.log(`📊 Loaded ${dimSignals.value.length} signals from DIM_SIGNALS`)
+      debugLog(`📊 Loaded ${dimSignals.value.length} signals from DIM_SIGNALS`)
     } catch (err) {
       console.error('Failed to load DIM_SIGNALS:', err)
       error.value = err.message

@@ -170,6 +170,7 @@ import { useXdDimensionsStore } from '@/stores/xdDimensions'
 import { useThemeStore } from '@/stores/theme'
 import ApiService from '@/services/api'
 import SharedMap from '@/components/SharedMap.vue'
+import { debugLog } from '@/config'
 import BeforeAfterChart from '@/components/BeforeAfterChart.vue'
 import SmallMultiplesChart from '@/components/SmallMultiplesChart.vue'
 import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
@@ -191,6 +192,7 @@ const mapData = ref([])
 const xdData = ref([])
 const chartData = ref([])
 const smallMultiplesData = ref([])
+const defaultSmallMultiplesXds = ref([])
 const loadingMap = ref(true)
 const loadingChart = ref(true)
 const loadingSmallMultiples = ref(true)
@@ -199,7 +201,7 @@ const mapRef = ref(null)
 const aggregateByTimeOfDay = ref('false')
 const smallMultiplesTimeOfDay = ref('false')
 const legendBy = ref('none')
-const smallMultiplesEntity = ref('none')
+const smallMultiplesEntity = ref('xd')
 const legendClipped = ref(false)
 const smallMultiplesClipped = ref(false)
 const maxLegendEntities = ref(6) // Max legend entities for main before/after chart
@@ -308,7 +310,13 @@ onMounted(async () => {
 
   loading.value = true
   try {
-    await Promise.all([loadMapData(), loadChartData()])
+    const initialLoads = [loadMapData(), loadChartData()]
+    if (smallMultiplesEntity.value !== 'none') {
+      initialLoads.push(loadSmallMultiplesData())
+    } else {
+      loadingSmallMultiples.value = false
+    }
+    await Promise.all(initialLoads)
   } finally {
     loading.value = false
   }
@@ -359,7 +367,7 @@ async function loadMapData() {
       }
     })
 
-    console.log('🔍 Before/After Map Data Sample:', {
+    debugLog('🔍 Before/After Map Data Sample:', {
       signalCount: signalObjects.length,
       xdCount: xdObjects.length,
       sampleSignal: signalObjects[0],
@@ -370,6 +378,30 @@ async function loadMapData() {
 
     mapData.value = signalObjects
     xdData.value = xdObjects
+
+    const prioritizedXds = []
+    const seenXds = new Set()
+
+    const sortedXds = [...xdObjects].sort((a, b) => {
+      const diffA = Math.abs(a?.TTI_DIFF ?? 0)
+      const diffB = Math.abs(b?.TTI_DIFF ?? 0)
+      return diffB - diffA
+    })
+
+    for (const xd of sortedXds) {
+      if (!xd?.XD || seenXds.has(xd.XD)) {
+        continue
+      }
+      seenXds.add(xd.XD)
+      prioritizedXds.push(xd.XD)
+      if (prioritizedXds.length >= maxSmallMultiplesEntities) {
+        break
+      }
+    }
+
+    if (prioritizedXds.length > 0) {
+      defaultSmallMultiplesXds.value = prioritizedXds
+    }
   } catch (error) {
     console.error('Failed to load map data:', error)
     mapData.value = []
@@ -408,7 +440,7 @@ async function loadChartData() {
     if (data.length > 0 && data[0].LEGEND_GROUP !== undefined) {
       const uniqueGroups = new Set(data.map(row => row.LEGEND_GROUP))
       legendClipped.value = uniqueGroups.size === maxLegendEntities.value
-      console.log('🚨 BeforeAfter legendClipped check:', {
+      debugLog('🚨 BeforeAfter legendClipped check:', {
         uniqueGroupsSize: uniqueGroups.size,
         maxLegendEntities: maxLegendEntities.value,
         legendClipped: legendClipped.value,
@@ -416,7 +448,7 @@ async function loadChartData() {
       })
     } else {
       legendClipped.value = false
-      console.log('🚨 BeforeAfter legendClipped: no LEGEND_GROUP column, legendClipped = false')
+      debugLog('🚨 BeforeAfter legendClipped: no LEGEND_GROUP column, legendClipped = false')
     }
 
     chartData.value = data
@@ -440,14 +472,21 @@ async function loadSmallMultiplesData() {
     const afterFilters = beforeAfterFiltersStore.afterFilterParams
     const filters = { ...filtersStore.filterParams }
 
+    let targetXds = []
+
     if (selectionStore.hasMapSelections) {
       const selectedXds = Array.from(selectionStore.allSelectedXdSegments)
       if (selectedXds.length > 0) {
-        filters.xd_segments = selectedXds
-      } else {
-        smallMultiplesData.value = []
-        return
+        targetXds = selectedXds
       }
+    }
+
+    if (targetXds.length === 0 && defaultSmallMultiplesXds.value.length > 0) {
+      targetXds = [...defaultSmallMultiplesXds.value]
+    }
+
+    if (targetXds.length > 0) {
+      filters.xd_segments = targetXds
     }
 
     let arrowTable
@@ -462,7 +501,7 @@ async function loadSmallMultiplesData() {
     if (data.length > 0 && data[0].LEGEND_GROUP !== undefined) {
       const uniqueGroups = new Set(data.map(row => row.LEGEND_GROUP))
       smallMultiplesClipped.value = uniqueGroups.size === maxSmallMultiplesEntities
-      console.log('🚨 BeforeAfter SmallMultiples legendClipped check:', {
+      debugLog('🚨 BeforeAfter SmallMultiples legendClipped check:', {
         uniqueGroupsSize: uniqueGroups.size,
         maxSmallMultiplesEntities: maxSmallMultiplesEntities,
         smallMultiplesClipped: smallMultiplesClipped.value,
@@ -470,7 +509,7 @@ async function loadSmallMultiplesData() {
       })
     } else {
       smallMultiplesClipped.value = false
-      console.log('🚨 BeforeAfter SmallMultiples legendClipped: no LEGEND_GROUP column, smallMultiplesClipped = false')
+      debugLog('🚨 BeforeAfter SmallMultiples legendClipped: no LEGEND_GROUP column, smallMultiplesClipped = false')
     }
 
     smallMultiplesData.value = data

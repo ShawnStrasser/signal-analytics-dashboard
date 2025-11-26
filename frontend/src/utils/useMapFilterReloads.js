@@ -1,3 +1,4 @@
+import { debugLog } from '@/config'
 import { watch } from 'vue'
 
 /**
@@ -41,7 +42,7 @@ export function useMapFilterReloads({
     clearSelections
   }) => {
     if (loadingRef?.value) {
-      console.log(`${loggerPrefix}: Already loading - skipping ${type} filter change`)
+      debugLog(`${loggerPrefix}: Already loading - skipping ${type} filter change`)
       return
     }
 

@@ -254,13 +254,11 @@ useMapFilterReloads({
 
 // Watch for time-of-day aggregation toggle
 watch(aggregateByTimeOfDay, async () => {
-  console.log('🕐 Time-of-day aggregation toggled - reloading chart data')
   await loadChartData()
 })
 
 // Watch for legend selection changes
 watch(legendBy, async () => {
-  console.log('🏷️ Legend selection changed - reloading chart data')
   await loadChartData()
 })
 
@@ -271,14 +269,10 @@ watch(() => [
   selectionStore.selectedXdSegments.size,
   selectionStore.allSelectedXdSegments.size
 ], async () => {
-  console.log('Selection changed - reloading chart data')
   await loadChartData()
 })
 
 onMounted(async () => {
-  const t0 = performance.now()
-  console.log('🚀 TravelTime.vue: onMounted START')
-
   // Fetch config first
   const config = await ApiService.getConfig()
   maxLegendEntities.value = config.maxLegendEntities
@@ -289,8 +283,6 @@ onMounted(async () => {
     signalDimensionsStore.loadDimensions(),
     xdDimensionsStore.loadDimensions()
   ])
-  const t1 = performance.now()
-  console.log(`📊 Dimensions loaded in ${(t1 - t0).toFixed(2)}ms`)
 
   // Load map and chart data (metrics only - will be merged with dimensions)
   loading.value = true
@@ -302,14 +294,9 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-
-  const t2 = performance.now()
-  console.log(`✅ TravelTime.vue: onMounted COMPLETE, total ${(t2 - t0).toFixed(2)}ms`)
 })
 
 onActivated(async () => {
-  console.log('🔄 TravelTime.vue: onActivated')
-
   const currentState = captureSelectionState()
 
   // Check if selections changed while we were away
@@ -320,10 +307,6 @@ onActivated(async () => {
     currentState.xdSegments !== lastSelectionState.value.xdSegments
 
   if (selectionsChanged) {
-    console.log('🔄 Selections changed while away - reloading chart data', {
-      old: lastSelectionState.value,
-      new: currentState
-    })
     // Set loading state to hide chart during refresh
     loading.value = true
     try {
@@ -331,43 +314,26 @@ onActivated(async () => {
     } finally {
       loading.value = false
     }
-  } else {
-    console.log('🔄 Selections unchanged - no chart reload needed')
   }
 })
 
 onDeactivated(() => {
-  console.log('🔄 TravelTime.vue: onDeactivated - capturing selection state')
   // Capture state when leaving the page so we can detect changes on return
   lastSelectionState.value = captureSelectionState()
 })
 
 async function loadMapData() {
   try {
-    console.log('📡 API: Loading map data START', filtersStore.filterParams)
-    const t0 = performance.now()
     loadingMap.value = true
 
-    // Fetch both signal-level and XD-level METRICS ONLY (no dimensions)
     const [signalTable, xdTable] = await Promise.all([
       ApiService.getTravelTimeSummary(filtersStore.filterParams),
       ApiService.getTravelTimeSummaryXd(filtersStore.filterParams)
     ])
 
-    const t1 = performance.now()
-    console.log(`📡 API: Parallel fetch took ${(t1 - t0).toFixed(2)}ms`)
-
-    // Convert Arrow tables to objects (metrics only)
-    const conversionStart = performance.now()
     const signalMetrics = ApiService.arrowTableToObjects(signalTable)
     const xdMetrics = ApiService.arrowTableToObjects(xdTable)
-    const t2 = performance.now()
-    console.log(`📡 API: arrowTableToObjects (both) took ${(t2 - conversionStart).toFixed(2)}ms`)
 
-    // Merge metrics with cached dimensions
-    const mergeStart = performance.now()
-
-    // Merge signal metrics with dimensions
     const signalObjects = signalMetrics.map(metric => {
       const dimensions = signalDimensionsStore.getSignalDimensions(metric.ID)
       return {
@@ -377,9 +343,8 @@ async function loadMapData() {
         LATITUDE: dimensions?.LATITUDE,
         LONGITUDE: dimensions?.LONGITUDE
       }
-    }).filter(signal => signal.LATITUDE && signal.LONGITUDE) // Only include signals with coordinates
+    }).filter(signal => signal.LATITUDE && signal.LONGITUDE)
 
-    // Merge XD metrics with dimensions
     const xdObjects = xdMetrics.map(metric => {
       const dimensions = xdDimensionsStore.getXdDimensions(metric.XD)
       const signalIds = dimensions?.signalIds ?? (dimensions?.ID ? [dimensions.ID] : [])
@@ -395,15 +360,8 @@ async function loadMapData() {
       }
     })
 
-    const t3 = performance.now()
-    console.log(`📡 API: Dimension merge took ${(t3 - mergeStart).toFixed(2)}ms`)
-
-    // Assign to refs
     mapData.value = signalObjects
     xdData.value = xdObjects
-    const t4 = performance.now()
-
-    console.log(`📡 API: Loading map data DONE - ${mapData.value.length} signals, ${xdData.value.length} XDs in ${(t4 - t0).toFixed(2)}ms`)
   } catch (error) {
     console.error('Failed to load map data:', error)
     mapData.value = []
@@ -415,98 +373,58 @@ async function loadMapData() {
 
 async function loadChartData() {
   try {
-    console.log('📊 API: Loading chart data START')
-    const t0 = performance.now()
     loadingChart.value = true
-
-    // Build filter params for chart based on selections
     const filters = { ...filtersStore.filterParams }
 
-    // If there are map selections, send the selected XD segments directly
     if (selectionStore.hasMapSelections) {
       const selectedXds = Array.from(selectionStore.allSelectedXdSegments)
-
       if (selectedXds.length > 0) {
         filters.xd_segments = selectedXds
-        console.log('📊 API: Filtering chart to selected XDs', selectedXds)
       } else {
-        // No selections, show empty chart
-        console.log('📊 API: No XD selections, showing empty chart')
         chartData.value = []
         return
       }
     }
 
-    // Use different API based on aggregation type
     let arrowTable
-    let t1
     if (aggregateByTimeOfDay.value === 'true') {
       arrowTable = await ApiService.getTravelTimeByTimeOfDay(filters, legendBy.value)
-      t1 = performance.now()
-      console.log(`📊 API: getTravelTimeByTimeOfDay took ${(t1 - t0).toFixed(2)}ms`)
     } else {
       arrowTable = await ApiService.getTravelTimeAggregated(filters, legendBy.value)
-      t1 = performance.now()
-      console.log(`📊 API: getTravelTimeAggregated took ${(t1 - t0).toFixed(2)}ms`)
     }
 
     const data = ApiService.arrowTableToObjects(arrowTable)
 
-    // Check if data contains LEGEND_GROUP column (indicates legend grouping is active)
     if (data.length > 0 && data[0].LEGEND_GROUP !== undefined) {
-      // Count unique legend groups to detect if we hit the MAX_LEGEND_ENTITIES limit
       const uniqueGroups = new Set(data.map(row => row.LEGEND_GROUP))
-      // Show warning when we have exactly maxLegendEntities groups (the backend limit from config.py)
       legendClipped.value = uniqueGroups.size === maxLegendEntities.value
-      console.log('🚨 TravelTime legendClipped check:', {
-        uniqueGroupsSize: uniqueGroups.size,
-        maxLegendEntities: maxLegendEntities.value,
-        legendClipped: legendClipped.value,
-        uniqueGroupsSample: Array.from(uniqueGroups).slice(0, 3)
-      })
     } else {
       legendClipped.value = false
-      console.log('🚨 TravelTime legendClipped: no LEGEND_GROUP column, legendClipped = false')
     }
 
-    // Filter chart data if legend is Signal ID and signals are selected
     let filteredData = data
     if (legendBy.value === 'id' && selectionStore.selectedSignals.size > 0 && data.length > 0 && data[0].LEGEND_GROUP !== undefined) {
       const selectedSignalsList = Array.from(selectionStore.selectedSignals)
-
-      // Build set of allowed signal IDs: selected signals + signals associated with orphan XD segments
       const allowedSignals = new Set(selectedSignalsList)
-
-      // Find XD segments that were selected directly (not via a signal)
-      // These are XDs in selectedXdSegments that don't belong to any selected signal
       const selectedXds = Array.from(selectionStore.selectedXdSegments)
       const orphanXds = selectedXds.filter(xd => {
-        // Get all signals associated with this XD
         const associatedSignals = selectionStore.getSignalsForXdSegment(xd)
-        // Check if ANY of those signals are in selectedSignals
         const belongsToSelectedSignal = associatedSignals.some(sigId => selectedSignalsList.includes(sigId))
         return !belongsToSelectedSignal
       })
 
-      // Add signals associated with orphan XDs to allowed signals
       orphanXds.forEach(xd => {
         const associatedSignals = selectionStore.getSignalsForXdSegment(xd)
         associatedSignals.forEach(sigId => allowedSignals.add(sigId))
       })
 
       filteredData = data.filter(row => {
-        // Convert LEGEND_GROUP to string for comparison (since signal IDs are strings in the store)
         const signalId = String(row.LEGEND_GROUP)
         return allowedSignals.has(signalId)
       })
-
-      console.log(`📊 API: Filtered Signal ID legend: ${data.length} → ${filteredData.length} records (${orphanXds.length} orphan XDs)`)
     }
 
     chartData.value = filteredData
-    const t2 = performance.now()
-    console.log(`📊 API: arrowTableToObjects took ${(t2 - t1).toFixed(2)}ms`)
-    console.log(`📊 API: Loading chart data DONE - ${chartData.value.length} records in ${(t2 - t0).toFixed(2)}ms`)
   } catch (error) {
     console.error('Failed to load chart data:', error)
     chartData.value = []

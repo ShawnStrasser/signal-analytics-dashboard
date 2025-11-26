@@ -18,7 +18,7 @@ import {
   beforeAfterDifferenceColorScale,
   changepointColorScale
 } from '@/utils/colorScale'
-import { DEBUG_FRONTEND_LOGGING } from '@/config'
+import { DEBUG_FRONTEND_LOGGING, debugLog } from '@/config'
 
 const props = defineProps({
   signals: {
@@ -251,7 +251,7 @@ function getTrafficLightColors() {
 // signalData parameter is optional - used during updateMarkers to get accurate count during transition
 function shouldUseSvgIcons(signalData = null) {
   if (!map) {
-    console.log('🎨 shouldUseSvgIcons: no map yet, defaulting to circles')
+    debugLog('🎨 shouldUseSvgIcons: no map yet, defaulting to circles')
     return false
   }
 
@@ -449,26 +449,26 @@ function createTrafficSignalIcon(category, isSelected, iconSize) {
 
 onMounted(() => {
   const mountStart = performance.now()
-  console.log('🗺️ SharedMap: onMounted START')
+  debugLog('🗺️ SharedMap: onMounted START')
 
   const t0 = performance.now()
   initializeMap()
   const t1 = performance.now()
-  console.log(`🗺️ SharedMap: initializeMap took ${(t1 - t0).toFixed(2)}ms`)
+  debugLog(`🗺️ SharedMap: initializeMap took ${(t1 - t0).toFixed(2)}ms`)
 
   updateMarkers()
   const t2 = performance.now()
-  console.log(`🗺️ SharedMap: updateMarkers took ${(t2 - t1).toFixed(2)}ms`)
+  debugLog(`🗺️ SharedMap: updateMarkers took ${(t2 - t1).toFixed(2)}ms`)
 
   updateGeometry()
   const t3 = performance.now()
-  console.log(`🗺️ SharedMap: updateGeometry took ${(t3 - t2).toFixed(2)}ms`)
+  debugLog(`🗺️ SharedMap: updateGeometry took ${(t3 - t2).toFixed(2)}ms`)
 
   // Defer geometry loading until after initial render completes
   // This prevents blocking the UI with a 16k feature load
   requestIdleCallback(() => {
     const geometryLoadStart = performance.now()
-    console.log('🗺️ SharedMap: Starting deferred geometry load')
+    debugLog('🗺️ SharedMap: Starting deferred geometry load')
 
     let fetchComplete = 0
     let parseComplete = 0
@@ -478,10 +478,10 @@ onMounted(() => {
       const geometryLoadEnd = performance.now()
       const totalTime = geometryLoadEnd - geometryLoadStart
 
-      console.log(`🗺️ SharedMap: Geometry load COMPLETE in ${totalTime.toFixed(2)}ms`)
-      console.log(`  Breakdown:`)
-      console.log(`  - Network fetch + Arrow deser: see ApiService logs`)
-      console.log(`  - Store assignment: ${(geometryLoadEnd - geometryLoadStart).toFixed(2)}ms total`)
+      debugLog(`🗺️ SharedMap: Geometry load COMPLETE in ${totalTime.toFixed(2)}ms`)
+      debugLog(`  Breakdown:`)
+      debugLog(`  - Network fetch + Arrow deser: see ApiService logs`)
+      debugLog(`  - Store assignment: ${(geometryLoadEnd - geometryLoadStart).toFixed(2)}ms total`)
     }).catch(error => {
       console.error('Failed to preload XD geometry:', error)
     })
@@ -492,7 +492,7 @@ onMounted(() => {
     const t4 = performance.now()
     selectionStore.updateMappings(props.signals, props.xdSegments)
     const t5 = performance.now()
-    console.log(`🗺️ SharedMap: updateMappings took ${(t5 - t4).toFixed(2)}ms`)
+    debugLog(`🗺️ SharedMap: updateMappings took ${(t5 - t4).toFixed(2)}ms`)
 
     // Only auto-zoom on first load if there's no saved map state from another page
     // Check if we have a non-default saved state (default is zoom 4 at center of US)
@@ -501,12 +501,12 @@ onMounted(() => {
                                     Math.abs(mapStateStore.mapCenter[1] - (-98.0)) > 0.01
 
     if (!hasUserDefinedMapState) {
-      console.log('🔍 No saved map state - performing initial auto-zoom')
+      debugLog('🔍 No saved map state - performing initial auto-zoom')
       autoZoomToSignals()
       const t6 = performance.now()
-      console.log(`🗺️ SharedMap: autoZoomToSignals took ${(t6 - t5).toFixed(2)}ms`)
+      debugLog(`🗺️ SharedMap: autoZoomToSignals took ${(t6 - t5).toFixed(2)}ms`)
     } else {
-      console.log('🔍 Saved map state exists - skipping initial auto-zoom')
+      debugLog('🔍 Saved map state exists - skipping initial auto-zoom')
     }
 
     // Initialize previousSignalIds to prevent auto-zoom on first data update
@@ -514,7 +514,7 @@ onMounted(() => {
   }
 
   const mountEnd = performance.now()
-  console.log(`🗺️ SharedMap: onMounted COMPLETE, total ${(mountEnd - mountStart).toFixed(2)}ms`)
+  debugLog(`🗺️ SharedMap: onMounted COMPLETE, total ${(mountEnd - mountStart).toFixed(2)}ms`)
 })
 
 onUnmounted(() => {
@@ -536,7 +536,7 @@ onUnmounted(() => {
 })
 
 onActivated(() => {
-  console.log('🗺️ SharedMap: onActivated - restoring shared map state')
+  debugLog('🗺️ SharedMap: onActivated - restoring shared map state')
 
   if (map && mapStateStore.mapCenter && mapStateStore.mapZoom) {
     const savedCenter = mapStateStore.mapCenter
@@ -552,14 +552,14 @@ onActivated(() => {
     const zoomChanged = currentZoom !== savedZoom
 
     if (centerChanged || zoomChanged) {
-      console.log('🗺️ SharedMap: Restoring saved map state', {
+      debugLog('🗺️ SharedMap: Restoring saved map state', {
         from: { center: [currentCenter.lat, currentCenter.lng], zoom: currentZoom },
         to: { center: savedCenter, zoom: savedZoom }
       })
       // Restore saved map state from store
       map.setView(savedCenter, savedZoom, { animate: false })
     } else {
-      console.log('🗺️ SharedMap: Map state already matches saved state')
+      debugLog('🗺️ SharedMap: Map state already matches saved state')
     }
   }
 })
@@ -570,7 +570,7 @@ let previousSignalIds = new Set()
 // Watch for signal data changes
 watch(() => props.signals, (newSignals, oldSignals) => {
   const watchStart = performance.now()
-  console.log('🔄 WATCH: props.signals changed (watch triggered)', {
+  debugLog('🔄 WATCH: props.signals changed (watch triggered)', {
     signalCount: newSignals.length,
     currentZoom: map?.getZoom(),
     xdLayersCount: xdLayers.size,
@@ -583,7 +583,7 @@ watch(() => props.signals, (newSignals, oldSignals) => {
   }
 
   const t1 = performance.now()
-  console.log(`⏱️ updateMappings: ${(t1 - t0).toFixed(2)}ms`)
+  debugLog(`⏱️ updateMappings: ${(t1 - t0).toFixed(2)}ms`)
 
   // Check if signal IDs actually changed (not just data values)
   const currentSignalIds = new Set(newSignals.map(s => s.ID))
@@ -592,12 +592,12 @@ watch(() => props.signals, (newSignals, oldSignals) => {
 
   updateMarkers()
   const t2 = performance.now()
-  console.log(`⏱️ updateMarkers: ${(t2 - t1).toFixed(2)}ms`)
+  debugLog(`⏱️ updateMarkers: ${(t2 - t1).toFixed(2)}ms`)
 
   // Defer geometry updates for large datasets to avoid blocking
   const shouldDeferGeometry = newSignals.length > 5000
   if (shouldDeferGeometry) {
-    console.log('⏳ Deferring geometry update (large dataset)')
+    debugLog('⏳ Deferring geometry update (large dataset)')
     requestIdleCallback(() => {
       updateGeometry()
     }, { timeout: 1000 })
@@ -606,7 +606,7 @@ watch(() => props.signals, (newSignals, oldSignals) => {
   }
 
   const t3 = performance.now()
-  console.log(`⏱️ updateGeometry: ${shouldDeferGeometry ? '0.00 (deferred)' : (t3 - t2).toFixed(2)}ms`)
+  debugLog(`⏱️ updateGeometry: ${shouldDeferGeometry ? '0.00 (deferred)' : (t3 - t2).toFixed(2)}ms`)
 
   // Only auto-zoom if the signal set actually changed
   let autoZoomExecuted = false
@@ -614,20 +614,20 @@ watch(() => props.signals, (newSignals, oldSignals) => {
     previousSignalIds = currentSignalIds
 
     if (props.autoZoomEnabled) {
-      console.log('🔍 Signal set changed - performing auto-zoom')
+      debugLog('🔍 Signal set changed - performing auto-zoom')
       autoZoomToSignals()
       autoZoomExecuted = true
     } else {
-      console.log('🔍 Signal set changed - auto-zoom suppressed (autoZoomEnabled=false)')
+      debugLog('🔍 Signal set changed - auto-zoom suppressed (autoZoomEnabled=false)')
     }
   } else {
-    console.log('🔍 Signal set unchanged - skipping auto-zoom (data-only update)')
+    debugLog('🔍 Signal set unchanged - skipping auto-zoom (data-only update)')
   }
 
   const t4 = performance.now()
-  console.log(`⏱️ autoZoomToSignals: ${autoZoomExecuted ? (t4 - t3).toFixed(2) : '0.00 (skipped)'}ms`)
-  console.log(`⏱️ TOTAL map updates: ${(t4 - t0).toFixed(2)}ms`)
-  console.log(`⏱️ Watch overhead (trigger to start): ${(t0 - watchStart).toFixed(2)}ms`)
+  debugLog(`⏱️ autoZoomToSignals: ${autoZoomExecuted ? (t4 - t3).toFixed(2) : '0.00 (skipped)'}ms`)
+  debugLog(`⏱️ TOTAL map updates: ${(t4 - t0).toFixed(2)}ms`)
+  debugLog(`⏱️ Watch overhead (trigger to start): ${(t0 - watchStart).toFixed(2)}ms`)
 }, { deep: true })
 
 // Watch for anomaly type changes
@@ -833,7 +833,7 @@ function initializeMap() {
 
   map.on('zoomstart', () => {
     zoomStartTime = performance.now()
-    console.log('🔍 ZOOM LIFECYCLE: zoomstart', {
+    debugLog('🔍 ZOOM LIFECYCLE: zoomstart', {
       currentZoom: map.getZoom(),
       markerCount: signalMarkers.size
     })
@@ -841,7 +841,7 @@ function initializeMap() {
 
   map.on('zoom', () => {
     const elapsed = zoomStartTime ? (performance.now() - zoomStartTime).toFixed(2) : 'unknown'
-    console.log(`🔍 ZOOM LIFECYCLE: zoom event (${elapsed}ms since start)`, {
+    debugLog(`🔍 ZOOM LIFECYCLE: zoom event (${elapsed}ms since start)`, {
       currentZoom: map.getZoom()
     })
   })
@@ -852,7 +852,7 @@ function initializeMap() {
     const currentZoom = map.getZoom()
     const usingSvgIcons = shouldUseSvgIcons()
 
-    console.log(`🔍 ZOOM LIFECYCLE: zoomend fired (${timeSinceStart}ms since zoomstart)`, {
+    debugLog(`🔍 ZOOM LIFECYCLE: zoomend fired (${timeSinceStart}ms since zoomstart)`, {
       newZoom: currentZoom,
       markerCount: signalMarkers.size,
       iconType: usingSvgIcons ? 'SVG traffic signals' : 'circles',
@@ -864,7 +864,7 @@ function initializeMap() {
     const zoomEndHandlerTime = performance.now() - zoomEndHandlerStart
 
     const totalTime = zoomStartTime ? (performance.now() - zoomStartTime).toFixed(2) : 'unknown'
-    console.log(`🔍 ZOOM LIFECYCLE: Complete - handler: ${zoomEndHandlerTime.toFixed(2)}ms, total: ${totalTime}ms`)
+    debugLog(`🔍 ZOOM LIFECYCLE: Complete - handler: ${zoomEndHandlerTime.toFixed(2)}ms, total: ${totalTime}ms`)
   })
 
   updateGeometry()
@@ -874,13 +874,13 @@ function updateGeometry() {
   if (!map || !geometryLayer) return
 
   const updateStart = performance.now()
-  console.log('🗺️ updateGeometry: START', {
+  debugLog('🗺️ updateGeometry: START', {
     xdLayersBeforeClear: xdLayers.size
   })
 
   const collection = featureCollection.value
   if (!collection || !Array.isArray(collection.features) || collection.features.length === 0) {
-    console.log('🗺️ updateGeometry: NO FEATURES')
+    debugLog('🗺️ updateGeometry: NO FEATURES')
     return
   }
 
@@ -891,7 +891,7 @@ function updateGeometry() {
       ? props.xdSegments.map(xd => xd.XD)
       : props.signals.map(signal => signal.XD).filter(xd => xd !== undefined && xd !== null)
   )
-  console.log('🗺️ updateGeometry:', {
+  debugLog('🗺️ updateGeometry:', {
     totalFeatures: collection.features.length,
     displayedXDsCount: displayedXDs.size,
     displayedXDs: Array.from(displayedXDs)
@@ -905,7 +905,7 @@ function updateGeometry() {
   const newlyHidden = new Set([...previousDisplayedXDs].filter(xd => !displayedXDs.has(xd)))
   const stillVisible = new Set([...displayedXDs].filter(xd => previousDisplayedXDs.has(xd)))
 
-  console.log('🗺️ updateGeometry: state changes', {
+  debugLog('🗺️ updateGeometry: state changes', {
     newlyVisible: newlyVisible.size,
     newlyHidden: newlyHidden.size,
     stillVisible: stillVisible.size,
@@ -1026,7 +1026,7 @@ function updateGeometry() {
   // OPTIMIZATION: Only process XDs that need updates
   const xdsToUpdate = new Set([...newlyVisible, ...newlyHidden, ...stillVisible])
 
-  console.log('🗺️ updateGeometry: processing', {
+  debugLog('🗺️ updateGeometry: processing', {
     totalXDsToProcess: xdsToUpdate.size,
     totalFeaturesAvailable: featureMap.size
   })
@@ -1067,7 +1067,7 @@ function updateGeometry() {
   previousDisplayedXDs = new Set(displayedXDs)
 
   const updateEnd = performance.now()
-  console.log(`🗺️ updateGeometry: DONE in ${(updateEnd - updateStart).toFixed(2)}ms`, {
+  debugLog(`🗺️ updateGeometry: DONE in ${(updateEnd - updateStart).toFixed(2)}ms`, {
     created: createdCount,
     updated: updatedCount,
     skipped: skippedCount,
@@ -1233,7 +1233,7 @@ function createXdTooltip(xd, dataValue) {
 
 // Select XD segments and signals that intersect with a drawn polygon
 function selectXdSegmentsInPolygon(polygon) {
-  console.log('🎯 selectXdSegmentsInPolygon: START', {
+  debugLog('🎯 selectXdSegmentsInPolygon: START', {
     polygonType: polygon.geometry.type,
     xdLayersCount: xdLayers.size,
     signalMarkersCount: signalMarkers.size
@@ -1269,7 +1269,7 @@ function selectXdSegmentsInPolygon(polygon) {
     }
   })
 
-  console.log('🎯 selectXdSegmentsInPolygon: COMPLETE', {
+  debugLog('🎯 selectXdSegmentsInPolygon: COMPLETE', {
     selectedXDsCount: selectedXDs.length,
     selectedSignalsCount: selectedSignalIds.length,
     selectedXDs,
@@ -1441,7 +1441,7 @@ function updateMarkerIcon(signalId, marker, category, isSelected, dataHash = nul
   const setIconTime = performance.now() - setIconStart
 
   if (setIconTime > 10) {
-    console.log(`[SharedMap] SLOW setIcon for signal ${signalId}: ${setIconTime.toFixed(2)}ms`, {
+    debugLog(`[SharedMap] SLOW setIcon for signal ${signalId}: ${setIconTime.toFixed(2)}ms`, {
       iconGenTime: iconGenTime.toFixed(2) + 'ms',
       divIconTime: divIconTime.toFixed(2) + 'ms',
       setIconTime: setIconTime.toFixed(2) + 'ms'
@@ -1456,7 +1456,7 @@ function updateMarkerIcon(signalId, marker, category, isSelected, dataHash = nul
 
 function updateMarkerSizes() {
   const perfStart = performance.now()
-  console.log('⚙️ updateMarkerSizes: START', {
+  debugLog('⚙️ updateMarkerSizes: START', {
     markerCount: signalMarkers.size,
     hasMap: !!map,
     hasMarkersLayer: !!markersLayer
@@ -1503,14 +1503,14 @@ function updateMarkerSizes() {
     })
 
     const perfEnd = performance.now()
-    console.log(`�sT�,? updateMarkerSizes: changepoints COMPLETE in ${(perfEnd - perfStart).toFixed(2)}ms`, {
+    debugLog(`�sT�,? updateMarkerSizes: changepoints COMPLETE in ${(perfEnd - perfStart).toFixed(2)}ms`, {
       totalMarkers: signalMarkers.size
     })
     return
   }
 
   const iconSize = getMarkerSize()
-  console.log(`⚙️ updateMarkerSizes: iconSize = ${iconSize}`)
+  debugLog(`⚙️ updateMarkerSizes: iconSize = ${iconSize}`)
   let updatedCount = 0
   let findSignalTime = 0
   let getCategoryTime = 0
@@ -1546,7 +1546,7 @@ function updateMarkerSizes() {
     }
   })
   const mapBuildTime = performance.now() - mapBuildStart
-  console.log(`⚙️ Built signal data map in ${mapBuildTime.toFixed(2)}ms for ${props.signals.length} signals`)
+  debugLog(`⚙️ Built signal data map in ${mapBuildTime.toFixed(2)}ms for ${props.signals.length} signals`)
 
   signalMarkers.forEach((marker, signalId) => {
     const isSelected = selectionStore.isSignalSelected(signalId)
@@ -1607,7 +1607,7 @@ function updateMarkerSizes() {
   })
 
   const perfEnd = performance.now()
-  console.log(`⚙️ updateMarkerSizes: COMPLETE in ${(perfEnd - perfStart).toFixed(2)}ms`, {
+  debugLog(`⚙️ updateMarkerSizes: COMPLETE in ${(perfEnd - perfStart).toFixed(2)}ms`, {
     totalMarkers: signalMarkers.size,
     updatedCount,
     breakdown: {
@@ -2132,7 +2132,7 @@ function applyBeforeAfterStyling() {
 }
 
 function autoZoomToSignals() {
-  console.log('🔍 autoZoomToSignals: START', {
+  debugLog('🔍 autoZoomToSignals: START', {
     hasMap: !!map,
     signalMarkersCount: signalMarkers.size,
     xdLayersCount: xdLayers.size,
@@ -2140,7 +2140,7 @@ function autoZoomToSignals() {
   })
 
   if (!map || signalMarkers.size === 0) {
-    console.log('🔍 autoZoomToSignals: SKIPPED (no map or markers)')
+    debugLog('🔍 autoZoomToSignals: SKIPPED (no map or markers)')
     return
   }
 
@@ -2149,7 +2149,7 @@ function autoZoomToSignals() {
     bounds.push(marker.getLatLng())
   })
 
-  console.log('🔍 autoZoomToSignals: marker bounds', {
+  debugLog('🔍 autoZoomToSignals: marker bounds', {
     markerBoundsCount: bounds.length
   })
 
@@ -2161,7 +2161,7 @@ function autoZoomToSignals() {
       east: mapBounds.getEast(),
       west: mapBounds.getWest()
     }
-    console.log('🔍 autoZoomToSignals: initial bounds (markers only)', initialBounds)
+    debugLog('🔍 autoZoomToSignals: initial bounds (markers only)', initialBounds)
 
     // OPTIMIZATION: Skip XD bounds iteration for large datasets (>20 signals)
     // Marker bounds are sufficient for zoom, and iterating XDs is expensive
@@ -2185,7 +2185,7 @@ function autoZoomToSignals() {
         }
       })
 
-      console.log('🔍 autoZoomToSignals: after adding XD bounds', {
+      debugLog('🔍 autoZoomToSignals: after adding XD bounds', {
         xdBoundsAdded,
         displayedXDsCount: displayedXDs.size,
         finalBounds: {
@@ -2197,11 +2197,11 @@ function autoZoomToSignals() {
       })
     } else {
       // Large dataset - skip XD iteration, use marker bounds only
-      console.log('🔍 autoZoomToSignals: SKIPPING XD bounds (>20 signals, using marker bounds only)')
+      debugLog('🔍 autoZoomToSignals: SKIPPING XD bounds (>20 signals, using marker bounds only)')
     }
 
     if (mapBounds.isValid()) {
-      console.log('🔍 autoZoomToSignals: CALLING fitBounds')
+      debugLog('🔍 autoZoomToSignals: CALLING fitBounds')
 
       // OPTIMIZATION: For very large datasets, use faster fitBounds options
       if (signalMarkers.size > 100) {
@@ -2217,9 +2217,9 @@ function autoZoomToSignals() {
         map.fitBounds(mapBounds, { padding: [50, 50], maxZoom: 15 })
       }
 
-      console.log('🔍 autoZoomToSignals: DONE, new zoom:', map.getZoom())
+      debugLog('🔍 autoZoomToSignals: DONE, new zoom:', map.getZoom())
     } else {
-      console.log('🔍 autoZoomToSignals: SKIPPED (invalid bounds)')
+      debugLog('🔍 autoZoomToSignals: SKIPPED (invalid bounds)')
     }
   }
 }
@@ -2337,7 +2337,7 @@ function updateSelectionStyles() {
   })
 
   if (DEBUG_FRONTEND_LOGGING && updatedCount > 0) {
-    console.log(`[SharedMap] updateSelectionStyles: Updated ${updatedCount}/${signalMarkers.size} markers`)
+    debugLog(`[SharedMap] updateSelectionStyles: Updated ${updatedCount}/${signalMarkers.size} markers`)
   }
 
   const displayedXDs = new Set(
