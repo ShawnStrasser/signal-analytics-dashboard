@@ -156,25 +156,20 @@ def _clean_text(value: Any, fallback: str = "") -> str:
 
 
 def _resolve_report_date(filters: Dict[str, Any]) -> date:
-    """Determine the report date for joke selection."""
-    raw_end = filters.get("end_date")
-    if raw_end:
-        raw_str = str(raw_end)
-        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"):
-            try:
-                return datetime.strptime(raw_str, fmt).date()
-            except ValueError:
-                continue
-        try:
-            return datetime.fromisoformat(raw_str).date()
-        except ValueError:
-            pass
+    """
+    Determine the date displayed on the report and in dispatch metadata.
 
-    try:
-        zone = ZoneInfo(TIMEZONE)
-        return datetime.now(zone).date()
-    except (ZoneInfoNotFoundError, ValueError):
-        return datetime.utcnow().date()
+    We prefer an explicit override (report_date/dispatch_date) when present, and
+    otherwise fall back to today's date in the configured timezone. This avoids
+    using the changepoint window end date in email subjects or filenames.
+    """
+    explicit = filters.get("report_date") or filters.get("dispatch_date")
+    if explicit is not None:
+        coerced = _coerce_date(explicit)
+        if coerced:
+            return coerced
+
+    return _local_today()
 
 def _ordinal_suffix(value: int) -> str:
     if 10 <= value % 100 <= 20:
@@ -1678,6 +1673,7 @@ def build_monitoring_pdf(
     *,
     anomalies: Sequence[Dict[str, Any]] = (),
     joke: Optional[Dict[str, Any]] = None,
+    report_date: Optional[date] = None,
 ) -> bytes:
     if plt is None:
         raise RuntimeError(
@@ -1709,12 +1705,8 @@ def build_monitoring_pdf(
         series = anomaly.get("time_of_day_series") or []
         anomaly.setdefault("chart_image", _render_anomaly_chart(series))
 
-    try:
-        zone = ZoneInfo(TIMEZONE)
-    except (ZoneInfoNotFoundError, ValueError):
-        zone = None
-    today = datetime.now(zone) if zone else datetime.utcnow()
-    header_date = f"{today.strftime('%B')} {today.day}, {today.year}"
+    report_run_date = report_date or _resolve_report_date(filters)
+    header_date = _format_report_date(report_run_date)
 
     banner_top = pdf.get_y()
     banner_height = 96
@@ -2065,7 +2057,7 @@ def build_email_html(
         <div style="margin-top:22px;padding:14px 18px;background-color:#f6f9fc;border:1px solid #dbe7fb;border-radius:8px;">
             <p style="margin:0 0 8px 0;font-weight:bold;color:#1b4079;">Latest Changelog</p>
             <ul style="margin:0;padding-left:20px;color:#1b1b1b;line-height:1.4;">
-                <li><strong>Nov 25, 2025:</strong> Changepoint detection now filters out transient shifts that last only a few days, so alerts should be fewer but more meaningful.</li>
+                <li><strong>Nov 25, 2025:</strong> Monitoring emails now use the send date for subjects and filenames, matching the PDF header instead of the changepoint window.</li>
                 <li><strong>Dashboard polish:</strong> We fixed several interaction bugs&mdash;please let us know if you notice anything odd.</li>
                 <li><strong>Remove anomalies:</strong> The filter now correctly excludes flagged time periods.</li>
             </ul>
@@ -2098,17 +2090,24 @@ def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject
 
     enriched_rows = enrich_monitoring_rows(changepoint_rows)
     report_date = _resolve_report_date(filters)
+    report_date_iso = report_date.isoformat()
     joke = joke_service.prepare_joke(report_date)
-    pdf_bytes = build_monitoring_pdf(filters, enriched_rows, anomalies=anomaly_rows, joke=joke)
+    pdf_bytes = build_monitoring_pdf(
+        filters,
+        enriched_rows,
+        anomalies=anomaly_rows,
+        joke=joke,
+        report_date=report_date,
+    )
     html_content = build_email_html(filters, enriched_rows, anomalies=anomaly_rows, report_date=report_date)
-    subject = f"{subject_prefix} - {filters['end_date']}"
+    subject = f"{subject_prefix} - {report_date_iso}"
 
     if DEBUG_SAVE_REPORT_PDF:
         debug_dir = Path(BASE_DIR) / "debug_reports"
         debug_dir.mkdir(parents=True, exist_ok=True)
         safe_email = _clean_text(email, "recipient").replace("@", "_at_").replace(".", "_")
         timestamp_tag = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-        filename = f"monitoring-report-{filters['end_date']}-{safe_email}-{timestamp_tag}.pdf"
+        filename = f"monitoring-report-{report_date_iso}-{safe_email}-{timestamp_tag}.pdf"
         output_path = debug_dir / filename
         output_path.write_bytes(pdf_bytes)
         return {
@@ -2125,7 +2124,7 @@ def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject
         email,
         subject,
         html_content,
-        attachments=[(f"monitoring-report-{filters['end_date']}.pdf", pdf_bytes)],
+        attachments=[(f"monitoring-report-{report_date_iso}.pdf", pdf_bytes)],
     )
 
     return {
