@@ -6,8 +6,17 @@
         @click="toggleDrawer"
       ></v-app-bar-nav-icon>
 
-      <v-app-bar-title>
-        🚦 Signal Analytics Dashboard
+      <v-app-bar-title class="text-no-wrap">
+        <div class="d-inline-flex align-center" style="gap: 10px; white-space: nowrap;">
+          <v-img
+            src="/analytics-wave.svg"
+            alt="Signal Analytics logo"
+            width="28"
+            height="28"
+            cover
+          />
+          <span>Signal Analytics Dashboard</span>
+        </div>
       </v-app-bar-title>
 
       <!-- Theme and colorblind toggles -->

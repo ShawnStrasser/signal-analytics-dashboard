@@ -140,7 +140,6 @@ import { useXdDimensionsStore } from '@/stores/xdDimensions'
 import { useThemeStore } from '@/stores/theme'
 import ApiService from '@/services/api'
 import SharedMap from '@/components/SharedMap.vue'
-import { debugLog } from '@/config'
 import AnomalyChart from '@/components/AnomalyChart.vue'
 import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
 import { useMapFilterReloads } from '@/utils/useMapFilterReloads'
@@ -246,25 +245,21 @@ watch(() => [
   selectionStore.selectedXdSegments.size,
   selectionStore.allSelectedXdSegments.size
 ], async () => {
-  debugLog('Selection changed - reloading chart data')
   await loadChartData()
 })
 
 // Watch for chart mode changes
 watch(chartMode, async () => {
-  debugLog('📊 Chart mode changed - reloading chart data')
   await loadChartData()
 })
 
 // Watch for legend selection changes
 watch(legendBy, async () => {
-  debugLog('🏷️ Legend selection changed - reloading chart data')
   await loadChartData()
 })
 
 onMounted(async () => {
   const t0 = performance.now()
-  debugLog('🚀 Anomalies.vue: onMounted START')
 
   // Fetch config first
   const config = await ApiService.getConfig()
@@ -277,26 +272,22 @@ onMounted(async () => {
     xdDimensionsStore.loadDimensions()
   ])
   const t1 = performance.now()
-  debugLog(`📊 Dimensions loaded in ${(t1 - t0).toFixed(2)}ms`)
 
   // Load map and chart data (metrics only - will be merged with dimensions)
   loading.value = true
   try {
-    await Promise.all([
-      loadMapData(),
-      loadChartData()
-    ])
+  await Promise.all([
+    loadMapData(),
+    loadChartData()
+  ])
   } finally {
     loading.value = false
   }
 
   const t2 = performance.now()
-  debugLog(`✅ Anomalies.vue: onMounted COMPLETE, total ${(t2 - t0).toFixed(2)}ms`)
 })
 
 onActivated(async () => {
-  debugLog('🔄 Anomalies.vue: onActivated')
-
   const currentState = captureSelectionState()
 
   // Check if selections changed while we were away
@@ -307,10 +298,6 @@ onActivated(async () => {
     currentState.xdSegments !== lastSelectionState.value.xdSegments
 
   if (selectionsChanged) {
-    debugLog('🔄 Selections changed while away - reloading chart data', {
-      old: lastSelectionState.value,
-      new: currentState
-    })
     // Set loading state to hide chart during refresh
     loading.value = true
     try {
@@ -319,20 +306,16 @@ onActivated(async () => {
       loading.value = false
     }
   } else {
-    debugLog('🔄 Selections unchanged - no chart reload needed')
   }
 })
 
 onDeactivated(() => {
-  debugLog('🔄 Anomalies.vue: onDeactivated - capturing selection state')
   // Capture state when leaving the page so we can detect changes on return
   lastSelectionState.value = captureSelectionState()
 })
 
 async function loadMapData() {
   try {
-    debugLog('📡 API: Loading map data START', filtersStore.filterParams)
-    const t0 = performance.now()
     loadingMap.value = true
 
     // Fetch both signal-level and XD-level METRICS ONLY (no dimensions)
@@ -341,18 +324,9 @@ async function loadMapData() {
       ApiService.getAnomalySummaryXd(filtersStore.filterParams)
     ])
 
-    const t1 = performance.now()
-    debugLog(`📡 API: Parallel fetch took ${(t1 - t0).toFixed(2)}ms`)
-
     // Convert Arrow tables to objects (metrics only)
-    const conversionStart = performance.now()
     const signalMetrics = ApiService.arrowTableToObjects(signalTable)
     const xdMetrics = ApiService.arrowTableToObjects(xdTable)
-    const t2 = performance.now()
-    debugLog(`📡 API: arrowTableToObjects (both) took ${(t2 - conversionStart).toFixed(2)}ms`)
-
-    // Merge metrics with cached dimensions
-    const mergeStart = performance.now()
 
     // Merge signal metrics with dimensions
     const signalObjects = signalMetrics.map(metric => {
@@ -404,15 +378,9 @@ async function loadMapData() {
       }
     })
 
-    const t3 = performance.now()
-    debugLog(`📡 API: Dimension merge took ${(t3 - mergeStart).toFixed(2)}ms`)
-
     // Assign to refs
     mapData.value = signalObjects
     xdData.value = xdObjects
-    const t4 = performance.now()
-
-    debugLog(`📡 API: Loading map data DONE - ${mapData.value.length} signals, ${xdData.value.length} XDs in ${(t4 - t0).toFixed(2)}ms`)
   } catch (error) {
     console.error('Failed to load map data:', error)
     mapData.value = []
@@ -424,8 +392,6 @@ async function loadMapData() {
 
 async function loadChartData() {
   try {
-    debugLog('📊 API: Loading chart data START')
-    const t0 = performance.now()
     loadingChart.value = true
 
     // Build filter params for chart based on selections
@@ -437,10 +403,8 @@ async function loadChartData() {
 
       if (selectedXds.length > 0) {
         filters.xd_segments = selectedXds
-        debugLog('📊 API: Filtering chart to selected XDs', selectedXds)
       } else {
         // No selections, show empty chart
-        debugLog('📊 API: No XD selections, showing empty chart')
         chartData.value = []
         return
       }
@@ -448,17 +412,12 @@ async function loadChartData() {
 
     // Use different API based on chart mode
     let arrowTable
-    let t1
     if (chartMode.value === 'percent') {
       // Percent Anomaly mode
       arrowTable = await ApiService.getAnomalyPercentAggregated(filters, legendBy.value)
-      t1 = performance.now()
-      debugLog(`📊 API: getAnomalyPercentAggregated took ${(t1 - t0).toFixed(2)}ms`)
     } else {
       // Forecast vs Actual mode
       arrowTable = await ApiService.getAnomalyAggregated(filters, legendBy.value)
-      t1 = performance.now()
-      debugLog(`📊 API: getAnomalyAggregated took ${(t1 - t0).toFixed(2)}ms`)
     }
 
     const data = ApiService.arrowTableToObjects(arrowTable)
@@ -469,21 +428,11 @@ async function loadChartData() {
       const uniqueGroups = new Set(data.map(row => row.LEGEND_GROUP))
       // Show warning when we have exactly maxLegendEntities groups
       legendClipped.value = uniqueGroups.size === maxLegendEntities.value
-      debugLog('🚨 Anomalies legendClipped check:', {
-        uniqueGroupsSize: uniqueGroups.size,
-        maxLegendEntities: maxLegendEntities.value,
-        legendClipped: legendClipped.value,
-        uniqueGroupsSample: Array.from(uniqueGroups).slice(0, 3)
-      })
     } else {
       legendClipped.value = false
-      debugLog('🚨 Anomalies legendClipped: no LEGEND_GROUP column, legendClipped = false')
     }
 
     chartData.value = data
-    const t2 = performance.now()
-    debugLog(`📊 API: arrowTableToObjects took ${(t2 - t1).toFixed(2)}ms`)
-    debugLog(`📊 API: Loading chart data DONE - ${chartData.value.length} records in ${(t2 - t0).toFixed(2)}ms`)
   } catch (error) {
     console.error('Failed to load chart data:', error)
     chartData.value = []

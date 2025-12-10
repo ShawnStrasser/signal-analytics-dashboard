@@ -129,19 +129,9 @@ onUnmounted(() => {
 })
 
 watch(() => [props.data, props.selectedSignal, props.chartMode, props.legendBy], () => {
-  const watchStart = performance.now()
-  debugLog('📊 ANOMALY CHART WATCH: data changed, deferring to nextTick', {
-    dataLength: props.data?.length,
-    chartMode: props.chartMode,
-    legendBy: props.legendBy
-  })
   // Defer chart update to next tick to avoid updating during render
   nextTick(() => {
-    const tickStart = performance.now()
-    debugLog(`📊 ANOMALY CHART: nextTick triggered, delay from watch: ${(tickStart - watchStart).toFixed(2)}ms`)
     updateChart()
-    const tickEnd = performance.now()
-    debugLog(`📊 ANOMALY CHART: updateChart complete, took ${(tickEnd - tickStart).toFixed(2)}ms`)
   })
 }, { deep: true })
 
@@ -185,16 +175,9 @@ function requestChartResize(immediate = false) {
 }
 
 function updateChart() {
-  const t0 = performance.now()
   if (!chart || !props.data.length) {
-    debugLog('📊 ANOMALY CHART: updateChart skipped (no chart or data)')
     return
   }
-  debugLog('📊 ANOMALY CHART: updateChart START', {
-    dataPoints: props.data.length,
-    chartMode: props.chartMode,
-    legendBy: props.legendBy
-  })
 
   // Use nextTick to ensure chart resize happens after DOM updates
   requestChartResize()
@@ -699,10 +682,6 @@ function updateChart() {
     ]
   }
 
-  const setOptionStart = performance.now()
   chart.setOption(option, true)
-  const t1 = performance.now()
-  debugLog(`📊 ANOMALY CHART: setOption took ${(t1 - setOptionStart).toFixed(2)}ms`)
-  debugLog(`📊 ANOMALY CHART: updateChart COMPLETE, total ${(t1 - t0).toFixed(2)}ms`)
 }
 </script>

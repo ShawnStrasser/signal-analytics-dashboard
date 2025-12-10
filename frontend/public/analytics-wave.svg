@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Signal Analytics">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#0b1220"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="16" y1="96" x2="112" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff2b2b"/>
+      <stop offset="0.5" stop-color="#f6d23f"/>
+      <stop offset="1" stop-color="#2ecc71"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="24" fill="url(#bg)"/>
+  <path
+    d="M8 94 C32 74 48 42 64 58 S104 106 120 36"
+    fill="none"
+    stroke="#1d2a3f"
+    stroke-width="9"
+    stroke-linecap="round"
+    opacity="0.35"
+  />
+  <path
+    d="M8 92 C32 72 48 40 64 56 S104 104 120 34"
+    fill="none"
+    stroke="url(#wave)"
+    stroke-width="12"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

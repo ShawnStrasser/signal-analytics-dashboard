@@ -7,7 +7,6 @@ import { ref, onMounted, onUnmounted, watch, nextTick, onActivated } from 'vue'
 import { useTheme } from 'vuetify'
 import { useThemeStore } from '@/stores/theme'
 import * as echarts from 'echarts'
-import { debugLog } from '@/config'
 
 const props = defineProps({
   data: {
@@ -74,18 +73,11 @@ onUnmounted(() => {
 
 watch(() => [props.data, props.selectedSignal, props.isTimeOfDay, props.legendBy], () => {
   const watchStart = performance.now()
-  debugLog('📊 CHART WATCH: data changed, deferring to nextTick', {
-    dataLength: props.data?.length,
-    isTimeOfDay: props.isTimeOfDay,
-    legendBy: props.legendBy
-  })
   // Defer chart update to next tick to avoid updating during render
   nextTick(() => {
     const tickStart = performance.now()
-    debugLog(`📊 CHART: nextTick triggered, delay from watch: ${(tickStart - watchStart).toFixed(2)}ms`)
     updateChart()
     const tickEnd = performance.now()
-    debugLog(`📊 CHART: updateChart complete, took ${(tickEnd - tickStart).toFixed(2)}ms`)
   })
 }, { deep: true })
 
@@ -131,11 +123,9 @@ function requestChartResize(immediate = false) {
 function updateChart() {
   const t0 = performance.now()
   if (!chart || !props.data.length) {
-    debugLog('📊 CHART: updateChart skipped (no chart or data)')
     chart?.clear()
     return
   }
-  debugLog('📊 CHART: updateChart START', { dataPoints: props.data.length, isTimeOfDay: props.isTimeOfDay, legendBy: props.legendBy })
 
   // Use nextTick to ensure chart resize happens after DOM updates
   requestChartResize()
@@ -576,7 +566,5 @@ function updateChart() {
   const setOptionStart = performance.now()
   chart.setOption(option, true)
   const t1 = performance.now()
-  debugLog(`📊 CHART: setOption took ${(t1 - setOptionStart).toFixed(2)}ms`)
-  debugLog(`📊 CHART: updateChart COMPLETE, total ${(t1 - t0).toFixed(2)}ms`)
 }
 </script>

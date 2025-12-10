@@ -167,6 +167,7 @@ const legendBy = ref('none') // Legend grouping selection
 const legendClipped = ref(false) // Whether legend entities were clipped
 const maxLegendEntities = ref(10) // Max legend entities from backend config
 const shouldAutoZoomMap = ref(true) // Controls whether the map auto-zooms on data refresh
+const lastAggregateMode = ref(aggregateByTimeOfDay.value) // Track mode to clear stale chart data when shape changes
 
 const aggregationLabelMap = {
   '15min': '15-minute bins',
@@ -372,6 +373,14 @@ async function loadMapData() {
 }
 
 async function loadChartData() {
+  // If the aggregation mode changed (date/time -> time-of-day or vice versa),
+  // clear the chart data immediately so the chart doesn't try to render with the wrong shape.
+  const currentAggregateMode = aggregateByTimeOfDay.value
+  if (currentAggregateMode !== lastAggregateMode.value) {
+    chartData.value = []
+    lastAggregateMode.value = currentAggregateMode
+  }
+
   try {
     loadingChart.value = true
     const filters = { ...filtersStore.filterParams }
@@ -387,7 +396,7 @@ async function loadChartData() {
     }
 
     let arrowTable
-    if (aggregateByTimeOfDay.value === 'true') {
+    if (currentAggregateMode === 'true') {
       arrowTable = await ApiService.getTravelTimeByTimeOfDay(filters, legendBy.value)
     } else {
       arrowTable = await ApiService.getTravelTimeAggregated(filters, legendBy.value)

@@ -1,4 +1,3 @@
-import { debugLog } from '@/config'
 /**
  * XD Dimensions Store
  *
@@ -50,23 +49,15 @@ export const useXdDimensionsStore = defineStore('xdDimensions', {
      */
     async loadDimensions() {
       if (this.loaded || this.loading) {
-        debugLog('🛣️ XD dimensions already loaded/loading')
         return
       }
 
-      const t0 = performance.now()
-      debugLog('🛣️ Loading XD dimensions START')
       this.loading = true
       this.error = null
 
       try {
         const arrowTable = await ApiService.getDimSignalsXd()
-        const t1 = performance.now()
-        debugLog(`🛣️ XD dimensions fetch took ${(t1 - t0).toFixed(2)}ms`)
-
         const data = ApiService.arrowTableToObjects(arrowTable)
-        const t2 = performance.now()
-        debugLog(`🛣️ XD dimensions parse took ${(t2 - t1).toFixed(2)}ms`)
 
         // Build Map for O(1) lookups
         this.dimensions.clear()
@@ -80,8 +71,6 @@ export const useXdDimensionsStore = defineStore('xdDimensions', {
         })
 
         this.loaded = true
-        const t3 = performance.now()
-        debugLog(`🛣️ XD dimensions loaded: ${this.dimensions.size} XD segments in ${(t3 - t0).toFixed(2)}ms`)
       } catch (error) {
         console.error('Failed to load XD dimensions:', error)
         this.error = error.message

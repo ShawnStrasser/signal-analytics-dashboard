@@ -1,4 +1,3 @@
-import { debugLog } from '@/config'
 import { watch } from 'vue'
 
 /**
@@ -12,7 +11,6 @@ import { watch } from 'vue'
  * @param {Object} options.selectionStore - Pinia selection store with hasMapSelections / clearAllSelections.
  * @param {Function} options.reloadOnGeometryChange - Async callback invoked when geometry filters change.
  * @param {Function} [options.reloadOnDataChange] - Async callback invoked when non-geometry filters change.
- * @param {string} [options.loggerPrefix='Map'] - Prefix used for console logging.
  * @param {boolean} [options.clearSelectionsOnGeometryChange=true] - Whether to clear map selections.
  * @param {Function} [options.onBeforeGeometryChange] - Optional hook executed before geometry reload begins.
  * @param {Function} [options.onBeforeDataChange] - Optional hook executed before data/time reload begins.
@@ -25,7 +23,6 @@ export function useMapFilterReloads({
   selectionStore,
   reloadOnGeometryChange,
   reloadOnDataChange,
-  loggerPrefix = 'Map',
   clearSelectionsOnGeometryChange = true,
   onBeforeGeometryChange,
   onBeforeDataChange
@@ -42,7 +39,6 @@ export function useMapFilterReloads({
     clearSelections
   }) => {
     if (loadingRef?.value) {
-      debugLog(`${loggerPrefix}: Already loading - skipping ${type} filter change`)
       return
     }
 

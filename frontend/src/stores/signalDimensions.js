@@ -1,4 +1,3 @@
-import { debugLog } from '@/config'
 /**
  * Signal Dimensions Store
  *
@@ -50,23 +49,15 @@ export const useSignalDimensionsStore = defineStore('signalDimensions', {
      */
     async loadDimensions() {
       if (this.loaded || this.loading) {
-        debugLog('📊 Signal dimensions already loaded/loading')
         return
       }
 
-      const t0 = performance.now()
-      debugLog('📊 Loading signal dimensions START')
       this.loading = true
       this.error = null
 
       try {
         const arrowTable = await ApiService.getDimSignals()
-        const t1 = performance.now()
-        debugLog(`📊 Signal dimensions fetch took ${(t1 - t0).toFixed(2)}ms`)
-
         const data = ApiService.arrowTableToObjects(arrowTable)
-        const t2 = performance.now()
-        debugLog(`📊 Signal dimensions parse took ${(t2 - t1).toFixed(2)}ms`)
 
         // Build Map for O(1) lookups
         this.dimensions.clear()
@@ -81,8 +72,6 @@ export const useSignalDimensionsStore = defineStore('signalDimensions', {
         })
 
         this.loaded = true
-        const t3 = performance.now()
-        debugLog(`📊 Signal dimensions loaded: ${this.dimensions.size} signals in ${(t3 - t0).toFixed(2)}ms`)
       } catch (error) {
         console.error('Failed to load signal dimensions:', error)
         this.error = error.message

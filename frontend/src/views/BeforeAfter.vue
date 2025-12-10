@@ -170,7 +170,6 @@ import { useXdDimensionsStore } from '@/stores/xdDimensions'
 import { useThemeStore } from '@/stores/theme'
 import ApiService from '@/services/api'
 import SharedMap from '@/components/SharedMap.vue'
-import { debugLog } from '@/config'
 import BeforeAfterChart from '@/components/BeforeAfterChart.vue'
 import SmallMultiplesChart from '@/components/SmallMultiplesChart.vue'
 import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
@@ -367,15 +366,6 @@ async function loadMapData() {
       }
     })
 
-    debugLog('🔍 Before/After Map Data Sample:', {
-      signalCount: signalObjects.length,
-      xdCount: xdObjects.length,
-      sampleSignal: signalObjects[0],
-      sampleXd: xdObjects[0],
-      signalsSample: signalObjects.slice(0, 3),
-      xdSample: xdObjects.slice(0, 3)
-    })
-
     mapData.value = signalObjects
     xdData.value = xdObjects
 
@@ -440,15 +430,8 @@ async function loadChartData() {
     if (data.length > 0 && data[0].LEGEND_GROUP !== undefined) {
       const uniqueGroups = new Set(data.map(row => row.LEGEND_GROUP))
       legendClipped.value = uniqueGroups.size === maxLegendEntities.value
-      debugLog('🚨 BeforeAfter legendClipped check:', {
-        uniqueGroupsSize: uniqueGroups.size,
-        maxLegendEntities: maxLegendEntities.value,
-        legendClipped: legendClipped.value,
-        uniqueGroupsSample: Array.from(uniqueGroups).slice(0, 3)
-      })
     } else {
       legendClipped.value = false
-      debugLog('🚨 BeforeAfter legendClipped: no LEGEND_GROUP column, legendClipped = false')
     }
 
     chartData.value = data
@@ -501,15 +484,8 @@ async function loadSmallMultiplesData() {
     if (data.length > 0 && data[0].LEGEND_GROUP !== undefined) {
       const uniqueGroups = new Set(data.map(row => row.LEGEND_GROUP))
       smallMultiplesClipped.value = uniqueGroups.size === maxSmallMultiplesEntities
-      debugLog('🚨 BeforeAfter SmallMultiples legendClipped check:', {
-        uniqueGroupsSize: uniqueGroups.size,
-        maxSmallMultiplesEntities: maxSmallMultiplesEntities,
-        smallMultiplesClipped: smallMultiplesClipped.value,
-        uniqueGroupsSample: Array.from(uniqueGroups).slice(0, 3)
-      })
     } else {
       smallMultiplesClipped.value = false
-      debugLog('🚨 BeforeAfter SmallMultiples legendClipped: no LEGEND_GROUP column, smallMultiplesClipped = false')
     }
 
     smallMultiplesData.value = data

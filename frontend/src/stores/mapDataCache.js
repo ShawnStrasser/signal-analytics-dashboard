@@ -1,4 +1,3 @@
-import { debugLog } from '@/config'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
@@ -29,7 +28,6 @@ export const useMapDataCacheStore = defineStore('mapDataCache', () => {
   function getTravelTimeCache(startDate, endDate, startHour, startMinute, endHour, endMinute, dayOfWeek) {
     const key = `${startDate}|${endDate}|${startHour}|${startMinute}|${endHour}|${endMinute}|${dayOfWeek}`
     if (travelTimeCacheKey.value === key && travelTimeCacheAll.value) {
-      debugLog('📦 Cache HIT: Travel time summary (all signals)')
       return travelTimeCacheAll.value
     }
     return null
@@ -50,7 +48,6 @@ export const useMapDataCacheStore = defineStore('mapDataCache', () => {
     const key = `${startDate}|${endDate}|${startHour}|${startMinute}|${endHour}|${endMinute}|${dayOfWeek}`
     travelTimeCacheKey.value = key
     travelTimeCacheAll.value = data
-    debugLog(`📦 Cache SET: Travel time summary (${data.length} records)`)
   }
 
   /**
@@ -68,7 +65,6 @@ export const useMapDataCacheStore = defineStore('mapDataCache', () => {
   function getAnomalyCache(startDate, endDate, anomalyType, startHour, startMinute, endHour, endMinute, dayOfWeek) {
     const key = `${startDate}|${endDate}|${anomalyType}|${startHour}|${startMinute}|${endHour}|${endMinute}|${dayOfWeek}`
     if (anomalyCacheKey.value === key && anomalyCacheAll.value) {
-      debugLog('📦 Cache HIT: Anomaly summary (all signals)')
       return anomalyCacheAll.value
     }
     return null
@@ -90,7 +86,6 @@ export const useMapDataCacheStore = defineStore('mapDataCache', () => {
     const key = `${startDate}|${endDate}|${anomalyType}|${startHour}|${startMinute}|${endHour}|${endMinute}|${dayOfWeek}`
     anomalyCacheKey.value = key
     anomalyCacheAll.value = data
-    debugLog(`📦 Cache SET: Anomaly summary (${data.length} records)`)
   }
 
   /**
@@ -101,7 +96,6 @@ export const useMapDataCacheStore = defineStore('mapDataCache', () => {
     travelTimeCacheKey.value = null
     anomalyCacheAll.value = null
     anomalyCacheKey.value = null
-    debugLog('📦 Cache CLEARED')
   }
 
   /**
@@ -110,7 +104,6 @@ export const useMapDataCacheStore = defineStore('mapDataCache', () => {
   function clearTravelTimeCache() {
     travelTimeCacheAll.value = null
     travelTimeCacheKey.value = null
-    debugLog('📦 Cache CLEARED: Travel time')
   }
 
   /**
@@ -119,7 +112,6 @@ export const useMapDataCacheStore = defineStore('mapDataCache', () => {
   function clearAnomalyCache() {
     anomalyCacheAll.value = null
     anomalyCacheKey.value = null
-    debugLog('📦 Cache CLEARED: Anomaly')
   }
 
   return {
