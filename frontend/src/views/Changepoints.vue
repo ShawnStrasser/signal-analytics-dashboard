@@ -35,26 +35,36 @@
             </span>
           </div>
           <v-spacer></v-spacer>
-          <div v-if="selectionStore.hasMapSelections" class="d-flex align-center gap-2 flex-wrap">
-            <v-chip size="small" color="info" variant="tonal" class="selection-chip">
-              <span v-if="selectionStore.selectedSignals.size > 0">
-                {{ selectionStore.selectedSignals.size }} signal(s)
-              </span>
-              <span v-if="selectionStore.selectedSignals.size > 0 && selectionStore.selectedXdSegments.size > 0">
-                &bull;
-              </span>
-              <span v-if="selectionStore.selectedXdSegments.size > 0">
-                {{ selectionStore.selectedXdSegments.size }} XD segment(s)
-              </span>
-            </v-chip>
-            <v-btn
-              size="small"
-              variant="outlined"
-              color="error"
-              @click="clearMapSelections"
-            >
-              Clear Map Selections
-            </v-btn>
+          <div class="d-flex align-center gap-2 flex-wrap">
+            <v-switch
+              v-model="showAllSignals"
+              label="Show all signals"
+              density="compact"
+              hide-details
+              color="primary"
+              class="map-toggle"
+            ></v-switch>
+            <template v-if="selectionStore.hasMapSelections">
+              <v-chip size="small" color="info" variant="tonal" class="selection-chip">
+                <span v-if="selectionStore.selectedSignals.size > 0">
+                  {{ selectionStore.selectedSignals.size }} signal(s)
+                </span>
+                <span v-if="selectionStore.selectedSignals.size > 0 && selectionStore.selectedXdSegments.size > 0">
+                  &bull;
+                </span>
+                <span v-if="selectionStore.selectedXdSegments.size > 0">
+                  {{ selectionStore.selectedXdSegments.size }} XD segment(s)
+                </span>
+              </v-chip>
+              <v-btn
+                size="small"
+                variant="outlined"
+                color="error"
+                @click="clearMapSelections"
+              >
+                Clear Map Selections
+              </v-btn>
+            </template>
           </div>
         </v-card-title>
         <v-card-text class="map-container">
@@ -71,7 +81,10 @@
             v-else-if="!mapIsLoading"
             class="d-flex justify-center align-center loading-overlay"
           >
-            <div class="text-h5 text-grey">No changepoints match the current filters</div>
+            <div class="text-center">
+              <div class="text-h5 text-grey">No changepoints match the current filters</div>
+              <div class="text-body-2 text-grey mt-2">Try enabling "Show all signals" to see signals without changepoints</div>
+            </div>
           </div>
           <div v-if="mapIsLoading && showMapSpinner" class="d-flex justify-center align-center loading-overlay">
             <v-progress-circular indeterminate size="64"></v-progress-circular>
@@ -240,6 +253,7 @@ const xdData = ref([])
 const mapIsLoading = ref(true)
 const shouldAutoZoomMap = ref(true)
 const loading = ref(false)
+const showAllSignals = ref(false) // Toggle to show all signals vs only those with changepoints
 
 const tableRows = ref([])
 const tableTotal = ref(0)
@@ -346,6 +360,16 @@ useMapFilterReloads({
   reloadOnDataChange: async () => {
     resetDetailSelection()
     await loadAllData({ autoZoom: false })
+  }
+})
+
+// Watch for showAllSignals toggle changes - reload map data
+watch(showAllSignals, async () => {
+  loading.value = true
+  try {
+    await loadMapData({ autoZoom: false })
+  } finally {
+    loading.value = false
   }
 })
 
@@ -568,10 +592,37 @@ async function loadMapData({ autoZoom = false } = {}) {
           TOP_BEARING: row.TOP_BEARING,
           LATITUDE: dimensions.LATITUDE,
           LONGITUDE: dimensions.LONGITUDE,
-          NAME: dimensions.NAME
+          NAME: dimensions.NAME,
+          hasChangepoints: true
         }
       })
       .filter(Boolean)
+
+    // If showAllSignals is enabled, add signals without changepoints
+    let finalSignals = enrichedSignals
+    if (showAllSignals.value) {
+      const signalIdsWithChangepoints = new Set(enrichedSignals.map(s => s.ID))
+      const allSignals = signalDimensionsStore.allSignals || []
+      const signalsWithoutChangepoints = allSignals
+        .filter(s => !signalIdsWithChangepoints.has(s.ID) && s.LATITUDE != null && s.LONGITUDE != null)
+        .map(s => ({
+          ID: s.ID,
+          ABS_PCT_SUM: 0,
+          AVG_PCT_CHANGE: 0,
+          CHANGEPOINT_COUNT: 0,
+          TOP_XD: null,
+          TOP_TIMESTAMP: null,
+          TOP_PCT_CHANGE: 0,
+          TOP_AVG_DIFF: 0,
+          TOP_ROADNAME: null,
+          TOP_BEARING: null,
+          LATITUDE: s.LATITUDE,
+          LONGITUDE: s.LONGITUDE,
+          NAME: s.NAME,
+          hasChangepoints: false
+        }))
+      finalSignals = [...enrichedSignals, ...signalsWithoutChangepoints]
+    }
 
     const enrichedXd = xdRows.map(row => {
       const dimensions = xdDimensionsStore.getXdDimensions(row.XD) || {}
@@ -605,9 +656,9 @@ async function loadMapData({ autoZoom = false } = {}) {
       }
     })
 
-    mapData.value = enrichedSignals
+    mapData.value = finalSignals
     xdData.value = enrichedXd
-    selectionStore.updateMappings(enrichedSignals, enrichedXd)
+    selectionStore.updateMappings(finalSignals, enrichedXd)
 
     if (autoZoom) {
       await nextTick()
@@ -805,6 +856,15 @@ function formatScore(value) {
 
 .selection-chip {
   font-size: 0.85rem;
+}
+
+/* Map toggle styling */
+.map-toggle {
+  margin-right: 8px;
+}
+
+.map-toggle :deep(.v-label) {
+  font-size: 0.75rem;
 }
 
 .legend-container {

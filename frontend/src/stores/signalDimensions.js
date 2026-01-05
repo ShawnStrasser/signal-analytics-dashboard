@@ -39,7 +39,22 @@ export const useSignalDimensionsStore = defineStore('signalDimensions', {
     /**
      * Get total count of cached signal dimensions
      */
-    count: (state) => state.dimensions.size
+    count: (state) => state.dimensions.size,
+
+    /**
+     * Get all signals as an array with ID included
+     * Useful for "show all signals" toggle on map views
+     */
+    allSignals: (state) => {
+      const signals = []
+      state.dimensions.forEach((data, id) => {
+        signals.push({
+          ID: id,
+          ...data
+        })
+      })
+      return signals
+    }
   },
 
   actions: {

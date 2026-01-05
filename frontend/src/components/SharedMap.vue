@@ -520,6 +520,16 @@ onUnmounted(() => {
 })
 
 onActivated(() => {
+  // Invalidate map size to fix tile loading issues when navigating between pages
+  // This is needed because the map container may have been resized while deactivated
+  if (map) {
+    // Use nextTick to ensure DOM is fully updated before invalidating
+    setTimeout(() => {
+      if (map) {
+        map.invalidateSize({ animate: false })
+      }
+    }, 100)
+  }
 
   if (map && mapStateStore.mapCenter && mapStateStore.mapZoom) {
     const savedCenter = mapStateStore.mapCenter

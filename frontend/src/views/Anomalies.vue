@@ -36,24 +36,34 @@
             <span class="map-instruction ml-2 text-medium-emphasis d-none d-md-inline">— Click signals or segments to filter the chart.</span>
           </div>
           <v-spacer></v-spacer>
-          <div v-if="selectionStore.hasMapSelections" class="d-flex align-center gap-2 flex-wrap">
-            <v-chip size="small" color="info" variant="tonal" class="selection-chip">
-              <span v-if="selectionStore.selectedSignals.size > 0">
-                {{ selectionStore.selectedSignals.size }} signal(s)
-              </span>
-              <span v-if="selectionStore.selectedSignals.size > 0 && selectionStore.selectedXdSegments.size > 0"> • </span>
-              <span v-if="selectionStore.selectedXdSegments.size > 0">
-                {{ selectionStore.selectedXdSegments.size }} XD segment(s)
-              </span>
-            </v-chip>
-            <v-btn
-              size="small"
-              variant="outlined"
-              color="error"
-              @click="clearMapSelections"
-            >
-              Clear Map Selections
-            </v-btn>
+          <div class="d-flex align-center gap-2 flex-wrap">
+            <v-switch
+              v-model="showAllSignals"
+              label="Show all signals"
+              density="compact"
+              hide-details
+              color="primary"
+              class="map-toggle"
+            ></v-switch>
+            <template v-if="selectionStore.hasMapSelections">
+              <v-chip size="small" color="info" variant="tonal" class="selection-chip">
+                <span v-if="selectionStore.selectedSignals.size > 0">
+                  {{ selectionStore.selectedSignals.size }} signal(s)
+                </span>
+                <span v-if="selectionStore.selectedSignals.size > 0 && selectionStore.selectedXdSegments.size > 0"> • </span>
+                <span v-if="selectionStore.selectedXdSegments.size > 0">
+                  {{ selectionStore.selectedXdSegments.size }} XD segment(s)
+                </span>
+              </v-chip>
+              <v-btn
+                size="small"
+                variant="outlined"
+                color="error"
+                @click="clearMapSelections"
+              >
+                Clear Map Selections
+              </v-btn>
+            </template>
           </div>
         </v-card-title>
         <v-card-text class="map-container">
@@ -71,7 +81,10 @@
             <v-progress-circular indeterminate size="64"></v-progress-circular>
           </div>
           <div v-else-if="!mapIsLoading && mapData.length === 0" class="d-flex justify-center align-center loading-overlay">
-            <div class="text-h5 text-grey">NO DATA</div>
+            <div class="text-center">
+              <div class="text-h5 text-grey">No anomalies detected</div>
+              <div class="text-body-2 text-grey mt-2">Try enabling "Show all signals" to see signals without anomalies</div>
+            </div>
           </div>
         </v-card-text>
       </v-card>
@@ -166,6 +179,7 @@ const legendBy = ref('none') // Legend grouping selection
 const legendClipped = ref(false) // Whether legend entities were clipped
 const maxLegendEntities = ref(6) // Max legend entities for anomaly charts (each entity has 2 lines)
 const shouldAutoZoomMap = ref(true) // Controls whether the map auto-zooms on data refresh
+const showAllSignals = ref(false) // Toggle to show all signals vs only those with anomalies
 
 const mapIsLoading = computed(() => loading.value || loadingMap.value)
 const chartIsLoading = computed(() => loading.value || loadingChart.value)
@@ -256,6 +270,16 @@ watch(chartMode, async () => {
 // Watch for legend selection changes
 watch(legendBy, async () => {
   await loadChartData()
+})
+
+// Watch for showAllSignals toggle changes - reload map data
+watch(showAllSignals, async () => {
+  loading.value = true
+  try {
+    await loadMapData()
+  } finally {
+    loading.value = false
+  }
 })
 
 onMounted(async () => {
@@ -350,7 +374,7 @@ async function loadMapData() {
       }
     })
     .filter(signal => signal.LATITUDE && signal.LONGITUDE) // Only include signals with coordinates
-    .filter(signal => signal.ANOMALY_PERCENTAGE > 0) // Filter out signals with 0% anomalies
+    .filter(signal => showAllSignals.value || signal.ANOMALY_PERCENTAGE > 0) // Filter based on toggle
 
     // Merge XD metrics with dimensions
     const xdObjects = xdMetrics.map(metric => {
@@ -566,6 +590,15 @@ function clearMapSelections() {
   font-size: 0.875rem;
 }
 
+/* Map toggle styling */
+.map-toggle {
+  margin-right: 8px;
+}
+
+.map-toggle :deep(.v-label) {
+  font-size: 0.75rem;
+}
+
 /* Mobile legend adjustments */
 @media (max-width: 600px) {
   .legend-container {
@@ -589,6 +622,14 @@ function clearMapSelections() {
   .legend-circle {
     width: 12px;
     height: 12px;
+  }
+
+  .map-toggle {
+    margin-right: 4px;
+  }
+
+  .map-toggle :deep(.v-label) {
+    font-size: 0.65rem;
   }
 }
 </style>

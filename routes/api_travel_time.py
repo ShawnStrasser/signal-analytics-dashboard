@@ -31,6 +31,7 @@ from utils.query_utils import (
     build_legend_join,
     build_legend_filter
 )
+from utils.request_helpers import get_request_param, get_request_param_list
 
 travel_time_bp = Blueprint('travel_time', __name__)
 
@@ -201,24 +202,24 @@ def get_xd_geometry():
         return f"Error fetching XD geometry: {e}", 500
 
 
-@travel_time_bp.route('/travel-time-summary')
+@travel_time_bp.route('/travel-time-summary', methods=['GET', 'POST'])
 def get_travel_time_summary():
     """Get travel time summary for map visualization as Arrow"""
     request_start = time.time()
 
-    # Get query parameters
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    day_of_week = request.args.getlist('day_of_week')
-    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
+    # Get query parameters (supports both GET and POST)
+    start_date = get_request_param('start_date')
+    end_date = get_request_param('end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    day_of_week = get_request_param_list('day_of_week')
+    remove_anomalies = str(get_request_param('remove_anomalies', 'false')).lower() == 'true'
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -311,24 +312,24 @@ def get_travel_time_summary():
         return f"Error fetching travel time summary: {e}", 500
 
 
-@travel_time_bp.route('/travel-time-summary-xd')
+@travel_time_bp.route('/travel-time-summary-xd', methods=['GET', 'POST'])
 def get_travel_time_summary_xd():
     """Get XD segment-level data for map tooltips and coloring as Arrow"""
     request_start = time.time()
 
-    # Get query parameters (same as travel-time-summary)
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    day_of_week = request.args.getlist('day_of_week')
-    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
+    # Get query parameters (supports both GET and POST)
+    start_date = get_request_param('start_date')
+    end_date = get_request_param('end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    day_of_week = get_request_param_list('day_of_week')
+    remove_anomalies = str(get_request_param('remove_anomalies', 'false')).lower() == 'true'
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -421,26 +422,26 @@ def get_travel_time_summary_xd():
         return f"Error fetching XD travel time summary: {e}", 500
 
 
-@travel_time_bp.route('/travel-time-aggregated')
+@travel_time_bp.route('/travel-time-aggregated', methods=['GET', 'POST'])
 def get_travel_time_aggregated():
     """Get aggregated travel time data by timestamp as Arrow"""
     request_start = time.time()
 
-    # Get query parameters
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    xd_segments = request.args.getlist('xd_segments')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    day_of_week = request.args.getlist('day_of_week')
-    legend_by = request.args.get('legend_by')  # New parameter
-    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
+    # Get query parameters (supports both GET and POST)
+    start_date = get_request_param('start_date')
+    end_date = get_request_param('end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    xd_segments = get_request_param_list('xd_segments')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    day_of_week = get_request_param_list('day_of_week')
+    legend_by = get_request_param('legend_by')  # Legend parameter
+    remove_anomalies = str(get_request_param('remove_anomalies', 'false')).lower() == 'true'
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -598,26 +599,26 @@ def get_travel_time_aggregated():
         return f"Error fetching aggregated travel time data: {e}", 500
 
 
-@travel_time_bp.route('/travel-time-by-time-of-day')
+@travel_time_bp.route('/travel-time-by-time-of-day', methods=['GET', 'POST'])
 def get_travel_time_by_time_of_day():
     """Get aggregated travel time data by time of day (15-min intervals) as Arrow"""
     request_start = time.time()
 
-    # Get query parameters
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    xd_segments = request.args.getlist('xd_segments')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    day_of_week = request.args.getlist('day_of_week')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    legend_by = request.args.get('legend_by')  # New parameter
-    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
+    # Get query parameters (supports both GET and POST)
+    start_date = get_request_param('start_date')
+    end_date = get_request_param('end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    xd_segments = get_request_param_list('xd_segments')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    day_of_week = get_request_param_list('day_of_week')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    legend_by = get_request_param('legend_by')  # Legend parameter
+    remove_anomalies = str(get_request_param('remove_anomalies', 'false')).lower() == 'true'
 
     # Normalize dates
     start_date_str = normalize_date(start_date)

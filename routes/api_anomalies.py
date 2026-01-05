@@ -31,30 +31,31 @@ from utils.query_utils import (
     build_legend_join,
     build_legend_filter
 )
+from utils.request_helpers import get_request_param, get_request_param_list
 
 anomalies_bp = Blueprint('anomalies', __name__)
 
 
-@anomalies_bp.route('/anomaly-summary')
+@anomalies_bp.route('/anomaly-summary', methods=['GET', 'POST'])
 def get_anomaly_summary():
     """Get anomaly summary data for map visualization as Arrow (metrics only)
 
     OPTIMIZATION: Returns only ID and metrics (no dimension data like NAME, LATITUDE, LONGITUDE)
     Dimension data should be cached on client from /dim-signals endpoint
     """
-    # Get query parameters
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    anomaly_type = request.args.get('anomaly_type', default='All')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    day_of_week = request.args.getlist('day_of_week')
+    # Get query parameters (supports both GET and POST)
+    start_date = get_request_param('start_date')
+    end_date = get_request_param('end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    anomaly_type = get_request_param('anomaly_type', 'All')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    day_of_week = get_request_param_list('day_of_week')
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -126,26 +127,26 @@ def get_anomaly_summary():
         return f"Error fetching anomaly data: {e}", 500
 
 
-@anomalies_bp.route('/anomaly-summary-xd')
+@anomalies_bp.route('/anomaly-summary-xd', methods=['GET', 'POST'])
 def get_anomaly_summary_xd():
     """Get XD segment-level anomaly metrics as Arrow (metrics only)
 
     OPTIMIZATION: Returns only XD and metrics (no dimension data like BEARING, ROADNAME, etc.)
     Dimension data should be cached on client from /dim-signals-xd endpoint
     """
-    # Get query parameters
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    anomaly_type = request.args.get('anomaly_type', default='All')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    day_of_week = request.args.getlist('day_of_week')
+    # Get query parameters (supports both GET and POST)
+    start_date = get_request_param('start_date')
+    end_date = get_request_param('end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    anomaly_type = get_request_param('anomaly_type', 'All')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    day_of_week = get_request_param_list('day_of_week')
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -217,23 +218,23 @@ def get_anomaly_summary_xd():
         return f"Error fetching XD anomaly summary: {e}", 500
 
 
-@anomalies_bp.route('/anomaly-aggregated')
+@anomalies_bp.route('/anomaly-aggregated', methods=['GET', 'POST'])
 def get_anomaly_aggregated():
     """Get aggregated anomaly data by timestamp as Arrow (with dynamic aggregation)"""
-    # Get query parameters
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    xd_segments = request.args.getlist('xd_segments')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    day_of_week = request.args.getlist('day_of_week')
-    legend_by = request.args.get('legend_by')  # New parameter
+    # Get query parameters (supports both GET and POST)
+    start_date = get_request_param('start_date')
+    end_date = get_request_param('end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    xd_segments = get_request_param_list('xd_segments')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    day_of_week = get_request_param_list('day_of_week')
+    legend_by = get_request_param('legend_by')  # Legend parameter
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -366,23 +367,23 @@ def get_anomaly_aggregated():
         return f"Error fetching aggregated anomaly data: {e}", 500
 
 
-@anomalies_bp.route('/anomaly-by-time-of-day')
+@anomalies_bp.route('/anomaly-by-time-of-day', methods=['GET', 'POST'])
 def get_anomaly_by_time_of_day():
     """Get aggregated anomaly data by time of day (15-min intervals) as Arrow"""
-    # Get query parameters
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    xd_segments = request.args.getlist('xd_segments')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    day_of_week = request.args.getlist('day_of_week')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    legend_by = request.args.get('legend_by')  # New parameter
+    # Get query parameters (supports both GET and POST)
+    start_date = get_request_param('start_date')
+    end_date = get_request_param('end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    xd_segments = get_request_param_list('xd_segments')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    day_of_week = get_request_param_list('day_of_week')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    legend_by = get_request_param('legend_by')  # Legend parameter
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -501,23 +502,23 @@ def get_anomaly_by_time_of_day():
         return f"Error fetching time-of-day anomaly data: {e}", 500
 
 
-@anomalies_bp.route('/anomaly-percent-aggregated')
+@anomalies_bp.route('/anomaly-percent-aggregated', methods=['GET', 'POST'])
 def get_anomaly_percent_aggregated():
     """Get aggregated anomaly percentage data by timestamp as Arrow (with dynamic aggregation)"""
-    # Get query parameters
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    xd_segments = request.args.getlist('xd_segments')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    day_of_week = request.args.getlist('day_of_week')
-    legend_by = request.args.get('legend_by')  # New parameter
+    # Get query parameters (supports both GET and POST)
+    start_date = get_request_param('start_date')
+    end_date = get_request_param('end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    xd_segments = get_request_param_list('xd_segments')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    day_of_week = get_request_param_list('day_of_week')
+    legend_by = get_request_param('legend_by')  # Legend parameter
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -650,23 +651,23 @@ def get_anomaly_percent_aggregated():
         return f"Error fetching anomaly percent aggregated data: {e}", 500
 
 
-@anomalies_bp.route('/anomaly-percent-by-time-of-day')
+@anomalies_bp.route('/anomaly-percent-by-time-of-day', methods=['GET', 'POST'])
 def get_anomaly_percent_by_time_of_day():
     """Get aggregated anomaly percentage data by time of day (15-min intervals) as Arrow"""
-    # Get query parameters
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    xd_segments = request.args.getlist('xd_segments')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    day_of_week = request.args.getlist('day_of_week')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    legend_by = request.args.get('legend_by')  # New parameter
+    # Get query parameters (supports both GET and POST)
+    start_date = get_request_param('start_date')
+    end_date = get_request_param('end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    xd_segments = get_request_param_list('xd_segments')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    day_of_week = get_request_param_list('day_of_week')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    legend_by = get_request_param('legend_by')  # Legend parameter
 
     # Normalize dates
     start_date_str = normalize_date(start_date)
@@ -872,18 +873,18 @@ def get_monitoring_anomalies():
         return f"Error fetching monitoring anomalies: {exc}", 500
 
 
-@anomalies_bp.route('/travel-time-data')
+@anomalies_bp.route('/travel-time-data', methods=['GET', 'POST'])
 def get_travel_time_data():
     """Get detailed travel time data for anomaly analysis as Arrow"""
-    # Get query parameters
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    xd_segments = request.args.getlist('xd_segments')
-    signal_ids = request.args.getlist('signal_ids')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
+    # Get query parameters (supports both GET and POST)
+    start_date = get_request_param('start_date')
+    end_date = get_request_param('end_date')
+    xd_segments = get_request_param_list('xd_segments')
+    signal_ids = get_request_param_list('signal_ids')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    remove_anomalies = str(get_request_param('remove_anomalies', 'false')).lower() == 'true'
 
     # Normalize dates
     start_date_str = normalize_date(start_date)

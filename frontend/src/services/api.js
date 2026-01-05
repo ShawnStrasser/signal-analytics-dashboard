@@ -29,6 +29,10 @@ async function ensureCaptchaAllowed(response) {
 // The server sends uncompressed Arrow IPC streams instead.
 // HTTP-level compression (Flask-Compress) will handle compression in production.
 
+// Maximum URL length threshold - switch to POST when URL would exceed this
+// Most servers have a limit around 4KB-8KB, we use a conservative threshold
+const MAX_URL_LENGTH = 2000
+
 class ApiService {
   constructor(baseURL = '/api') {
     this.baseURL = baseURL
@@ -57,15 +61,27 @@ class ApiService {
         const value = params[key]
         if (value !== null && value !== undefined) {
           if (Array.isArray(value)) {
-            value.forEach(v => searchParams.append(key, v))
+            // Join arrays with commas for compact URLs (e.g., signal_ids=A,B,C instead of signal_ids=A&signal_ids=B&signal_ids=C)
+            if (value.length > 0) {
+              searchParams.append(key, value.join(','))
+            }
           } else {
             searchParams.append(key, value)
           }
         }
       })
 
-      if (searchParams.toString()) {
-        url += '?' + searchParams.toString()
+      const queryString = searchParams.toString()
+      const fullUrl = queryString ? `${url}?${queryString}` : url
+
+      // Auto-switch to POST if URL would be too long (fallback for very large selections)
+      if (fullUrl.length > MAX_URL_LENGTH) {
+        method = 'POST'
+        fetchOptions.method = 'POST'
+        fetchOptions.headers['Content-Type'] = 'application/json'
+        fetchOptions.body = JSON.stringify(params || {})
+      } else if (queryString) {
+        url = fullUrl
       }
     } else {
       fetchOptions.headers['Content-Type'] = 'application/json'
@@ -420,15 +436,27 @@ class ApiService {
         const value = params[key]
         if (value !== null && value !== undefined) {
           if (Array.isArray(value)) {
-            value.forEach(v => searchParams.append(key, v))
+            // Join arrays with commas for compact URLs (e.g., signal_ids=A,B,C instead of signal_ids=A&signal_ids=B&signal_ids=C)
+            if (value.length > 0) {
+              searchParams.append(key, value.join(','))
+            }
           } else {
             searchParams.append(key, value)
           }
         }
       })
 
-      if (searchParams.toString()) {
-        url += `?${searchParams.toString()}`
+      const queryString = searchParams.toString()
+      const fullUrl = queryString ? `${url}?${queryString}` : url
+
+      // Auto-switch to POST if URL would be too long (fallback for very large selections)
+      if (fullUrl.length > MAX_URL_LENGTH) {
+        method = 'POST'
+        fetchOptions.method = 'POST'
+        fetchOptions.headers['Content-Type'] = 'application/json'
+        fetchOptions.body = JSON.stringify(params || {})
+      } else if (queryString) {
+        url = fullUrl
       }
     } else {
       fetchOptions.headers['Content-Type'] = 'application/json'
