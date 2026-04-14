@@ -7,6 +7,18 @@ import { ref, onMounted, onUnmounted, watch, nextTick, computed, onActivated } f
 import { useTheme } from 'vuetify'
 import { useThemeStore } from '@/stores/theme'
 import * as echarts from 'echarts'
+import {
+  createDateTimeAxisLabelFormatter,
+  createTimeOfDayAxisLabelFormatter,
+  DATE_TIME_STEP_MILLISECONDS,
+  formatDateTimeAxisLabel,
+  formatDateTimeTooltipLabel,
+  formatTimeOfDayAxisLabel,
+  formatTimeOfDayLabel,
+  parseTimeOfDayToMinutes,
+  snapMinutesToTimeBucket,
+  snapTimestampToTimeBucket,
+} from '@/utils/chartTime'
 
 const props = defineProps({
   data: {
@@ -135,6 +147,8 @@ function updateChart() {
   const isDark = theme.global.current.value.dark
   const textColor = isDark ? '#E0E0E0' : '#333333'
   const isMobile = window.innerWidth < 600
+  const axisWidth = chartContainer.value?.offsetWidth || window.innerWidth
+  const maxLabelCount = Math.max(2, Math.floor(axisWidth / (isMobile ? 100 : 140)))
 
   // Color palettes (same as AnomalyChart and TravelTimeChart)
   const lightModePalette = [
@@ -182,14 +196,14 @@ function updateChart() {
     beforeData.forEach(d => {
       const group = String(d.LEGEND_GROUP || 'Unknown')
       if (!beforeGroups[group]) beforeGroups[group] = []
-      const xValue = props.isTimeOfDay ? parseTimeOfDay(d.TIME_OF_DAY) : new Date(d.TIMESTAMP).getTime()
+      const xValue = props.isTimeOfDay ? parseTimeOfDayToMinutes(d.TIME_OF_DAY) : new Date(d.TIMESTAMP).getTime()
       beforeGroups[group].push([xValue, Number(d.TRAVEL_TIME_INDEX) || 0])
     })
 
     afterData.forEach(d => {
       const group = String(d.LEGEND_GROUP || 'Unknown')
       if (!afterGroups[group]) afterGroups[group] = []
-      const xValue = props.isTimeOfDay ? parseTimeOfDay(d.TIME_OF_DAY) : new Date(d.TIMESTAMP).getTime()
+      const xValue = props.isTimeOfDay ? parseTimeOfDayToMinutes(d.TIME_OF_DAY) : new Date(d.TIMESTAMP).getTime()
       afterGroups[group].push([xValue, Number(d.TRAVEL_TIME_INDEX) || 0])
     })
 
@@ -229,12 +243,12 @@ function updateChart() {
   } else {
     // Single before/after series
     const beforeSeries = beforeData.map(d => {
-      const xValue = props.isTimeOfDay ? parseTimeOfDay(d.TIME_OF_DAY) : new Date(d.TIMESTAMP).getTime()
+      const xValue = props.isTimeOfDay ? parseTimeOfDayToMinutes(d.TIME_OF_DAY) : new Date(d.TIMESTAMP).getTime()
       return [xValue, Number(d.TRAVEL_TIME_INDEX) || 0]
     })
 
     const afterSeries = afterData.map(d => {
-      const xValue = props.isTimeOfDay ? parseTimeOfDay(d.TIME_OF_DAY) : new Date(d.TIMESTAMP).getTime()
+      const xValue = props.isTimeOfDay ? parseTimeOfDayToMinutes(d.TIME_OF_DAY) : new Date(d.TIMESTAMP).getTime()
       return [xValue, Number(d.TRAVEL_TIME_INDEX) || 0]
     })
 
@@ -265,11 +279,14 @@ function updateChart() {
   // Build x-axis config
   let xAxisConfig
   if (props.isTimeOfDay) {
-    const allMinutes = seriesConfig.flatMap(s => s.data.map(d => d[0]))
-    const minMinutes = Math.min(...allMinutes)
-    const maxMinutes = Math.max(...allMinutes)
-    const rangeMinutes = maxMinutes - minMinutes
-    const labelInterval = isMobile ? (rangeMinutes <= 360 ? 60 : 120) : (rangeMinutes <= 360 ? 30 : 60)
+    const allMinutes = seriesConfig.flatMap(series => series.data.map(point => point[0]))
+    const minMinutes = snapMinutesToTimeBucket(Math.min(...allMinutes), 'floor')
+    const maxMinutes = snapMinutesToTimeBucket(Math.max(...allMinutes), 'ceil')
+    const timeOfDayLabelFormatter = createTimeOfDayAxisLabelFormatter(chart, {
+      fullMin: minMinutes,
+      fullMax: maxMinutes,
+      maxLabels: maxLabelCount,
+    })
 
     xAxisConfig = {
       type: 'value',
@@ -278,33 +295,51 @@ function updateChart() {
       nameGap: isMobile ? 40 : 35,
       min: minMinutes,
       max: maxMinutes,
-      interval: labelInterval,
+      minInterval: 15,
+      maxInterval: 15,
+      interval: 15,
       axisLabel: {
         color: textColor,
         rotate: isMobile ? 45 : 0,
         fontSize: isMobile ? 10 : 12,
-        formatter: (value) => {
-          const hours = Math.floor(value / 60)
-          const minutes = value % 60
-          return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
-        }
+        hideOverlap: true,
+        formatter: timeOfDayLabelFormatter
       },
+      axisTick: { show: false },
       nameTextStyle: { color: textColor, fontSize: isMobile ? 12 : 13, fontWeight: 'bold' },
       axisLine: { lineStyle: { color: textColor } },
       splitLine: { show: false }
     }
   } else {
+    const allTimestamps = seriesConfig.flatMap(series => series.data.map(point => point[0]))
+    const minTimestamp = snapTimestampToTimeBucket(Math.min(...allTimestamps), 'floor')
+    const maxTimestamp = snapTimestampToTimeBucket(Math.max(...allTimestamps), 'ceil')
+    const dateTimeLabelFormatter = createDateTimeAxisLabelFormatter(chart, {
+      fullMin: minTimestamp,
+      fullMax: maxTimestamp,
+      maxLabels: maxLabelCount,
+      isMobile,
+    })
+
     xAxisConfig = {
       type: 'time',
       name: 'Date & Time',
       nameLocation: 'middle',
       nameGap: isMobile ? 40 : 35,
+      min: minTimestamp,
+      max: maxTimestamp,
+      minInterval: DATE_TIME_STEP_MILLISECONDS,
+      maxInterval: DATE_TIME_STEP_MILLISECONDS,
+      interval: DATE_TIME_STEP_MILLISECONDS,
       nameTextStyle: { color: textColor, fontSize: isMobile ? 12 : 13, fontWeight: 'bold' },
       axisLabel: {
         color: textColor,
         rotate: isMobile ? 45 : 0,
-        fontSize: isMobile ? 10 : 12
+        fontSize: isMobile ? 10 : 12,
+        hideOverlap: true,
+        formatter: dateTimeLabelFormatter
       },
+      axisTick: { show: false },
       axisLine: { lineStyle: { color: textColor } }
     }
   }
@@ -445,18 +480,18 @@ function updateChart() {
       trigger: 'axis',
       formatter: (params) => {
         if (!params.length) return ''
-        const xValue = params[0].value[0]
         let timeStr
         if (props.isTimeOfDay) {
-          const hours = Math.floor(xValue / 60)
-          const minutes = xValue % 60
-          timeStr = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+          timeStr = formatTimeOfDayLabel(params[0].value[0])
         } else {
-          const date = new Date(xValue)
-          timeStr = date.toLocaleString()
+          timeStr = formatDateTimeTooltipLabel(params[0].value[0])
         }
+        const visibleParams = params.filter(param => {
+          const pointValue = Array.isArray(param.value) ? param.value[1] : param.value
+          return Number.isFinite(Number(pointValue))
+        })
         let tooltip = `<strong>${timeStr}</strong><br/>`
-        params.forEach(param => {
+        visibleParams.forEach(param => {
           // Determine period label based on series configuration
           let periodLabel = param.seriesName
           if (hasLegend && param.seriesName !== 'Before' && param.seriesName !== 'After') {
@@ -465,7 +500,8 @@ function updateChart() {
             const period = series?.lineStyle?.type === 'dashed' ? 'Before' : 'After'
             periodLabel = `${param.seriesName} (${period})`
           }
-          tooltip += `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${param.color};margin-right:5px;"></span>${periodLabel}: ${param.value[1].toFixed(2)}<br/>`
+          const pointValue = Array.isArray(param.value) ? param.value[1] : param.value
+          tooltip += `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${param.color};margin-right:5px;"></span>${periodLabel}: ${Number(pointValue).toFixed(2)}<br/>`
         })
         return tooltip
       }
@@ -501,16 +537,5 @@ function updateChart() {
   }
 
   chart.setOption(option, true)
-}
-
-function parseTimeOfDay(timeValue) {
-  if (typeof timeValue === 'string') {
-    const parts = timeValue.split(':')
-    return parseInt(parts[0]) * 60 + parseInt(parts[1])
-  } else if (typeof timeValue === 'number') {
-    const totalSeconds = timeValue / 1000000
-    return Math.floor(totalSeconds / 3600) * 60 + Math.floor((totalSeconds % 3600) / 60)
-  }
-  return 0
 }
 </script>

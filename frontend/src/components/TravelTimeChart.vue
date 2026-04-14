@@ -7,6 +7,18 @@ import { ref, onMounted, onUnmounted, watch, nextTick, onActivated } from 'vue'
 import { useTheme } from 'vuetify'
 import { useThemeStore } from '@/stores/theme'
 import * as echarts from 'echarts'
+import {
+  createDateTimeAxisLabelFormatter,
+  createTimeOfDayAxisLabelFormatter,
+  DATE_TIME_STEP_MILLISECONDS,
+  formatDateTimeAxisLabel,
+  formatDateTimeTooltipLabel,
+  formatTimeOfDayAxisLabel,
+  formatTimeOfDayLabel,
+  parseTimeOfDayToMinutes,
+  snapMinutesToTimeBucket,
+  snapTimestampToTimeBucket,
+} from '@/utils/chartTime'
 
 const props = defineProps({
   data: {
@@ -139,6 +151,8 @@ function updateChart() {
 
   // Detect mobile screen size
   const isMobile = window.innerWidth < 600
+  const axisWidth = chartContainer.value?.offsetWidth || window.innerWidth
+  const maxLabelCount = Math.max(2, Math.floor(axisWidth / (isMobile ? 100 : 140)))
 
   let xAxisConfig, tooltipFormatter
   let seriesData = []
@@ -157,6 +171,11 @@ function updateChart() {
     }
 
     // Group data by LEGEND_GROUP if present
+    const toTimeOfDayPoint = (row) => [
+      parseTimeOfDayToMinutes(row.TIME_OF_DAY),
+      Number(row.TRAVEL_TIME_INDEX) || 0
+    ]
+
     if (hasLegend) {
       const groupedData = {}
       props.data.forEach(d => {
@@ -164,85 +183,24 @@ function updateChart() {
         if (!groupedData[group]) {
           groupedData[group] = []
         }
-
-        let hours, minutes
-        if (typeof d.TIME_OF_DAY === 'string') {
-          const timeParts = d.TIME_OF_DAY.split(':')
-          hours = parseInt(timeParts[0])
-          minutes = parseInt(timeParts[1])
-        } else if (d.TIME_OF_DAY instanceof Date) {
-          hours = d.TIME_OF_DAY.getHours()
-          minutes = d.TIME_OF_DAY.getMinutes()
-        } else if (typeof d.TIME_OF_DAY === 'number') {
-          const totalSeconds = d.TIME_OF_DAY / 1000000
-          hours = Math.floor(totalSeconds / 3600)
-          minutes = Math.floor((totalSeconds % 3600) / 60)
-        } else {
-          hours = 0
-          minutes = 0
-        }
-
-        const totalMinutes = hours * 60 + minutes
-        groupedData[group].push([totalMinutes, Number(d.TRAVEL_TIME_INDEX) || 0])
+        groupedData[group].push(toTimeOfDayPoint(d))
       })
 
       seriesData = Object.entries(groupedData)
     } else {
       // Single series
-      const singleSeriesData = props.data.map(d => {
-        let hours, minutes
-        if (typeof d.TIME_OF_DAY === 'string') {
-          const timeParts = d.TIME_OF_DAY.split(':')
-          hours = parseInt(timeParts[0])
-          minutes = parseInt(timeParts[1])
-        } else if (d.TIME_OF_DAY instanceof Date) {
-          hours = d.TIME_OF_DAY.getHours()
-          minutes = d.TIME_OF_DAY.getMinutes()
-        } else if (typeof d.TIME_OF_DAY === 'number') {
-          const totalSeconds = d.TIME_OF_DAY / 1000000
-          hours = Math.floor(totalSeconds / 3600)
-          minutes = Math.floor((totalSeconds % 3600) / 60)
-        } else {
-          hours = 0
-          minutes = 0
-        }
-        const totalMinutes = hours * 60 + minutes
-        return [totalMinutes, Number(d.TRAVEL_TIME_INDEX) || 0]
-      })
+      const singleSeriesData = props.data.map(toTimeOfDayPoint)
       seriesData = [['All Data', singleSeriesData]]
     }
 
-    // Calculate min/max for x-axis range from all series
-    const allMinutes = seriesData.flatMap(([_, data]) => data.map(d => d[0]))
-    const minMinutes = Math.min(...allMinutes)
-    const maxMinutes = Math.max(...allMinutes)
-
-    // Determine appropriate interval for x-axis labels based on data range
-    const rangeMinutes = maxMinutes - minMinutes
-    let labelInterval
-    if (isMobile) {
-      // Fewer labels on mobile
-      if (rangeMinutes <= 120) {
-        labelInterval = 30 // Every 30 minutes
-      } else if (rangeMinutes <= 360) {
-        labelInterval = 60 // Every hour
-      } else if (rangeMinutes <= 720) {
-        labelInterval = 120 // Every 2 hours
-      } else {
-        labelInterval = 240 // Every 4 hours
-      }
-    } else {
-      // Desktop
-      if (rangeMinutes <= 120) {
-        labelInterval = 15 // Every 15 minutes
-      } else if (rangeMinutes <= 360) {
-        labelInterval = 30 // Every 30 minutes
-      } else if (rangeMinutes <= 720) {
-        labelInterval = 60 // Every hour
-      } else {
-        labelInterval = 120 // Every 2 hours
-      }
-    }
+    const allMinutes = seriesData.flatMap(([_, data]) => data.map(point => point[0]))
+    const minMinutes = snapMinutesToTimeBucket(Math.min(...allMinutes), 'floor')
+    const maxMinutes = snapMinutesToTimeBucket(Math.max(...allMinutes), 'ceil')
+    const timeOfDayLabelFormatter = createTimeOfDayAxisLabelFormatter(chart, {
+      fullMin: minMinutes,
+      fullMax: maxMinutes,
+      maxLabels: maxLabelCount,
+    })
 
     xAxisConfig = {
       type: 'value',
@@ -251,16 +209,18 @@ function updateChart() {
       nameGap: isMobile ? 40 : 35,
       min: minMinutes,
       max: maxMinutes,
-      interval: labelInterval,
+      minInterval: 15,
+      maxInterval: 15,
+      interval: 15,
       axisLabel: {
         color: textColor,
         rotate: isMobile ? 45 : 0,
         fontSize: isMobile ? 10 : 12,
-        formatter: function(value) {
-          const hours = Math.floor(value / 60)
-          const minutes = value % 60
-          return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
-        }
+        hideOverlap: true,
+        formatter: timeOfDayLabelFormatter
+      },
+      axisTick: {
+        show: false
       },
       nameTextStyle: {
         color: textColor,
@@ -279,17 +239,18 @@ function updateChart() {
 
     tooltipFormatter = function(params) {
       if (params.length > 0) {
-        const data = params[0]
-        const totalMinutes = data.value[0]
-        const hours = Math.floor(totalMinutes / 60)
-        const minutes = totalMinutes % 60
-        const time = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+        const time = formatTimeOfDayLabel(params[0].value[0])
+        const visibleParams = params.filter(param => {
+          const pointValue = Array.isArray(param.value) ? param.value[1] : param.value
+          return Number.isFinite(Number(pointValue))
+        })
 
         // Build tooltip with all series at this time point
         let tooltip = `<strong>${time}</strong><br/>`
-        params.forEach(param => {
+        visibleParams.forEach(param => {
           const seriesName = param.seriesName
-          const tti = param.value[1].toFixed(2)
+          const pointValue = Array.isArray(param.value) ? param.value[1] : param.value
+          const tti = Number(pointValue).toFixed(2)
           const color = param.color
           tooltip += `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${color};margin-right:5px;"></span>${seriesName}: ${tti}<br/>`
         })
@@ -321,6 +282,16 @@ function updateChart() {
       seriesData = [['All Data', singleSeriesData]]
     }
 
+    const allTimestamps = seriesData.flatMap(([_, data]) => data.map(point => point[0]))
+    const minTimestamp = snapTimestampToTimeBucket(Math.min(...allTimestamps), 'floor')
+    const maxTimestamp = snapTimestampToTimeBucket(Math.max(...allTimestamps), 'ceil')
+    const dateTimeLabelFormatter = createDateTimeAxisLabelFormatter(chart, {
+      fullMin: minTimestamp,
+      fullMax: maxTimestamp,
+      maxLabels: maxLabelCount,
+      isMobile,
+    })
+
     // Determine aggregation level from data timestamps
     let xAxisName = 'Time'
     if (props.data.length >= 2) {
@@ -349,6 +320,11 @@ function updateChart() {
       name: xAxisName,
       nameLocation: 'middle',
       nameGap: isMobile ? 40 : 35,
+      min: minTimestamp,
+      max: maxTimestamp,
+      minInterval: DATE_TIME_STEP_MILLISECONDS,
+      maxInterval: DATE_TIME_STEP_MILLISECONDS,
+      interval: DATE_TIME_STEP_MILLISECONDS,
       nameTextStyle: {
         color: textColor,
         fontSize: isMobile ? 12 : 13,
@@ -358,26 +334,11 @@ function updateChart() {
         color: textColor,
         rotate: isMobile ? 45 : 0,
         fontSize: isMobile ? 10 : 12,
-        formatter: function(value) {
-          const date = new Date(value)
-          const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-          const dayOfWeek = dayNames[date.getDay()]
-          const month = String(date.getMonth() + 1).padStart(2, '0')
-          const day = String(date.getDate()).padStart(2, '0')
-          const hours = String(date.getHours()).padStart(2, '0')
-          const minutes = String(date.getMinutes()).padStart(2, '0')
-
-          // Show date with day-of-week when day changes (midnight)
-          if (date.getHours() === 0 && date.getMinutes() === 0) {
-            if (isMobile) {
-              // Compact format for mobile
-              return `${month}/${day}\n${hours}:${minutes}`
-            }
-            return `${dayOfWeek} ${month}/${day}\n${hours}:${minutes}`
-          }
-
-          return `${hours}:${minutes}`
-        }
+        hideOverlap: true,
+        formatter: dateTimeLabelFormatter
+      },
+      axisTick: {
+        show: false
       },
       axisLine: {
         lineStyle: {
@@ -388,15 +349,12 @@ function updateChart() {
 
     tooltipFormatter = function(params) {
       if (params.length > 0) {
-        const data = params[0]
-        const date = new Date(data.value[0])
-        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-        const dayOfWeek = dayNames[date.getDay()]
-        const time = date.toLocaleString()
+        const time = formatDateTimeTooltipLabel(params[0].value[0])
+        const visibleParams = params.filter(param => Number.isFinite(Number(param.value?.[1])))
 
         // Build tooltip with all series at this timestamp
-        let tooltip = `<strong>${dayOfWeek} ${time}</strong><br/>`
-        params.forEach(param => {
+        let tooltip = `<strong>${time}</strong><br/>`
+        visibleParams.forEach(param => {
           const seriesName = param.seriesName
           const tti = param.value[1].toFixed(2)
           const color = param.color

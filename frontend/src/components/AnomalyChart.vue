@@ -7,6 +7,13 @@ import { ref, onMounted, onUnmounted, watch, nextTick, onActivated } from 'vue'
 import { useTheme } from 'vuetify'
 import { useThemeStore } from '@/stores/theme'
 import * as echarts from 'echarts'
+import {
+  createDateTimeAxisLabelFormatter,
+  DATE_TIME_STEP_MILLISECONDS,
+  formatDateTimeAxisLabel,
+  formatDateTimeTooltipLabel,
+  snapTimestampToTimeBucket,
+} from '@/utils/chartTime'
 
 const props = defineProps({
   data: {
@@ -191,6 +198,8 @@ function updateChart() {
 
   // Detect mobile screen size
   const isMobile = window.innerWidth < 600
+  const axisWidth = chartContainer.value?.offsetWidth || window.innerWidth
+  const maxLabelCount = Math.max(2, Math.floor(axisWidth / (isMobile ? 100 : 140)))
 
   // Use same color palette as TravelTimeChart
   const lightModePalette = [
@@ -267,6 +276,22 @@ function updateChart() {
     ? 'Anomaly Percentage Over Time'
     : 'Travel Time Forecast vs Actual Over Time'
 
+  const allTimestamps = seriesData.flatMap(([_, data]) => {
+    if (props.chartMode === 'percent') {
+      return data.percent.map(point => point[0])
+    }
+
+    return [...data.actual, ...data.forecast].map(point => point[0])
+  })
+  const minTimestamp = snapTimestampToTimeBucket(Math.min(...allTimestamps), 'floor')
+  const maxTimestamp = snapTimestampToTimeBucket(Math.max(...allTimestamps), 'ceil')
+  const dateTimeLabelFormatter = createDateTimeAxisLabelFormatter(chart, {
+    fullMin: minTimestamp,
+    fullMax: maxTimestamp,
+    maxLabels: maxLabelCount,
+    isMobile,
+  })
+
   // Determine aggregation level from data timestamps
   let xAxisName = 'Time'
   if (props.data.length >= 2) {
@@ -295,6 +320,11 @@ function updateChart() {
     name: xAxisName,
     nameLocation: 'middle',
     nameGap: isMobile ? 40 : 35,
+    min: minTimestamp,
+    max: maxTimestamp,
+    minInterval: DATE_TIME_STEP_MILLISECONDS,
+    maxInterval: DATE_TIME_STEP_MILLISECONDS,
+    interval: DATE_TIME_STEP_MILLISECONDS,
     nameTextStyle: {
       color: textColor,
       fontSize: isMobile ? 12 : 13,
@@ -304,26 +334,11 @@ function updateChart() {
       color: textColor,
       rotate: isMobile ? 45 : 0,
       fontSize: isMobile ? 10 : 12,
-      formatter: function(value) {
-        const date = new Date(value)
-        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-        const dayOfWeek = dayNames[date.getDay()]
-        const month = String(date.getMonth() + 1).padStart(2, '0')
-        const day = String(date.getDate()).padStart(2, '0')
-        const hours = String(date.getHours()).padStart(2, '0')
-        const minutes = String(date.getMinutes()).padStart(2, '0')
-
-        // Show date with day-of-week when day changes (midnight)
-        if (date.getHours() === 0 && date.getMinutes() === 0) {
-          if (isMobile) {
-            // Compact format for mobile
-            return `${month}/${day}\n${hours}:${minutes}`
-          }
-          return `${dayOfWeek} ${month}/${day}\n${hours}:${minutes}`
-        }
-
-        return `${hours}:${minutes}`
-      }
+      hideOverlap: true,
+      formatter: dateTimeLabelFormatter
+    },
+    axisTick: {
+      show: false
     },
     axisLine: {
       lineStyle: {
@@ -334,15 +349,12 @@ function updateChart() {
 
   tooltipFormatter = function(params) {
     if (params.length > 0) {
-      const data = params[0]
-      const date = new Date(data.value[0])
-      const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-      const dayOfWeek = dayNames[date.getDay()]
-      const time = date.toLocaleString()
+      const time = formatDateTimeTooltipLabel(params[0].value[0])
+      const visibleParams = params.filter(param => Number.isFinite(Number(param.value?.[1])))
 
       // Build tooltip with all series at this timestamp
-      let tooltip = `<strong>${dayOfWeek} ${time}</strong><br/>`
-    params.forEach(param => {
+      let tooltip = `<strong>${time}</strong><br/>`
+    visibleParams.forEach(param => {
       const seriesName = param.seriesName
       const value = props.chartMode === 'percent'
         ? `${param.value[1].toFixed(2)}%`

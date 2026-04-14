@@ -7,6 +7,12 @@ import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useTheme } from 'vuetify'
 import { useThemeStore } from '@/stores/theme'
 import * as echarts from 'echarts'
+import {
+  formatTimeOfDayAxisLabel,
+  formatTimeOfDayLabel,
+  getDisplayStepMinutesForRange,
+  snapMinutesToTimeBucket,
+} from '@/utils/chartTime'
 
 const props = defineProps({
   series: {
@@ -19,13 +25,6 @@ const chartContainer = ref(null)
 let chart = null
 const theme = useTheme()
 const themeStore = useThemeStore()
-
-function formatMinutes(value) {
-  const total = Math.round(Number(value) || 0)
-  const hours = Math.floor(total / 60)
-  const minutes = total % 60
-  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`
-}
 
 function getSeriesData() {
   const minutes = []
@@ -78,15 +77,20 @@ function renderChart() {
   const actualSeries = minutes.map((minute, index) => [minute, actual[index]])
   const forecastSeries = minutes.map((minute, index) => [minute, forecast[index]])
   const { min, max } = computeYAxisRange(actual, forecast)
+  const minMinutes = minutes.length ? snapMinutesToTimeBucket(Math.min(...minutes), 'floor') : 0
+  const maxMinutes = minutes.length ? snapMinutesToTimeBucket(Math.max(...minutes), 'ceil') : 24 * 60
 
   const isDark = theme.global.current.value.dark
   const textColor = isDark ? '#E0E0E0' : '#333333'
   const gridColor = isDark ? '#424242' : '#E0E0E0'
+  const axisWidth = chartContainer.value?.offsetWidth || window.innerWidth
+  const maxLabelCount = Math.max(2, Math.floor(axisWidth / 130))
 
   const beforeColor = '#1976D2'
   const afterColor = themeStore.colorblindMode ? '#E69F00' : '#F57C00'
   const actualColor = afterColor
   const forecastColor = beforeColor
+  const displayStepMinutes = getDisplayStepMinutesForRange(maxMinutes - minMinutes, { maxLabels: maxLabelCount })
 
   const option = {
     backgroundColor: 'transparent',
@@ -96,11 +100,12 @@ function renderChart() {
         if (!params || !params.length) {
           return ''
         }
-        const label = formatMinutes(params[0].value[0])
+        const label = formatTimeOfDayLabel(params[0].value[0])
         const lines = params
-          .filter(item => item.value && Number.isFinite(item.value[1]))
+          .filter(item => Number.isFinite(Number(item.value?.[1])))
           .map(item => {
-            const value = Number(item.value[1]).toFixed(1)
+            const pointValue = item.value[1]
+            const value = Number(pointValue).toFixed(1)
             return `<span style="color:${item.color}">●</span> ${item.seriesName}: ${value} s`
           })
         lines.unshift(`<strong>${label}</strong>`)
@@ -120,13 +125,18 @@ function renderChart() {
     },
     xAxis: {
       type: 'value',
-      min: 0,
-      max: 24 * 60,
+      min: minMinutes,
+      max: maxMinutes,
+      minInterval: 15,
+      maxInterval: 15,
+      interval: 15,
       axisLabel: {
-        formatter: formatMinutes,
+        formatter: (value) => formatTimeOfDayAxisLabel(value, { displayStepMinutes, anchorMinutes: minMinutes }),
         color: textColor,
-        fontSize: 10
+        fontSize: 10,
+        hideOverlap: true
       },
+      axisTick: { show: false },
       axisLine: {
         lineStyle: { color: textColor }
       },

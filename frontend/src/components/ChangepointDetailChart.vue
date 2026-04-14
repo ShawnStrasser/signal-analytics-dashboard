@@ -7,6 +7,17 @@ import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import { useTheme } from 'vuetify'
 import { useThemeStore } from '@/stores/theme'
 import * as echarts from 'echarts'
+import {
+  createDateTimeAxisLabelFormatter,
+  createTimeOfDayAxisLabelFormatter,
+  DATE_TIME_STEP_MILLISECONDS,
+  formatDateTimeAxisLabel,
+  formatDateTimeTooltipLabel,
+  formatTimeOfDayAxisLabel,
+  formatTimeOfDayLabel,
+  snapMinutesToTimeBucket,
+  snapTimestampToTimeBucket,
+} from '@/utils/chartTime'
 
 const props = defineProps({
   series: {
@@ -112,6 +123,8 @@ function updateChart() {
   const textColor = isDark ? '#E0E0E0' : '#333333'
   const splitLineColor = isDark ? '#424242' : '#E0E0E0'
   const isMobile = window.innerWidth < 600
+  const axisWidth = chartContainer.value?.offsetWidth || window.innerWidth
+  const maxLabelCount = Math.max(2, Math.floor(axisWidth / (isMobile ? 100 : 140)))
 
   const beforeColor = BEFORE_COLOR.value
   const afterColor = AFTER_COLOR.value
@@ -153,8 +166,13 @@ function updateChart() {
 
   if (props.isTimeOfDay) {
     const minutesValues = allPoints.map(point => point[0]).filter(value => Number.isFinite(value))
-    const minMinutes = minutesValues.length ? Math.max(0, Math.min(...minutesValues)) : 0
-    const maxMinutes = minutesValues.length ? Math.min(1440, Math.max(...minutesValues)) : 1440
+    const minMinutes = minutesValues.length ? snapMinutesToTimeBucket(Math.min(...minutesValues), 'floor') : 0
+    const maxMinutes = minutesValues.length ? snapMinutesToTimeBucket(Math.max(...minutesValues), 'ceil') : 24 * 60
+    const timeOfDayLabelFormatter = createTimeOfDayAxisLabelFormatter(chart, {
+      fullMin: minMinutes,
+      fullMax: maxMinutes,
+      maxLabels: maxLabelCount,
+    })
 
     xAxisConfig = {
       type: 'value',
@@ -163,12 +181,17 @@ function updateChart() {
       nameGap: isMobile ? 40 : 35,
       min: minMinutes,
       max: maxMinutes,
+      minInterval: 15,
+      maxInterval: 15,
+      interval: 15,
       axisLabel: {
         color: textColor,
         fontSize: isMobile ? 10 : 12,
         rotate: isMobile ? 45 : 0,
-        formatter: (value) => formatMinutes(value)
+        hideOverlap: true,
+        formatter: timeOfDayLabelFormatter
       },
+      axisTick: { show: false },
       axisLine: { lineStyle: { color: textColor } },
       splitLine: { lineStyle: { color: splitLineColor } },
       nameTextStyle: { color: textColor, fontSize: isMobile ? 12 : 13, fontWeight: 'bold' }
@@ -176,25 +199,49 @@ function updateChart() {
 
     tooltipFormatter = (params) => {
       if (!params.length) return ''
-      const label = formatMinutes(params[0].value[0])
-      const lines = params.map(item => {
-        const value = Number(item.value[1]).toFixed(2)
+      const label = formatTimeOfDayLabel(params[0].value[0])
+      const lines = params
+        .filter(item => {
+          const pointValue = Array.isArray(item.value) ? item.value[1] : item.value
+          return Number.isFinite(Number(pointValue))
+        })
+        .map(item => {
+        const pointValue = Array.isArray(item.value) ? item.value[1] : item.value
+        const value = Number(pointValue).toFixed(2)
         return `<span style="color:${item.color}">●</span> ${item.seriesName}: ${value} s`
-      })
+        })
       lines.unshift(`<strong>${label}</strong>`)
       return lines.join('<br/>')
     }
   } else {
+    const timestampValues = allPoints.map(point => point[0]).filter(value => Number.isFinite(value))
+    const minTimestamp = timestampValues.length ? snapTimestampToTimeBucket(Math.min(...timestampValues), 'floor') : 0
+    const maxTimestamp = timestampValues.length ? snapTimestampToTimeBucket(Math.max(...timestampValues), 'ceil') : DATE_TIME_STEP_MILLISECONDS
+    const dateTimeLabelFormatter = createDateTimeAxisLabelFormatter(chart, {
+      fullMin: minTimestamp,
+      fullMax: maxTimestamp,
+      maxLabels: maxLabelCount,
+      isMobile,
+    })
+
     xAxisConfig = {
       type: 'time',
       name: 'Date & Time',
       nameLocation: 'middle',
       nameGap: isMobile ? 40 : 35,
+      min: minTimestamp,
+      max: maxTimestamp,
+      minInterval: DATE_TIME_STEP_MILLISECONDS,
+      maxInterval: DATE_TIME_STEP_MILLISECONDS,
+      interval: DATE_TIME_STEP_MILLISECONDS,
       axisLabel: {
         color: textColor,
         fontSize: isMobile ? 10 : 12,
-        rotate: isMobile ? 45 : 0
+        rotate: isMobile ? 45 : 0,
+        hideOverlap: true,
+        formatter: dateTimeLabelFormatter
       },
+      axisTick: { show: false },
       axisLine: { lineStyle: { color: textColor } },
       splitLine: { lineStyle: { color: splitLineColor } },
       nameTextStyle: { color: textColor, fontSize: isMobile ? 12 : 13, fontWeight: 'bold' }
@@ -202,11 +249,13 @@ function updateChart() {
 
     tooltipFormatter = (params) => {
       if (!params.length) return ''
-      const label = new Date(params[0].value[0]).toLocaleString()
-      const lines = params.map(item => {
+      const label = formatDateTimeTooltipLabel(params[0].value[0])
+      const lines = params
+        .filter(item => Number.isFinite(Number(item.value?.[1])))
+        .map(item => {
         const value = Number(item.value[1]).toFixed(2)
         return `<span style="color:${item.color}">●</span> ${item.seriesName}: ${value} s`
-      })
+        })
       lines.unshift(`<strong>${label}</strong>`)
       return lines.join('<br/>')
     }
@@ -285,12 +334,5 @@ function updateChart() {
   }
 
   chart.setOption(option, true)
-}
-
-function formatMinutes(totalMinutes) {
-  const minutes = Math.floor(totalMinutes)
-  const hours = Math.floor(minutes / 60)
-  const remaining = minutes % 60
-  return `${String(hours).padStart(2, '0')}:${String(remaining).padStart(2, '0')}`
 }
 </script>

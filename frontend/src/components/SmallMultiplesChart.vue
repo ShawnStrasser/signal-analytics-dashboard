@@ -7,6 +7,18 @@ import { ref, onMounted, onUnmounted, watch, nextTick, computed, onActivated } f
 import { useTheme } from 'vuetify'
 import { useThemeStore } from '@/stores/theme'
 import * as echarts from 'echarts'
+import {
+  DATE_TIME_STEP_MILLISECONDS,
+  formatDateTimeAxisLabel,
+  formatDateTimeTooltipLabel,
+  formatTimeOfDayAxisLabel,
+  formatTimeOfDayLabel,
+  getDisplayStepMinutesForRange,
+  parseTimeOfDayToMinutes,
+  snapMinutesToTimeBucket,
+  snapTimestampToTimeBucket,
+  startOfLocalDayTimestamp,
+} from '@/utils/chartTime'
 
 const props = defineProps({
   data: {
@@ -147,6 +159,7 @@ function updateChart() {
   const isDark = theme.global.current.value.dark
   const textColor = isDark ? '#E0E0E0' : '#333333'
   const isMobile = window.innerWidth < 600
+  const totalWidth = chartContainer.value?.offsetWidth || window.innerWidth
 
   // Group data by LEGEND_GROUP and PERIOD
   const entities = {}
@@ -156,7 +169,7 @@ function updateChart() {
       entities[entity] = { before: [], after: [] }
     }
 
-    const xValue = props.isTimeOfDay ? parseTimeOfDay(d.TIME_OF_DAY) : new Date(d.TIMESTAMP).getTime()
+    const xValue = props.isTimeOfDay ? parseTimeOfDayToMinutes(d.TIME_OF_DAY) : new Date(d.TIMESTAMP).getTime()
     const yValue = Number(d.TRAVEL_TIME_INDEX) || 0
 
     if (d.PERIOD === 'Before') {
@@ -204,6 +217,17 @@ function updateChart() {
   const yPadding = yRange * 0.05
   const yMin = Math.max(0, globalMinY - yPadding)
   const yMax = globalMaxY + yPadding
+  const xMin = props.isTimeOfDay
+    ? snapMinutesToTimeBucket(globalMinX, 'floor')
+    : snapTimestampToTimeBucket(globalMinX, 'floor')
+  const xMax = props.isTimeOfDay
+    ? snapMinutesToTimeBucket(globalMaxX, 'ceil')
+    : snapTimestampToTimeBucket(globalMaxX, 'ceil')
+  const plotWidth = totalWidth * 0.45
+  const maxLabelCount = Math.max(2, Math.floor(plotWidth / (isMobile ? 90 : 120)))
+  const timeOfDayDisplayStep = props.isTimeOfDay ? getDisplayStepMinutesForRange(xMax - xMin, { maxLabels: maxLabelCount }) : null
+  const dateTimeDisplayStep = props.isTimeOfDay ? null : getDisplayStepMinutesForRange((xMax - xMin) / (1000 * 60), { maxLabels: maxLabelCount })
+  const dateTimeAnchor = !props.isTimeOfDay && dateTimeDisplayStep >= 1440 ? startOfLocalDayTimestamp(xMin) : xMin
 
   entityNames.forEach((entityName, index) => {
     const row = Math.floor(index / cols)
@@ -239,31 +263,38 @@ function updateChart() {
       xAxes.push({
         gridIndex: gridIndex,
         type: 'value',
-        min: globalMinX,
-        max: globalMaxX,
+        min: xMin,
+        max: xMax,
+        minInterval: 15,
+        maxInterval: 15,
+        interval: 15,
         axisLabel: {
           show: row === rows - 1, // Only show on bottom row
           fontSize: isMobile ? 10 : 12,
           color: textColor,
-          formatter: (value) => {
-            const hours = Math.floor(value / 60)
-            const minutes = value % 60
-            return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
-          }
+          hideOverlap: true,
+          formatter: (value) => formatTimeOfDayAxisLabel(value, { displayStepMinutes: timeOfDayDisplayStep, anchorMinutes: xMin })
         },
+        axisTick: { show: false },
         splitLine: { show: false }
       })
     } else {
       xAxes.push({
         gridIndex: gridIndex,
         type: 'time',
-        min: globalMinX,
-        max: globalMaxX,
+        min: xMin,
+        max: xMax,
+        minInterval: DATE_TIME_STEP_MILLISECONDS,
+        maxInterval: DATE_TIME_STEP_MILLISECONDS,
+        interval: DATE_TIME_STEP_MILLISECONDS,
         axisLabel: {
           show: row === rows - 1,
           fontSize: isMobile ? 10 : 12,
-          color: textColor
+          color: textColor,
+          hideOverlap: true,
+          formatter: (value) => formatDateTimeAxisLabel(value, { isMobile, displayStepMinutes: dateTimeDisplayStep, anchorTimestamp: dateTimeAnchor })
         },
+        axisTick: { show: false },
         splitLine: { show: false }
       })
     }
@@ -330,19 +361,20 @@ function updateChart() {
       trigger: 'axis',
       formatter: (params) => {
         if (!params.length) return ''
-        const xValue = params[0].value[0]
         let timeStr
         if (props.isTimeOfDay) {
-          const hours = Math.floor(xValue / 60)
-          const minutes = xValue % 60
-          timeStr = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+          timeStr = formatTimeOfDayLabel(params[0].value[0])
         } else {
-          const date = new Date(xValue)
-          timeStr = date.toLocaleString()
+          timeStr = formatDateTimeTooltipLabel(params[0].value[0])
         }
+        const visibleParams = params.filter(param => {
+          const pointValue = Array.isArray(param.value) ? param.value[1] : param.value
+          return Number.isFinite(Number(pointValue))
+        })
         let tooltip = `<strong>${timeStr}</strong><br/>`
-        params.forEach(param => {
-          tooltip += `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background-color:${param.color};margin-right:5px;"></span>${param.seriesName}: ${param.value[1].toFixed(2)}<br/>`
+        visibleParams.forEach(param => {
+          const pointValue = Array.isArray(param.value) ? param.value[1] : param.value
+          tooltip += `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background-color:${param.color};margin-right:5px;"></span>${param.seriesName}: ${Number(pointValue).toFixed(2)}<br/>`
         })
         return tooltip
       }
@@ -350,16 +382,5 @@ function updateChart() {
   }
 
   chart.setOption(option, true)
-}
-
-function parseTimeOfDay(timeValue) {
-  if (typeof timeValue === 'string') {
-    const parts = timeValue.split(':')
-    return parseInt(parts[0]) * 60 + parseInt(parts[1])
-  } else if (typeof timeValue === 'number') {
-    const totalSeconds = timeValue / 1000000
-    return Math.floor(totalSeconds / 3600) * 60 + Math.floor((totalSeconds % 3600) / 60)
-  }
-  return 0
 }
 </script>
