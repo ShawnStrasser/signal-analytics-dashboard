@@ -10,6 +10,7 @@ from flask import Blueprint, request, jsonify
 
 from config import DEBUG_BACKEND_TIMING, DEBUG_DISABLE_SERVER_CACHE, MAX_LEGEND_ENTITIES
 from database import get_snowflake_session, is_auth_error
+from utils.exceptions import InvalidQueryParameter
 from utils.arrow_utils import (
     serialize_arrow_to_ipc,
     create_empty_arrow_response,
@@ -68,6 +69,8 @@ def get_signals():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /signals: {e}")
         if is_auth_error(e):
@@ -100,6 +103,8 @@ def get_dim_signals():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /dim-signals: {e}")
         if is_auth_error(e):
@@ -134,6 +139,8 @@ def get_dim_signals_xd():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /dim-signals-xd: {e}")
         if is_auth_error(e):
@@ -195,6 +202,8 @@ def get_xd_geometry():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /xd-geometry: {e}")
         if is_auth_error(e):
@@ -305,6 +314,8 @@ def get_travel_time_summary():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /travel-time-summary: {e}")
         if is_auth_error(e):
@@ -415,6 +426,8 @@ def get_travel_time_summary_xd():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /travel-time-summary-xd: {e}")
         if is_auth_error(e):
@@ -592,6 +605,8 @@ def get_travel_time_aggregated():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /travel-time-aggregated: {e}")
         if is_auth_error(e):
@@ -756,6 +771,8 @@ def get_travel_time_by_time_of_day():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /travel-time-by-time-of-day: {e}")
         if is_auth_error(e):

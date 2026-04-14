@@ -30,9 +30,9 @@ from utils.exceptions import InvalidQueryParameter
 if sys.platform == 'win32':
     try:
         pa.util.download_tzdata_on_windows()
-        print("✅ Timezone database downloaded")
+        print("Timezone database downloaded")
     except Exception as e:
-        print(f"⚠️  Failed to download timezone database: {e}")
+        print(f"Failed to download timezone database: {e}")
 
 app = Flask(__name__, static_folder='static/dist')
 app.config['SECRET_KEY'] = SECRET_KEY
@@ -171,11 +171,11 @@ def serve_vue_app(path):
 
 if __name__ == '__main__':
     # Warm up database connection on startup
-    print("🔄 Warming up database connection...")
+    print("Warming up database connection...")
     session = get_snowflake_session(retry=True, max_retries=3, retry_delay=2)
     if session:
-        print("✅ Database connection established")
+        print("Database connection established")
     else:
-        print("⚠️  Database connection failed - will retry on first request")
+        print("Database connection failed - will retry on first request")
 
     app.run(debug=True, host='127.0.0.1', port=5000)

@@ -4,11 +4,12 @@ Optimized for low-latency small queries
 """
 
 import pyarrow as pa
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, jsonify
 
 from config import MAX_ANOMALY_LEGEND_ENTITIES
 from database import get_snowflake_session, is_auth_error
 from services.report_service import fetch_monitoring_anomaly_rows
+from utils.exceptions import InvalidQueryParameter
 from utils.error_handler import handle_auth_error_retry
 from utils.arrow_utils import (
     serialize_arrow_to_ipc,
@@ -120,6 +121,8 @@ def get_anomaly_summary():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /anomaly-summary: {e}")
         if is_auth_error(e):
@@ -211,6 +214,8 @@ def get_anomaly_summary_xd():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /anomaly-summary-xd: {e}")
         if is_auth_error(e):
@@ -360,6 +365,8 @@ def get_anomaly_aggregated():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /anomaly-aggregated: {e}")
         if is_auth_error(e):
@@ -495,6 +502,8 @@ def get_anomaly_by_time_of_day():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /anomaly-by-time-of-day: {e}")
         if is_auth_error(e):
@@ -644,6 +653,8 @@ def get_anomaly_percent_aggregated():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /anomaly-percent-aggregated: {e}")
         if is_auth_error(e):
@@ -779,6 +790,8 @@ def get_anomaly_percent_by_time_of_day():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /anomaly-percent-by-time-of-day: {e}")
         if is_auth_error(e):
@@ -791,38 +804,17 @@ def get_monitoring_anomalies():
     """Return anomaly segments for the monitoring report as JSON."""
     from datetime import datetime, date  # Local import to avoid circular issues in some environments
 
-    payload = request.get_json(silent=True) if request.method == 'POST' else None
-
-    def _param(name, default=None):
-        if request.method == 'POST':
-            if payload is None:
-                return default
-            return payload.get(name, default)
-        return request.args.get(name, default)
-
-    def _param_list(name):
-        if request.method == 'POST':
-            if not payload:
-                return []
-            value = payload.get(name)
-            if value is None:
-                return []
-            if isinstance(value, (list, tuple, set)):
-                return list(value)
-            return [value]
-        return request.args.getlist(name)
-
     filters = {
-        "start_date": _param("start_date"),
-        "end_date": _param("end_date"),
-        "signal_ids": _param_list("signal_ids"),
-        "selected_signals": _param_list("selected_signals"),
-        "selected_xds": _param_list("selected_xds"),
-        "selected_signal_groups": _param_list("selected_signal_groups"),
-        "maintained_by": _param("maintained_by"),
-        "approach": _param("approach"),
-        "valid_geometry": _param("valid_geometry"),
-        "anomaly_monitoring_threshold": _param("anomaly_monitoring_threshold") or _param("monitoring_score_threshold"),
+        "start_date": get_request_param("start_date"),
+        "end_date": get_request_param("end_date"),
+        "signal_ids": get_request_param_list("signal_ids"),
+        "selected_signals": get_request_param_list("selected_signals"),
+        "selected_xds": get_request_param_list("selected_xds"),
+        "selected_signal_groups": get_request_param_list("selected_signal_groups"),
+        "maintained_by": get_request_param("maintained_by"),
+        "approach": get_request_param("approach"),
+        "valid_geometry": get_request_param("valid_geometry"),
+        "anomaly_monitoring_threshold": get_request_param("anomaly_monitoring_threshold") or get_request_param("monitoring_score_threshold"),
     }
 
     def execute_query():
@@ -866,6 +858,8 @@ def get_monitoring_anomalies():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as exc:
         print(f"[ERROR] /monitoring-anomalies: {exc}")
         if is_auth_error(exc):
@@ -1000,6 +994,8 @@ def get_travel_time_data():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /travel-time-data: {e}")
         if is_auth_error(e):

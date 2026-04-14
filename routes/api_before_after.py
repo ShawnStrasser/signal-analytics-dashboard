@@ -10,6 +10,7 @@ from config import DEBUG_BACKEND_TIMING, MAX_LEGEND_ENTITIES, MAX_BEFORE_AFTER_L
 from database import get_snowflake_session, is_auth_error
 from utils.arrow_utils import create_arrow_response, snowflake_result_to_arrow
 from utils.error_handler import handle_auth_error_retry
+from utils.exceptions import InvalidQueryParameter
 from utils.query_utils import (
     normalize_date,
     build_filter_joins_and_where,
@@ -143,6 +144,8 @@ def get_before_after_summary():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /before-after-summary: {e}")
         if is_auth_error(e):
@@ -265,6 +268,8 @@ def get_before_after_summary_xd():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /before-after-summary-xd: {e}")
         if is_auth_error(e):
@@ -437,6 +442,8 @@ def get_before_after_aggregated():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /before-after-aggregated: {e}")
         if is_auth_error(e):
@@ -602,6 +609,8 @@ def get_before_after_by_time_of_day():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /before-after-by-time-of-day: {e}")
         if is_auth_error(e):

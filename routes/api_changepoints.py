@@ -20,6 +20,7 @@ from utils.arrow_utils import (
     snowflake_result_to_arrow
 )
 from utils.error_handler import handle_auth_error_retry
+from utils.request_helpers import get_request_param, get_request_param_list
 from utils.query_utils import (
     normalize_date,
     build_filter_joins_and_where,
@@ -234,39 +235,18 @@ def get_changepoints_map_signals():
     """Aggregate changepoints by signal for map visualization."""
     request_start = time.time()
 
-    payload = request.get_json(silent=True) if request.method == 'POST' else None
-
-    def _param(name, default=None):
-        if request.method == 'POST':
-            if not payload:
-                return default
-            return payload.get(name, default)
-        return request.args.get(name, default)
-
-    def _param_list(name):
-        if request.method == 'POST':
-            if not payload:
-                return []
-            value = payload.get(name)
-            if value is None:
-                return []
-            if isinstance(value, (list, tuple, set)):
-                return list(value)
-            return [value]
-        return request.args.getlist(name)
-
     # Base filters
     start_date, end_date = _resolve_date_range(
-        _param('start_date'),
-        _param('end_date')
+        get_request_param('start_date'),
+        get_request_param('end_date')
     )
-    signal_ids = _param_list('signal_ids')
-    maintained_by = _param('maintained_by', 'all')
-    approach = _param('approach')
-    valid_geometry = _param('valid_geometry')
+    signal_ids = get_request_param_list('signal_ids')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
 
     severity_threshold = _parse_positive_float(
-        _param('changepoint_severity_threshold'),
+        get_request_param('changepoint_severity_threshold'),
         CHANGEPOINT_SEVERITY_THRESHOLD
     )
 
@@ -358,6 +338,8 @@ def get_changepoints_map_signals():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /changepoints-map-signals: {e}")
         if is_auth_error(e):
@@ -370,38 +352,17 @@ def get_changepoints_map_xd():
     """Aggregate changepoints by XD segment for map visualization."""
     request_start = time.time()
 
-    payload = request.get_json(silent=True) if request.method == 'POST' else None
-
-    def _param(name, default=None):
-        if request.method == 'POST':
-            if not payload:
-                return default
-            return payload.get(name, default)
-        return request.args.get(name, default)
-
-    def _param_list(name):
-        if request.method == 'POST':
-            if not payload:
-                return []
-            value = payload.get(name)
-            if value is None:
-                return []
-            if isinstance(value, (list, tuple, set)):
-                return list(value)
-            return [value]
-        return request.args.getlist(name)
-
     start_date, end_date = _resolve_date_range(
-        _param('start_date'),
-        _param('end_date')
+        get_request_param('start_date'),
+        get_request_param('end_date')
     )
-    signal_ids = _param_list('signal_ids')
-    maintained_by = _param('maintained_by', 'all')
-    approach = _param('approach')
-    valid_geometry = _param('valid_geometry')
+    signal_ids = get_request_param_list('signal_ids')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
 
     severity_threshold = _parse_positive_float(
-        _param('changepoint_severity_threshold'),
+        get_request_param('changepoint_severity_threshold'),
         CHANGEPOINT_SEVERITY_THRESHOLD
     )
 
@@ -493,6 +454,8 @@ def get_changepoints_map_xd():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /changepoints-map-xd: {e}")
         if is_auth_error(e):
@@ -505,44 +468,23 @@ def get_changepoints_table():
     """Return top changepoints (limit 100) for the table with server-side sorting."""
     request_start = time.time()
 
-    payload = request.get_json(silent=True) if request.method == 'POST' else None
-
-    def _param(name, default=None):
-        if request.method == 'POST':
-            if not payload:
-                return default
-            return payload.get(name, default)
-        return request.args.get(name, default)
-
-    def _param_list(name):
-        if request.method == 'POST':
-            if not payload:
-                return []
-            value = payload.get(name)
-            if value is None:
-                return []
-            if isinstance(value, (list, tuple, set)):
-                return list(value)
-            return [value]
-        return request.args.getlist(name)
-
     # Base filters
     start_date, end_date = _resolve_date_range(
-        _param('start_date'),
-        _param('end_date')
+        get_request_param('start_date'),
+        get_request_param('end_date')
     )
-    signal_ids = _param_list('signal_ids')
-    maintained_by = _param('maintained_by', 'all')
-    approach = _param('approach')
-    valid_geometry = _param('valid_geometry')
+    signal_ids = get_request_param_list('signal_ids')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
 
     severity_threshold = _parse_positive_float(
-        _param('changepoint_severity_threshold'),
+        get_request_param('changepoint_severity_threshold'),
         CHANGEPOINT_SEVERITY_THRESHOLD
     )
 
-    selected_signals = _param_list('selected_signals')
-    selected_xds = _param_list('selected_xds')
+    selected_signals = get_request_param_list('selected_signals')
+    selected_xds = get_request_param_list('selected_xds')
 
     dimension_join, dimension_where_clause = _build_filtered_dim_components(
         signal_ids,
@@ -560,8 +502,8 @@ def get_changepoints_table():
         severity_threshold=severity_threshold
     )
 
-    sort_by = (_param('sort_by', 'score') or 'score').lower()
-    sort_dir = (_param('sort_dir', 'desc') or 'desc').lower()
+    sort_by = (get_request_param('sort_by', 'score') or 'score').lower()
+    sort_dir = (get_request_param('sort_dir', 'desc') or 'desc').lower()
 
     sort_column_map = {
         'timestamp': 't.TIMESTAMP',
@@ -613,6 +555,8 @@ def get_changepoints_table():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /changepoints-table: {e}")
         if is_auth_error(e):
@@ -681,6 +625,8 @@ def get_changepoint_detail():
 
     try:
         return handle_auth_error_retry(execute_query)
+    except InvalidQueryParameter:
+        raise
     except Exception as e:
         print(f"[ERROR] /changepoints-detail: {e}")
         if is_auth_error(e):
