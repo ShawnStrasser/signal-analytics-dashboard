@@ -22,8 +22,9 @@ def get_request_param_list(name):
     """
     Get a list of parameter values from either GET query params or POST JSON body.
     Automatically handles both request methods.
-    
-    For GET requests, expects comma-separated values (e.g., signal_ids=A,B,C).
+
+    For GET requests, supports both repeated params (e.g., signal_ids=A&signal_ids=B)
+    and comma-separated values (e.g., signal_ids=A,B,C).
     """
     if request.method == 'POST':
         payload = request.get_json(silent=True)
@@ -39,9 +40,15 @@ def get_request_param_list(name):
             return [v.strip() for v in value.split(',') if v.strip()]
         return [value]
     
-    # For GET requests, expect comma-separated values
-    raw_value = request.args.get(name)
-    if not raw_value:
+    # For GET requests, accept both repeated params and comma-separated values
+    raw_values = request.args.getlist(name)
+    if not raw_values:
         return []
-    
-    return [v.strip() for v in raw_value.split(',') if v.strip()]
+
+    values = []
+    for raw_value in raw_values:
+        if raw_value is None:
+            continue
+        values.extend(v.strip() for v in str(raw_value).split(',') if v.strip())
+
+    return values

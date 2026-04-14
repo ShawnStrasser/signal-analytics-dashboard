@@ -4,7 +4,7 @@ Compares travel time metrics between two time periods
 """
 
 import time
-from flask import Blueprint, request
+from flask import Blueprint
 
 from config import DEBUG_BACKEND_TIMING, MAX_LEGEND_ENTITIES, MAX_BEFORE_AFTER_LEGEND_ENTITIES, MAX_BEFORE_AFTER_SMALL_MULTIPLES_ENTITIES
 from database import get_snowflake_session, is_auth_error
@@ -19,30 +19,31 @@ from utils.query_utils import (
     build_legend_filter,
     build_xd_filter
 )
+from utils.request_helpers import get_request_param, get_request_param_list
 
 before_after_bp = Blueprint('before_after', __name__)
 
 
-@before_after_bp.route('/before-after-summary')
+@before_after_bp.route('/before-after-summary', methods=['GET', 'POST'])
 def get_before_after_summary():
     """Get before/after travel time summary for map visualization (signal-level) as Arrow"""
     request_start = time.time()
 
-    # Get query parameters
-    before_start = request.args.get('before_start_date')
-    before_end = request.args.get('before_end_date')
-    after_start = request.args.get('after_start_date')
-    after_end = request.args.get('after_end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    day_of_week = request.args.getlist('day_of_week')
-    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
+    # Get query parameters (supports both GET and POST)
+    before_start = get_request_param('before_start_date')
+    before_end = get_request_param('before_end_date')
+    after_start = get_request_param('after_start_date')
+    after_end = get_request_param('after_end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    day_of_week = get_request_param_list('day_of_week')
+    remove_anomalies = get_request_param('remove_anomalies', 'false').lower() == 'true'
 
     # Normalize dates
     before_start_str = normalize_date(before_start)
@@ -149,26 +150,26 @@ def get_before_after_summary():
         return f"Error fetching before/after summary: {e}", 500
 
 
-@before_after_bp.route('/before-after-summary-xd')
+@before_after_bp.route('/before-after-summary-xd', methods=['GET', 'POST'])
 def get_before_after_summary_xd():
     """Get before/after travel time summary for map visualization (XD segment-level) as Arrow"""
     request_start = time.time()
 
-    # Get query parameters (same as signal-level)
-    before_start = request.args.get('before_start_date')
-    before_end = request.args.get('before_end_date')
-    after_start = request.args.get('after_start_date')
-    after_end = request.args.get('after_end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    day_of_week = request.args.getlist('day_of_week')
-    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
+    # Get query parameters (supports both GET and POST)
+    before_start = get_request_param('before_start_date')
+    before_end = get_request_param('before_end_date')
+    after_start = get_request_param('after_start_date')
+    after_end = get_request_param('after_end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    day_of_week = get_request_param_list('day_of_week')
+    remove_anomalies = get_request_param('remove_anomalies', 'false').lower() == 'true'
 
     # Normalize dates
     before_start_str = normalize_date(before_start)
@@ -271,29 +272,29 @@ def get_before_after_summary_xd():
         return f"Error fetching before/after XD summary: {e}", 500
 
 
-@before_after_bp.route('/before-after-aggregated')
+@before_after_bp.route('/before-after-aggregated', methods=['GET', 'POST'])
 def get_before_after_aggregated():
     """Get before/after travel time data aggregated by timestamp (DATE/TIME mode) as Arrow"""
     request_start = time.time()
 
-    # Get query parameters
-    before_start = request.args.get('before_start_date')
-    before_end = request.args.get('before_end_date')
-    after_start = request.args.get('after_start_date')
-    after_end = request.args.get('after_end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    xd_segments = request.args.getlist('xd_segments')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    day_of_week = request.args.getlist('day_of_week')
-    legend_by = request.args.get('legend_by')
-    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
-    is_small_multiples = request.args.get('is_small_multiples', 'false').lower() == 'true'
+    # Get query parameters (supports both GET and POST)
+    before_start = get_request_param('before_start_date')
+    before_end = get_request_param('before_end_date')
+    after_start = get_request_param('after_start_date')
+    after_end = get_request_param('after_end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    xd_segments = get_request_param_list('xd_segments')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    day_of_week = get_request_param_list('day_of_week')
+    legend_by = get_request_param('legend_by')
+    remove_anomalies = get_request_param('remove_anomalies', 'false').lower() == 'true'
+    is_small_multiples = get_request_param('is_small_multiples', 'false').lower() == 'true'
 
     # Determine which legend limit to use
     legend_limit = MAX_BEFORE_AFTER_SMALL_MULTIPLES_ENTITIES if is_small_multiples else MAX_BEFORE_AFTER_LEGEND_ENTITIES
@@ -443,29 +444,29 @@ def get_before_after_aggregated():
         return f"Error fetching before/after aggregated data: {e}", 500
 
 
-@before_after_bp.route('/before-after-by-time-of-day')
+@before_after_bp.route('/before-after-by-time-of-day', methods=['GET', 'POST'])
 def get_before_after_by_time_of_day():
     """Get before/after travel time data aggregated by time of day (TIME OF DAY mode) as Arrow"""
     request_start = time.time()
 
-    # Get query parameters
-    before_start = request.args.get('before_start_date')
-    before_end = request.args.get('before_end_date')
-    after_start = request.args.get('after_start_date')
-    after_end = request.args.get('after_end_date')
-    signal_ids = request.args.getlist('signal_ids')
-    xd_segments = request.args.getlist('xd_segments')
-    maintained_by = request.args.get('maintained_by', 'all')
-    approach = request.args.get('approach')
-    valid_geometry = request.args.get('valid_geometry')
-    day_of_week = request.args.getlist('day_of_week')
-    start_hour = request.args.get('start_hour')
-    start_minute = request.args.get('start_minute')
-    end_hour = request.args.get('end_hour')
-    end_minute = request.args.get('end_minute')
-    legend_by = request.args.get('legend_by')
-    remove_anomalies = request.args.get('remove_anomalies', 'false').lower() == 'true'
-    is_small_multiples = request.args.get('is_small_multiples', 'false').lower() == 'true'
+    # Get query parameters (supports both GET and POST)
+    before_start = get_request_param('before_start_date')
+    before_end = get_request_param('before_end_date')
+    after_start = get_request_param('after_start_date')
+    after_end = get_request_param('after_end_date')
+    signal_ids = get_request_param_list('signal_ids')
+    xd_segments = get_request_param_list('xd_segments')
+    maintained_by = get_request_param('maintained_by', 'all')
+    approach = get_request_param('approach')
+    valid_geometry = get_request_param('valid_geometry')
+    day_of_week = get_request_param_list('day_of_week')
+    start_hour = get_request_param('start_hour')
+    start_minute = get_request_param('start_minute')
+    end_hour = get_request_param('end_hour')
+    end_minute = get_request_param('end_minute')
+    legend_by = get_request_param('legend_by')
+    remove_anomalies = get_request_param('remove_anomalies', 'false').lower() == 'true'
+    is_small_multiples = get_request_param('is_small_multiples', 'false').lower() == 'true'
 
     # Determine which legend limit to use
     legend_limit = MAX_BEFORE_AFTER_SMALL_MULTIPLES_ENTITIES if is_small_multiples else MAX_BEFORE_AFTER_LEGEND_ENTITIES
