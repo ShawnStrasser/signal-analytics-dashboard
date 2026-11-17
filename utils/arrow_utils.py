@@ -142,12 +142,7 @@ def snowflake_result_to_arrow(arrow_table: pa.Table) -> bytes:
         if pa.types.is_timestamp(field.type) and field.type.tz is None:
             # Use assume_timezone to convert naive timestamp to timezone-aware
             # This assumes the naive timestamps are in the configured timezone
-            # Naive local times are ambiguous (fall-back) or nonexistent (spring-forward)
-            # around DST; the pyarrow default 'raise' would 500 any query spanning them.
-            arrays.append(pc.assume_timezone(
-                arrow_table.column(i), config.TIMEZONE,
-                ambiguous='earliest', nonexistent='shift_forward'
-            ))
+            arrays.append(pc.assume_timezone(arrow_table.column(i), config.TIMEZONE))
         else:
             arrays.append(arrow_table.column(i))
 
