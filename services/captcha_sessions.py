@@ -35,6 +35,22 @@ class CaptchaNonce:
 _nonces: Dict[str, CaptchaNonce] = {}
 _lock = threading.Lock()
 
+# Unused nonces expire so abandoned captcha attempts don't accumulate in memory.
+NONCE_TTL_SECONDS = 10 * 60
+MAX_PENDING_NONCES = 20000
+
+
+def _prune_nonces_locked(now: float) -> None:
+    cutoff = now - NONCE_TTL_SECONDS
+    expired = [key for key, meta in _nonces.items() if meta.issued_at < cutoff]
+    for key in expired:
+        _nonces.pop(key, None)
+    # Hard cap: drop the oldest entries if still too many (dicts keep insertion order)
+    overflow = len(_nonces) - MAX_PENDING_NONCES
+    if overflow > 0:
+        for key in list(_nonces.keys())[:overflow]:
+            _nonces.pop(key, None)
+
 MIN_DRAG_DISTANCE_RANGE = (260.0, 420.0)
 MIN_DURATION_RANGE = (1500, 2600)
 MIN_MOVE_EVENTS_RANGE = (12, 24)
@@ -52,6 +68,7 @@ def create_nonce(client_id: str) -> str:
     min_duration = random.randint(*MIN_DURATION_RANGE)
     min_moves = random.randint(*MIN_MOVE_EVENTS_RANGE)
     with _lock:
+        _prune_nonces_locked(now)
         _nonces[nonce] = CaptchaNonce(
             nonce=nonce,
             client_id=client_id,
@@ -66,7 +83,10 @@ def create_nonce(client_id: str) -> str:
 def consume_nonce(nonce: str) -> CaptchaNonce | None:
     """Remove and return the nonce metadata for verification."""
     with _lock:
-        return _nonces.pop(nonce, None)
+        meta = _nonces.pop(nonce, None)
+    if meta is not None and _now() - meta.issued_at > NONCE_TTL_SECONDS:
+        return None
+    return meta
 
 
 def _sign(nonce: str, timestamp: int) -> str:

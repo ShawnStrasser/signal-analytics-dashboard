@@ -32,7 +32,7 @@ from utils.query_utils import (
     build_legend_join,
     build_legend_filter
 )
-from utils.request_helpers import get_request_param, get_request_param_list
+from utils.request_helpers import get_request_param, get_request_param_list, parse_xd_list
 
 anomalies_bp = Blueprint('anomalies', __name__)
 
@@ -262,14 +262,15 @@ def get_anomaly_aggregated():
         # Determine filtering strategy
         if xd_segments:
             # Map interaction - use direct XD list (small, efficient)
-            xd_values = [int(xd) for xd in xd_segments]
+            xd_values = parse_xd_list(xd_segments)
             xd_filter = build_xd_filter(xd_values)
             filter_join = ""
             filter_where = ""
         elif signal_ids or maintained_by != 'all' or approach or (valid_geometry and valid_geometry != 'all'):
             # Filter panel - use efficient join-based filtering (ALL filtering in SQL)
             filter_join, filter_where = build_filter_joins_and_where(
-                signal_ids, maintained_by, approach, valid_geometry
+                signal_ids, maintained_by, approach, valid_geometry,
+                semi_join=True  # avoid duplicating fact rows for shared XDs
             )
             xd_filter = ""  # No XD list needed - filtering via joins
         else:
@@ -346,7 +347,8 @@ def get_anomaly_aggregated():
                 start_date=start_date_str,
                 end_date=end_date_str,
                 time_filter=time_filter,
-                dow_join=dow_filter
+                dow_join=dow_filter,
+                filter_where=filter_where
             )
             where_clause += legend_entity_filter
 
@@ -410,14 +412,15 @@ def get_anomaly_by_time_of_day():
         # Determine filtering strategy
         if xd_segments:
             # Map interaction - use direct XD list (small, efficient)
-            xd_values = [int(xd) for xd in xd_segments]
+            xd_values = parse_xd_list(xd_segments)
             xd_filter = build_xd_filter(xd_values)
             filter_join = ""
             filter_where = ""
         elif signal_ids or maintained_by != 'all' or approach or (valid_geometry and valid_geometry != 'all'):
             # Filter panel - use efficient join-based filtering (ALL filtering in SQL)
             filter_join, filter_where = build_filter_joins_and_where(
-                signal_ids, maintained_by, approach, valid_geometry
+                signal_ids, maintained_by, approach, valid_geometry,
+                semi_join=True  # avoid duplicating fact rows for shared XDs
             )
             xd_filter = ""  # No XD list needed - filtering via joins
         else:
@@ -483,7 +486,8 @@ def get_anomaly_by_time_of_day():
                 start_date=start_date_str,
                 end_date=end_date_str,
                 time_filter=time_filter,
-                dow_join=dow_filter
+                dow_join=dow_filter,
+                filter_where=filter_where
             )
             where_clause += legend_entity_filter
 
@@ -550,14 +554,15 @@ def get_anomaly_percent_aggregated():
         # Determine filtering strategy
         if xd_segments:
             # Map interaction - use direct XD list (small, efficient)
-            xd_values = [int(xd) for xd in xd_segments]
+            xd_values = parse_xd_list(xd_segments)
             xd_filter = build_xd_filter(xd_values)
             filter_join = ""
             filter_where = ""
         elif signal_ids or maintained_by != 'all' or approach or (valid_geometry and valid_geometry != 'all'):
             # Filter panel - use efficient join-based filtering (ALL filtering in SQL)
             filter_join, filter_where = build_filter_joins_and_where(
-                signal_ids, maintained_by, approach, valid_geometry
+                signal_ids, maintained_by, approach, valid_geometry,
+                semi_join=True  # avoid duplicating fact rows for shared XDs
             )
             xd_filter = ""  # No XD list needed - filtering via joins
         else:
@@ -634,7 +639,8 @@ def get_anomaly_percent_aggregated():
                 start_date=start_date_str,
                 end_date=end_date_str,
                 time_filter=time_filter,
-                dow_join=dow_filter
+                dow_join=dow_filter,
+                filter_where=filter_where
             )
             where_clause += legend_entity_filter
 
@@ -698,14 +704,15 @@ def get_anomaly_percent_by_time_of_day():
         # Determine filtering strategy
         if xd_segments:
             # Map interaction - use direct XD list (small, efficient)
-            xd_values = [int(xd) for xd in xd_segments]
+            xd_values = parse_xd_list(xd_segments)
             xd_filter = build_xd_filter(xd_values)
             filter_join = ""
             filter_where = ""
         elif signal_ids or maintained_by != 'all' or approach or (valid_geometry and valid_geometry != 'all'):
             # Filter panel - use efficient join-based filtering (ALL filtering in SQL)
             filter_join, filter_where = build_filter_joins_and_where(
-                signal_ids, maintained_by, approach, valid_geometry
+                signal_ids, maintained_by, approach, valid_geometry,
+                semi_join=True  # avoid duplicating fact rows for shared XDs
             )
             xd_filter = ""  # No XD list needed - filtering via joins
         else:
@@ -771,7 +778,8 @@ def get_anomaly_percent_by_time_of_day():
                 start_date=start_date_str,
                 end_date=end_date_str,
                 time_filter=time_filter,
-                dow_join=dow_filter
+                dow_join=dow_filter,
+                filter_where=filter_where
             )
             where_clause += legend_entity_filter
 
@@ -891,7 +899,7 @@ def get_travel_time_data():
         # Resolve XD segments
         if xd_segments:
             # Map interaction - use direct XD list
-            xd_values = [int(xd) for xd in xd_segments]
+            xd_values = parse_xd_list(xd_segments)
         elif signal_ids or maintained_by != 'all':
             # Filter panel - use join-based filtering
             xd_values = build_xd_filter_with_joins(

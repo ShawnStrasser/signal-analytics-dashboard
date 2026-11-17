@@ -6,7 +6,7 @@
 import { ref, onMounted, onUnmounted, watch, nextTick, onActivated } from 'vue'
 import { useTheme } from 'vuetify'
 import { useThemeStore } from '@/stores/theme'
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
 import {
   createDateTimeAxisLabelFormatter,
   DATE_TIME_STEP_MILLISECONDS,
@@ -37,6 +37,8 @@ const props = defineProps({
 const chartContainer = ref(null)
 let chart = null
 let windowResizeHandler = null
+let resizeRebuildTimer = null
+let needsRebuildAfterShow = false
 let needsResizeAfterShow = false
 const theme = useTheme()
 const themeStore = useThemeStore()
@@ -105,6 +107,10 @@ onMounted(() => {
 })
 
 onActivated(() => {
+  if (needsRebuildAfterShow) {
+    needsRebuildAfterShow = false
+    nextTick(() => updateChart())
+  }
   nextTick(() => {
     requestChartResize(true)
     if (needsResizeAfterShow) {
@@ -124,6 +130,7 @@ watch(() => themeStore.colorblindMode, () => {
 })
 
 onUnmounted(() => {
+  clearTimeout(resizeRebuildTimer)
   if (windowResizeHandler) {
     window.removeEventListener('resize', windowResizeHandler)
     windowResizeHandler = null
@@ -140,7 +147,7 @@ watch(() => [props.data, props.selectedSignal, props.chartMode, props.legendBy],
   nextTick(() => {
     updateChart()
   })
-}, { deep: true })
+})  // Not deep: data arrays are replaced, never mutated in place
 
 function initializeChart() {
   if (!chartContainer.value || chart) {
@@ -152,8 +159,16 @@ function initializeChart() {
   // Handle window resize
   windowResizeHandler = () => {
     requestChartResize()
-    // Re-render chart with updated responsive settings
-    updateChart()
+    // Rebuild options (responsive label density) once resizing settles, and only
+    // for visible charts; hidden kept-alive pages re-render when shown.
+    clearTimeout(resizeRebuildTimer)
+    resizeRebuildTimer = setTimeout(() => {
+      if (chartContainer.value?.offsetWidth) {
+        updateChart()
+      } else {
+        needsRebuildAfterShow = true
+      }
+    }, 150)
   }
   window.addEventListener('resize', windowResizeHandler)
 }

@@ -3,6 +3,7 @@ Flask Backend for Signal Analytics Dashboard
 Serves Arrow data directly from Snowflake
 """
 
+import json
 import os
 import sys
 from datetime import timedelta
@@ -38,6 +39,27 @@ app = Flask(__name__, static_folder='static/dist')
 app.config['SECRET_KEY'] = SECRET_KEY
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=90)
 CORS(app)
+
+# HTTP compression (gzip/br) for JS/CSS bundles and Arrow IPC payloads.
+# Optional so local environments without flask-compress still run.
+try:
+    from flask_compress import Compress
+
+    app.config['COMPRESS_MIMETYPES'] = [
+        'text/html',
+        'text/css',
+        'text/javascript',
+        'application/javascript',
+        'application/json',
+        'image/svg+xml',
+        'application/octet-stream',  # Arrow IPC responses
+    ]
+    app.config['COMPRESS_MIN_SIZE'] = 1024
+    app.config['COMPRESS_LEVEL'] = 6
+    app.config['COMPRESS_ALGORITHM'] = ['br', 'gzip']
+    Compress(app)
+except ImportError:
+    print("flask-compress not installed; HTTP responses will not be compressed")
 
 subscription_store.initialize()
 
@@ -160,14 +182,70 @@ def handle_invalid_query_parameter(error):
     return jsonify({"error": message}), 400
 
 # Serve Vue.js app in production
+_index_html_cache = None
+
+
+def _render_index_html():
+    """Return index.html with runtime config injected (cached after first read).
+
+    CARTO_KEY is a prod-only runtime env var, so it is injected at serve time
+    rather than baked into the frontend build.
+    """
+    global _index_html_cache
+    if _index_html_cache is None:
+        with open(os.path.join(app.static_folder, 'index.html'), encoding='utf-8') as f:
+            html = f.read()
+        runtime_config = {'cartoKey': os.environ.get('CARTO_KEY', '').strip()}
+        payload = json.dumps(runtime_config).replace('</', '<\\/')
+        snippet = f'<script>window.__APP_CONFIG__={payload};</script>'
+        html = html.replace('<head>', '<head>' + snippet, 1)
+        _index_html_cache = html
+    return _index_html_cache
+
+
+_PRECOMPRESSED_TYPES = {
+    '.js': 'text/javascript',
+    '.css': 'text/css',
+    '.svg': 'image/svg+xml',
+}
+
+
+def _send_precompressed(path):
+    """Serve a build-time .br/.gz sibling of a static asset when the client accepts it."""
+    ext = os.path.splitext(path)[1].lower()
+    mimetype = _PRECOMPRESSED_TYPES.get(ext)
+    if mimetype is None:
+        return None
+    accept = (request.headers.get('Accept-Encoding') or '').lower()
+    for encoding, suffix in (('br', '.br'), ('gzip', '.gz')):
+        if encoding in accept and os.path.isfile(os.path.join(app.static_folder, path + suffix)):
+            response = send_from_directory(app.static_folder, path + suffix, mimetype=mimetype)
+            response.headers['Content-Encoding'] = encoding
+            response.headers['Vary'] = 'Accept-Encoding'
+            return response
+    return None
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_vue_app(path):
     """Serve Vue.js application"""
-    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
-        return send_from_directory(app.static_folder, path)
-    else:
-        return send_from_directory(app.static_folder, 'index.html')
+    if path and path != 'index.html' and os.path.isfile(os.path.join(app.static_folder, path)):
+        response = _send_precompressed(path) or send_from_directory(app.static_folder, path)
+        if path.startswith('assets/'):
+            # Vite emits content-hashed filenames under assets/, safe to cache forever
+            response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        else:
+            response.headers['Cache-Control'] = 'public, max-age=3600'
+        return response
+
+    if path.startswith('api/'):
+        return jsonify({"error": "Not found"}), 404
+
+    response = app.response_class(_render_index_html(), mimetype='text/html')
+    # Always revalidate the shell so new builds (new hashed asset names) are picked up
+    response.headers['Cache-Control'] = 'no-cache'
+    return response
 
 if __name__ == '__main__':
     # Warm up database connection on startup

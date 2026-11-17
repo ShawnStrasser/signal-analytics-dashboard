@@ -6,7 +6,7 @@
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import { useTheme } from 'vuetify'
 import { useThemeStore } from '@/stores/theme'
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
 import {
   createDateTimeAxisLabelFormatter,
   createTimeOfDayAxisLabelFormatter,

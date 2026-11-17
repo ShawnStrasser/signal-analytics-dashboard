@@ -1,4 +1,4 @@
-import { watch } from 'vue'
+import { watch, getCurrentInstance, onActivated, onDeactivated } from 'vue'
 
 /**
  * Shared helper that wires geometry/time filter watchers for map-driven pages.
@@ -34,16 +34,25 @@ export function useMapFilterReloads({
     throw new Error('useMapFilterReloads requires reloadOnGeometryChange callback')
   }
 
-  const executeReload = async (type, {
-    beforeHook,
-    clearSelections
-  }) => {
-    if (loadingRef?.value) {
-      return
-    }
+  // Reload type requested while a reload was running or while the page was hidden.
+  // 'geometry' supersedes 'data' because a geometry reload refreshes everything.
+  let pendingType = null
+  let running = false
+  let waitingForLoad = false
+  // Pages live inside <keep-alive>; hidden pages must not refetch on every filter
+  // change made elsewhere. Outside a component (unit tests) we are always active.
+  let isActive = true
+
+  const mergePending = (type) => {
+    pendingType = pendingType === 'geometry' || type === 'geometry' ? 'geometry' : 'data'
+  }
+
+  const runReload = async (type) => {
+    const isGeometry = type === 'geometry'
+    const beforeHook = isGeometry ? onBeforeGeometryChange : onBeforeDataChange
 
     if (shouldAutoZoomRef) {
-      shouldAutoZoomRef.value = type === 'geometry'
+      shouldAutoZoomRef.value = isGeometry
     }
 
     loadingRef.value = true
@@ -52,34 +61,79 @@ export function useMapFilterReloads({
         beforeHook()
       }
 
-      if (type === 'geometry' && clearSelections && selectionStore?.hasMapSelections) {
+      if (isGeometry && clearSelectionsOnGeometryChange && selectionStore?.hasMapSelections) {
         selectionStore.clearAllSelections()
       }
 
-      if (type === 'geometry') {
+      if (isGeometry) {
         await reloadOnGeometryChange()
       } else {
         const handler = reloadOnDataChange || reloadOnGeometryChange
         await handler()
       }
+    } catch (error) {
+      console.error('Filter reload failed:', error)
     } finally {
       loadingRef.value = false
     }
   }
 
-  watch(geometrySources, async () => {
-    await executeReload('geometry', {
-      beforeHook: onBeforeGeometryChange,
-      clearSelections: clearSelectionsOnGeometryChange
+  const executeReload = async (type) => {
+    if (!isActive) {
+      mergePending(type)
+      return
+    }
+    // A reload is in flight (ours or the page's initial load): queue instead of
+    // dropping, so the final filter state is always applied once it finishes.
+    if (running || loadingRef?.value) {
+      mergePending(type)
+      if (!running && loadingRef && !waitingForLoad) {
+        waitingForLoad = true
+        const stop = watch(loadingRef, (value) => {
+          if (!value) {
+            stop()
+            waitingForLoad = false
+            flushPending()
+          }
+        })
+      }
+      return
+    }
+
+    running = true
+    try {
+      let next = type
+      while (next) {
+        pendingType = null
+        await runReload(next)
+        next = isActive ? pendingType : null
+      }
+    } finally {
+      running = false
+    }
+  }
+
+  const flushPending = () => {
+    if (pendingType && !running && isActive) {
+      const type = pendingType
+      pendingType = null
+      executeReload(type)
+    }
+  }
+
+  if (getCurrentInstance()) {
+    onActivated(() => {
+      isActive = true
+      flushPending()
     })
-  }, { deep: true })
+    onDeactivated(() => {
+      isActive = false
+    })
+  }
+
+  watch(geometrySources, () => executeReload('geometry'), { deep: true })
 
   if (typeof dataSources === 'function') {
-    watch(dataSources, async () => {
-      await executeReload('data', {
-        beforeHook: onBeforeDataChange,
-        clearSelections: false
-      })
-    }, { deep: true })
+    watch(dataSources, () => executeReload('data'), { deep: true })
   }
 }

@@ -41,7 +41,7 @@ SCHEMAS = {
         ('TOTAL_PREDICTION', pa.float64())
     ]),
     'travel_time_detail': pa.schema([
-        ('XD', pa.int32()),
+        ('XD', pa.int64()),
         ('TIMESTAMP', pa.timestamp('ns')),
         ('TRAVEL_TIME_SECONDS', pa.float64()),
         ('PREDICTION', pa.float64()),
@@ -142,7 +142,12 @@ def snowflake_result_to_arrow(arrow_table: pa.Table) -> bytes:
         if pa.types.is_timestamp(field.type) and field.type.tz is None:
             # Use assume_timezone to convert naive timestamp to timezone-aware
             # This assumes the naive timestamps are in the configured timezone
-            arrays.append(pc.assume_timezone(arrow_table.column(i), config.TIMEZONE))
+            # Naive local times are ambiguous (fall-back) or nonexistent (spring-forward)
+            # around DST; the pyarrow default 'raise' would 500 any query spanning them.
+            arrays.append(pc.assume_timezone(
+                arrow_table.column(i), config.TIMEZONE,
+                ambiguous='earliest', nonexistent='shift_forward'
+            ))
         else:
             arrays.append(arrow_table.column(i))
 

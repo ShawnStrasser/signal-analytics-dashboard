@@ -4,8 +4,10 @@ Admin utilities for inspecting the subscriptions database through a protected AP
 
 from __future__ import annotations
 
+import hmac
 import sqlite3
 import time
+from contextlib import closing
 from datetime import date, datetime
 from typing import Any, Dict, List, Tuple
 
@@ -93,14 +95,20 @@ def admin_login():
 
     client_id = get_client_id()
     key = f"admin-login:cid:{client_id}"
+    # Also limit per IP: the client-id cookie can simply be dropped to reset the limit.
+    # The last X-Forwarded-For hop is the address seen by our edge proxy.
+    client_ip = (request.access_route[-1] if request.access_route else request.remote_addr) or "unknown"
+    ip_key = f"admin-login:ip:{client_ip}"
     allowed, retry_after = rate_limiter.allow(key, ADMIN_LOGIN_LIMIT, ADMIN_LOGIN_WINDOW_SECONDS)
+    if allowed:
+        allowed, retry_after = rate_limiter.allow(ip_key, ADMIN_LOGIN_LIMIT * 3, ADMIN_LOGIN_WINDOW_SECONDS)
     if not allowed:
         wait_seconds = max(1, int(retry_after or ADMIN_LOGIN_WINDOW_SECONDS))
         response = jsonify({"error": "Too many login attempts. Try again later."})
         response.headers["Retry-After"] = str(wait_seconds)
         return response, 429
 
-    if password != SECRET_KEY:
+    if not SECRET_KEY or not hmac.compare_digest(password.encode(), str(SECRET_KEY).encode()):
         return jsonify({"error": "Invalid password"}), 401
 
     # Reset the limiter after a successful login so new attempts are available.
@@ -118,7 +126,7 @@ def list_tables():
     if guard:
         return guard
 
-    with _open_db() as conn:
+    with closing(_open_db()) as conn:
         cursor = conn.execute(
             """
             SELECT name
@@ -133,7 +141,7 @@ def list_tables():
 
 
 def _execute_read_query(sql: str) -> Tuple[List[str], List[Dict[str, Any]], bool]:
-    with _open_db() as conn:
+    with closing(_open_db()) as conn:
         cursor = conn.execute(sql)
         columns = [description[0] for description in cursor.description or []]
         raw_rows = cursor.fetchmany(MAX_RESULT_ROWS + 1)

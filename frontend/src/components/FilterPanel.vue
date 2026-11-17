@@ -109,7 +109,7 @@
                         :class="{ 'with-divider': index < districtSignals.length - 1 }"
                       >
                         <v-checkbox
-                          :model-value="filtersStore.selectedSignalIds.includes(signal.ID)"
+                          :model-value="selectedSignalIdSet.has(signal.ID)"
                           @update:model-value="toggleSignal(signal.ID)"
                           :label="`${signal.ID} - ${signal.NAME || 'Unknown'}`"
                           hide-details
@@ -340,7 +340,6 @@ import { useRoute } from 'vue-router'
 import { useFiltersStore } from '@/stores/filters'
 import { useSignalsStore } from '@/stores/signals'
 import { useBeforeAfterFiltersStore } from '@/stores/beforeAfterFilters'
-import ApiService from '@/services/api'
 import BeforeAfterDateSelector from './BeforeAfterDateSelector.vue'
 import { getMonitoringDateStrings } from '@/utils/monitoringDate'
 import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
@@ -348,8 +347,8 @@ import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
 const filtersStore = useFiltersStore()
 const signalsStore = useSignalsStore()
 const beforeAfterFiltersStore = useBeforeAfterFiltersStore()
-const loadingSignals = ref(false)
-const signals = ref([]) // Keep for backward compat with old DIM_SIGNALS_XD endpoint
+// O(1) membership checks for checkbox state (was Array.includes per signal per render)
+const selectedSignalIdSet = computed(() => new Set(filtersStore.selectedSignalIds))
 const searchQuery = ref('')
 const signalSelectorExpanded = ref(true) // Start expanded by default
 const route = useRoute()
@@ -433,17 +432,22 @@ watch(() => filtersStore.anomalyMonitoringThreshold, (newVal) => {
   }
 })
 
+// Debounced: dragging the slider would otherwise trigger a backend reload per step
+let anomalyThresholdTimer = null
 watch(anomalyThresholdLocal, (newVal) => {
-  const numeric = Number(newVal)
-  if (!Number.isFinite(numeric)) {
-    if (filtersStore.anomalyMonitoringThreshold !== 0) {
-      filtersStore.setAnomalyMonitoringThreshold(0)
+  clearTimeout(anomalyThresholdTimer)
+  anomalyThresholdTimer = setTimeout(() => {
+    const numeric = Number(newVal)
+    if (!Number.isFinite(numeric)) {
+      if (filtersStore.anomalyMonitoringThreshold !== 0) {
+        filtersStore.setAnomalyMonitoringThreshold(0)
+      }
+      return
     }
-    return
-  }
-  if (numeric !== filtersStore.anomalyMonitoringThreshold) {
-    filtersStore.setAnomalyMonitoringThreshold(numeric)
-  }
+    if (numeric !== filtersStore.anomalyMonitoringThreshold) {
+      filtersStore.setAnomalyMonitoringThreshold(numeric)
+    }
+  }, 300)
 })
 
 watch(() => filtersStore.changepointSeverityThreshold, (newVal) => {
@@ -452,17 +456,22 @@ watch(() => filtersStore.changepointSeverityThreshold, (newVal) => {
   }
 })
 
+// Debounced: dragging the slider would otherwise trigger a backend reload per step
+let changepointSeverityTimer = null
 watch(changepointSeverityLocal, (newVal) => {
-  const numeric = Number(newVal)
-  if (!Number.isFinite(numeric)) {
-    if (filtersStore.changepointSeverityThreshold !== 0) {
-      filtersStore.setChangepointSeverityThreshold(0)
+  clearTimeout(changepointSeverityTimer)
+  changepointSeverityTimer = setTimeout(() => {
+    const numeric = Number(newVal)
+    if (!Number.isFinite(numeric)) {
+      if (filtersStore.changepointSeverityThreshold !== 0) {
+        filtersStore.setChangepointSeverityThreshold(0)
+      }
+      return
     }
-    return
-  }
-  if (numeric !== filtersStore.changepointSeverityThreshold) {
-    filtersStore.setChangepointSeverityThreshold(numeric)
-  }
+    if (numeric !== filtersStore.changepointSeverityThreshold) {
+      filtersStore.setChangepointSeverityThreshold(numeric)
+    }
+  }, 300)
 })
 
 // Slider min/max in quarter-hour units (computed from config)
@@ -544,7 +553,7 @@ function isDistrictSelected(district) {
   if (!districtSignals || districtSignals.length === 0) return false
 
   return districtSignals.every(signal =>
-    filtersStore.selectedSignalIds.includes(signal.ID)
+    selectedSignalIdSet.value.has(signal.ID)
   )
 }
 
@@ -554,7 +563,7 @@ function isDistrictIndeterminate(district) {
   if (!districtSignals || districtSignals.length === 0) return false
 
   const selectedCount = districtSignals.filter(signal =>
-    filtersStore.selectedSignalIds.includes(signal.ID)
+    selectedSignalIdSet.value.has(signal.ID)
   ).length
 
   return selectedCount > 0 && selectedCount < districtSignals.length
@@ -661,22 +670,7 @@ onMounted(async () => {
   } catch (error) {
     console.error('Failed to load DIM_SIGNALS data:', error)
   }
-
-  // Keep loading old endpoint for backward compat (if needed elsewhere)
-  await loadSignals()
 })
-
-async function loadSignals() {
-  try {
-    loadingSignals.value = true
-    const arrowTable = await ApiService.getSignals()
-    signals.value = ApiService.arrowTableToObjects(arrowTable)
-  } catch (error) {
-    console.error('Failed to load signals:', error)
-  } finally {
-    loadingSignals.value = false
-  }
-}
 </script>
 
 <style scoped>

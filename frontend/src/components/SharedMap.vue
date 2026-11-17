@@ -18,6 +18,7 @@ import {
   beforeAfterDifferenceColorScale,
   changepointColorScale
 } from '@/utils/colorScale'
+import { cartoTileUrl, CARTO_ATTRIBUTION } from '@/utils/basemap'
 
 const props = defineProps({
   signals: {
@@ -54,7 +55,12 @@ let markersLayer = null
 let geometryLayer = null
 let tileLayer = null // Reference to current tile layer for theme switching
 let layerControl = null // Reference to layer control for base map switching
+let activeBaseLayerName = 'Roadmap' // Persist base layer choice across theme switches
 let previousDisplayedXDs = new Set() // Track previous filter state for selective updates
+// Latest visible-XD set and XD -> data map from updateGeometry(). Layer event handlers
+// read these at event time; capturing them at layer creation made clicks/tooltips stale.
+let currentDisplayedXDs = new Set()
+let currentXdDataMap = new Map()
 let drawControl = null // Reference to draw control
 let drawnItems = null // Layer group for drawn items
 
@@ -600,7 +606,7 @@ watch(() => props.signals, (newSignals, oldSignals) => {
   }
 
   const t4 = performance.now()
-}, { deep: true })
+})  // Not deep: parents always replace the array; deep traversal of every row was costly
 
 // Watch for anomaly type changes
 watch(() => props.anomalyType, () => {
@@ -608,9 +614,10 @@ watch(() => props.anomalyType, () => {
 })
 
 // Watch for geometry changes
+// Not deep: geometry is replaced wholesale; a deep watch walked every coordinate
 watch(featureCollection, () => {
   updateGeometry()
-}, { deep: true })
+})
 
 // Watch for selection changes to update styling (with debouncing)
 watch([selectedSignalsList, selectedXdSegmentsList], () => {
@@ -651,6 +658,9 @@ watch(() => themeStore.colorblindMode, () => {
 function updateTileLayer() {
   if (!map) return
 
+  // Remember which base layer the user had picked so a theme switch doesn't reset it
+  const wasSatellite = activeBaseLayerName === 'Satellite'
+
   // Remove existing layer control and tile layers
   if (layerControl) {
     map.removeControl(layerControl)
@@ -661,49 +671,32 @@ function updateTileLayer() {
     tileLayer = null
   }
 
-  // Add appropriate tile layers based on theme
   const isDark = themeStore.currentTheme === 'dark'
+  const tileOptions = { maxZoom: 19, subdomains: 'abcd', attribution: CARTO_ATTRIBUTION }
 
-  let roadmapLayer, satelliteLayer
+  // CARTO raster basemaps (require ?key= — see utils/basemap.js)
+  const roadmapLayer = isDark
+    ? L.layerGroup([
+        L.tileLayer(cartoTileUrl('dark_nolabels'), tileOptions),
+        L.tileLayer(cartoTileUrl('dark_only_labels'), { ...tileOptions, opacity: 1.0 })
+      ])
+    : L.tileLayer(cartoTileUrl('light_all'), tileOptions)
 
-  if (isDark) {
-    // Dark mode: Use dark map without labels as base
-    roadmapLayer = L.layerGroup([
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png', {
-        maxZoom: 19
-      }),
-      // Add labels with better contrast on top
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        opacity: 1.0
-      })
-    ])
-  } else {
-    // Light mode: Use standard light theme
-    roadmapLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
-      maxZoom: 19
-    })
-  }
-
-  // Satellite layer with labels (works for both light and dark themes)
-  satelliteLayer = L.layerGroup([
+  // Satellite layer with CARTO labels on top (works for both light and dark themes)
+  const satelliteLayer = L.layerGroup([
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom: 19
-    }),
-    // Add labels on top of satellite imagery
-    L.tileLayer(isDark
-      ? 'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png'
-      : 'https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}.png', {
       maxZoom: 19,
+      attribution: 'Imagery &copy; Esri'
+    }),
+    L.tileLayer(cartoTileUrl(isDark ? 'dark_only_labels' : 'light_only_labels'), {
+      ...tileOptions,
       opacity: 0.8
     })
   ])
 
-  // Add roadmap as default layer
-  tileLayer = roadmapLayer
-  roadmapLayer.addTo(map)
+  tileLayer = wasSatellite ? satelliteLayer : roadmapLayer
+  tileLayer.addTo(map)
 
-  // Create layer control
   const baseMaps = {
     "Roadmap": roadmapLayer,
     "Satellite": satelliteLayer
@@ -723,7 +716,7 @@ function initializeMap() {
   map = L.map(mapContainer.value, {
     // Remove focus outline on click
     keyboard: false,
-    attributionControl: false,
+    attributionControl: true,
     // Enable smooth zoom but disable marker zoom animation specifically
     zoomAnimation: true,
     fadeAnimation: true,
@@ -731,6 +724,13 @@ function initializeMap() {
     // Use preferCanvas for better performance with many features
     preferCanvas: true
   }).setView(savedCenter, savedZoom)
+
+  // Compact attribution (required by CARTO / OSM tile terms)
+  if (map.attributionControl) map.attributionControl.setPrefix(false)
+  map.on('baselayerchange', (e) => {
+    activeBaseLayerName = e.name
+    tileLayer = e.layer
+  })
 
   // Add tile layer based on current theme
   updateTileLayer()
@@ -848,6 +848,8 @@ function updateGeometry() {
 
   // Get current data values for coloring
   const xdDataMap = getXdDataMap()
+  currentDisplayedXDs = displayedXDs
+  currentXdDataMap = xdDataMap
 
   // OPTIMIZATION: Identify which XDs changed filter state
   const newlyVisible = new Set([...displayedXDs].filter(xd => !previousDisplayedXDs.has(xd)))
@@ -914,7 +916,7 @@ function updateGeometry() {
 
           layer.on('click', (e) => {
             L.DomEvent.stopPropagation(e)
-            if (isInFilteredSet) {
+            if (currentDisplayedXDs.has(xd)) {
               selectionStore.toggleXdSegment(xd)
               emit('selection-changed')
             }
@@ -940,7 +942,7 @@ function updateGeometry() {
       if (!childLayer._tooltipUpdateBound) {
         childLayer._tooltipUpdateBound = true
         childLayer.on('mouseover', () => {
-          const tooltipContent = createXdTooltip(xd, getXdDataMap().get(xd))
+          const tooltipContent = createXdTooltip(xd, currentXdDataMap.get(xd))
           if (childLayer.getTooltip()) {
             childLayer.setTooltipContent(tooltipContent)
           } else {
@@ -1166,7 +1168,7 @@ function createXdTooltip(xd, dataValue) {
 // Select XD segments and signals that intersect with a drawn polygon
 function selectXdSegmentsInPolygon(polygon) {
 
-  const displayedXDs = new Set(
+  const displayedXDs = currentDisplayedXDs.size > 0 ? currentDisplayedXDs : new Set(
     props.xdSegments.length > 0
       ? props.xdSegments.map(xd => xd.XD)
       : props.signals.map(signal => signal.XD).filter(xd => xd !== undefined && xd !== null)
@@ -1174,17 +1176,25 @@ function selectXdSegmentsInPolygon(polygon) {
   const selectedXDs = []
   const selectedSignalIds = []
 
+  // Compute the lasso polygon's bounds once (previously rebuilt per segment and per vertex)
+  const polygonBounds = L.geoJSON(polygon).getBounds()
+
   // Check each XD layer to see if it intersects with the polygon
   xdLayers.forEach((layer, xd) => {
     // Only consider XD segments that are currently displayed (in filtered dataset)
     if (!displayedXDs.has(xd)) return
 
-    // Get the GeoJSON of the XD layer
-    const xdGeoJSON = layer.toGeoJSON()
+    // Cheap pre-filter using Leaflet's cached layer bounds before serializing to GeoJSON
+    const layerBounds = layer.getBounds ? layer.getBounds() : null
+    if (layerBounds && layerBounds.isValid() && !polygonBounds.intersects(layerBounds)) return
 
-    // Check if the XD geometry intersects with the polygon
-    if (geometriesIntersect(xdGeoJSON, polygon)) {
-      selectedXDs.push(xd)
+    const coords = extractCoordinates(layer.toGeoJSON())
+    for (const coord of coords) {
+      const point = L.latLng(coord[1], coord[0])
+      if (polygonBounds.contains(point) && pointInPolygon(point, polygon)) {
+        selectedXDs.push(xd)
+        break
+      }
     }
   })
 
@@ -1216,43 +1226,6 @@ function selectXdSegmentsInPolygon(polygon) {
 
     emit('selection-changed')
   }
-}
-
-// Helper function to check if two GeoJSON geometries intersect
-function geometriesIntersect(geojson1, geojson2) {
-  // Simple bounding box intersection check first (fast)
-  const bounds1 = L.geoJSON(geojson1).getBounds()
-  const bounds2 = L.geoJSON(geojson2).getBounds()
-
-  if (!bounds1.intersects(bounds2)) {
-    return false
-  }
-
-  // More detailed check: see if any coordinates of geojson1 are inside geojson2
-  const polygon2Layer = L.geoJSON(geojson2)
-  const coords1 = extractCoordinates(geojson1)
-
-  // Check if any point from the XD segment is inside the polygon
-  for (const coord of coords1) {
-    const point = L.latLng(coord[1], coord[0])
-    let isInside = false
-
-    polygon2Layer.eachLayer(layer => {
-      if (layer.getBounds && layer.getBounds().contains(point)) {
-        // More precise point-in-polygon check
-        if (layer.toGeoJSON) {
-          const poly = layer.toGeoJSON()
-          if (pointInPolygon(point, poly)) {
-            isInside = true
-          }
-        }
-      }
-    })
-
-    if (isInside) return true
-  }
-
-  return false
 }
 
 // Extract all coordinates from a GeoJSON geometry

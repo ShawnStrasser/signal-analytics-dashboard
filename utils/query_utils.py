@@ -235,15 +235,17 @@ def build_xd_filter_with_joins(
         xd_values = [row['XD'] for row in result]
         return xd_values if xd_values else []
     except Exception as e:
+        # Re-raise so auth errors trigger reconnect/retry instead of silently returning no data
         print(f"[ERROR] build_xd_filter_with_joins: {e}")
-        return []
+        raise
 
 
 def build_filter_joins_and_where(
     signal_ids: Optional[List[str]] = None,
     maintained_by: str = 'all',
     approach: Optional[str] = None,
-    valid_geometry: Optional[str] = None
+    valid_geometry: Optional[str] = None,
+    semi_join: bool = False
 ) -> tuple[str, str]:
     """
     Build SQL JOIN and WHERE clauses for filtering at the database level.
@@ -262,6 +264,11 @@ def build_filter_joins_and_where(
         Tuple of (join_clause, where_clause):
         - join_clause: SQL JOIN fragment (e.g., "INNER JOIN DIM_SIGNALS_XD xd ON t.XD = xd.XD ...")
         - where_clause: SQL WHERE conditions (e.g., "s.ODOT_MAINTAINED = TRUE AND xd.APPROACH = TRUE")
+
+    semi_join=True returns no join and a ``t.XD IN (SELECT ...)`` condition instead.
+    Use it for XD-level aggregations (SUM/AVG over t.*): an XD can belong to several
+    signals in DIM_SIGNALS_XD, so a plain INNER JOIN repeats fact rows once per
+    matching signal, inflating SUMs and the rows Snowflake has to process.
     """
     # If no filters, return empty strings (no filtering needed)
     if not signal_ids and maintained_by == 'all' and not approach and (not valid_geometry or valid_geometry == 'all'):
@@ -306,6 +313,14 @@ def build_filter_joins_and_where(
             where_parts.append("xd.VALID_GEOMETRY = FALSE")
 
     where_clause = " AND ".join(where_parts) if where_parts else ""
+
+    if semi_join:
+        subquery = "SELECT xd.XD FROM DIM_SIGNALS_XD xd"
+        if needs_signal_join:
+            subquery += " INNER JOIN DIM_SIGNALS s ON xd.ID = s.ID"
+        if where_clause:
+            subquery += f" WHERE {where_clause}"
+        return ("", f"t.XD IN ({subquery})")
 
     return (join_clause, where_clause)
 
@@ -497,9 +512,19 @@ def build_legend_join(
     if not legend_field:
         return ("", "")
 
-    # Return simple join - the WHERE clause will be built by the endpoint
-    # Use alias 'legend_xd' to avoid conflicts with 'xd' and 's' aliases used by filter joins
-    join_clause = "INNER JOIN DIM_SIGNALS_XD legend_xd ON t.XD = legend_xd.XD"
+    # Use alias 'legend_xd' to avoid conflicts with 'xd' and 's' aliases used by filter joins.
+    if legend_field == 'ID':
+        # Grouping by signal intentionally counts a shared XD under each of its signals
+        join_clause = "INNER JOIN DIM_SIGNALS_XD legend_xd ON t.XD = legend_xd.XD"
+    elif legend_field == 'XD':
+        join_clause = "INNER JOIN (SELECT DISTINCT XD FROM DIM_SIGNALS_XD) legend_xd ON t.XD = legend_xd.XD"
+    else:
+        # XD-level attributes: collapse DIM_SIGNALS_XD to one row per XD so fact rows
+        # for XDs shared by several signals are not double counted.
+        join_clause = (
+            f"INNER JOIN (SELECT XD, ANY_VALUE({legend_field}) AS {legend_field} "
+            f"FROM DIM_SIGNALS_XD GROUP BY XD) legend_xd ON t.XD = legend_xd.XD"
+        )
 
     return (join_clause, legend_field)
 
@@ -511,7 +536,8 @@ def build_legend_filter(
     start_date: str = "",
     end_date: str = "",
     time_filter: str = "",
-    dow_join: str = ""
+    dow_join: str = "",
+    filter_where: str = ""
 ) -> str:
     """
     Build WHERE clause to limit legend entities.
@@ -527,6 +553,9 @@ def build_legend_filter(
         legend_field: The field to limit (e.g., 'COUNTY', 'BEARING', 'XD')
         max_entities: Maximum number of entities
         xd_filter: XD filter like "AND XD IN (...)" - ONLY this is needed
+        filter_where: Semi-join condition "t.XD IN (SELECT ...)" from
+            build_filter_joins_and_where(semi_join=True), used when xd_filter is empty so
+            legend entities are picked from the user's filtered selection.
 
     Returns:
         SQL fragment like "AND s.COUNTY IN (SELECT DISTINCT ...)"
@@ -542,6 +571,9 @@ def build_legend_filter(
             if clean_xd.startswith('AND '):
                 clean_xd = clean_xd[4:].strip()
             where_clause = f"WHERE {clean_xd}"
+        elif filter_where:
+            # Inner alias 't' shadows the outer query's 't' inside this subquery
+            where_clause = f"WHERE {filter_where}"
 
         # Query TRAVEL_TIME_ANALYTICS for top XDs by data volume within date range
         if start_date and end_date:
@@ -551,8 +583,8 @@ def build_legend_filter(
             else:
                 where_clause = f"WHERE {date_filter}"
 
-        subquery = f"""SELECT XD
-            FROM TRAVEL_TIME_ANALYTICS
+        subquery = f"""SELECT t.XD
+            FROM TRAVEL_TIME_ANALYTICS t
             {where_clause}
             GROUP BY XD
             ORDER BY XD
@@ -574,6 +606,8 @@ def build_legend_filter(
             clean_xd = clean_xd.replace('XD IN', 'sub_s.XD IN')
         if clean_xd:
             where_clause = f"WHERE {clean_xd}"
+    elif filter_where and filter_where.startswith('t.XD IN'):
+        where_clause = "WHERE " + filter_where.replace('t.XD IN', 'sub_s.XD IN', 1)
 
     # Build simple subquery - just query DIM_SIGNALS_XD with deterministic ordering
     subquery = f"""SELECT DISTINCT sub_s.{legend_field}

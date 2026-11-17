@@ -9,12 +9,15 @@
  * when filters change, since only TTI metrics need to be re-queried.
  */
 import { defineStore } from 'pinia'
+import { markRaw } from 'vue'
 import ApiService from '@/services/api'
+
+let inflightLoad = null
 
 export const useSignalDimensionsStore = defineStore('signalDimensions', {
   state: () => ({
     // Map of signal ID -> dimension data
-    dimensions: new Map(),
+    dimensions: markRaw(new Map()),
     // Loading state
     loading: false,
     loaded: false,
@@ -63,10 +66,21 @@ export const useSignalDimensionsStore = defineStore('signalDimensions', {
      * This should be called once on app initialization
      */
     async loadDimensions() {
-      if (this.loaded || this.loading) {
+      if (this.loaded) {
         return
       }
+      // A second page mounting mid-load must wait for the same request instead of
+      // returning early and rendering with empty dimensions.
+      if (inflightLoad) {
+        return inflightLoad
+      }
+      inflightLoad = this._loadDimensions().finally(() => {
+        inflightLoad = null
+      })
+      return inflightLoad
+    },
 
+    async _loadDimensions() {
       this.loading = true
       this.error = null
 
@@ -74,10 +88,11 @@ export const useSignalDimensionsStore = defineStore('signalDimensions', {
         const arrowTable = await ApiService.getDimSignals()
         const data = ApiService.arrowTableToObjects(arrowTable)
 
-        // Build Map for O(1) lookups
-        this.dimensions.clear()
+        // Build Map for O(1) lookups. markRaw: static lookup data doesn't need
+        // per-entry reactive proxies; reassigning the property still notifies getters.
+        const next = new Map()
         data.forEach(signal => {
-          this.dimensions.set(String(signal.ID), {
+          next.set(String(signal.ID), {
             NAME: signal.NAME,
             LATITUDE: signal.LATITUDE,
             LONGITUDE: signal.LONGITUDE,
@@ -85,6 +100,7 @@ export const useSignalDimensionsStore = defineStore('signalDimensions', {
             ODOT_MAINTAINED: signal.ODOT_MAINTAINED
           })
         })
+        this.dimensions = markRaw(next)
 
         this.loaded = true
       } catch (error) {
@@ -100,7 +116,7 @@ export const useSignalDimensionsStore = defineStore('signalDimensions', {
      * Clear cached dimensions (for testing/debugging)
      */
     clear() {
-      this.dimensions.clear()
+      this.dimensions = markRaw(new Map())
       this.loaded = false
       this.error = null
     }

@@ -151,7 +151,8 @@ def _assemble_where_clause(
 ):
     """Compose WHERE clause for changepoint queries."""
     where_parts = [
-        f"DATE(t.TIMESTAMP) BETWEEN '{start_date}' AND '{end_date}'"
+        # Range predicate on the raw column keeps Snowflake partition pruning effective
+        f"t.TIMESTAMP >= '{start_date}' AND t.TIMESTAMP < DATEADD(day, 1, '{end_date}'::DATE)"
     ]
 
     if filter_where:
@@ -502,8 +503,8 @@ def get_changepoints_table():
         severity_threshold=severity_threshold
     )
 
-    sort_by = (get_request_param('sort_by', 'score') or 'score').lower()
-    sort_dir = (get_request_param('sort_dir', 'desc') or 'desc').lower()
+    sort_by = str(get_request_param('sort_by', 'score') or 'score').lower()
+    sort_dir = str(get_request_param('sort_dir', 'desc') or 'desc').lower()
 
     sort_column_map = {
         'timestamp': 't.TIMESTAMP',
@@ -587,7 +588,9 @@ def get_changepoint_detail():
 
     sort_column = "t.TIMESTAMP"
 
-    set_variable_sql = f"SET CHANGE_TS = TO_TIMESTAMP_NTZ('{timestamp_sql}')"
+    # Inline literal (not a SET session variable): saves a round trip and avoids
+    # concurrent requests/report jobs overwriting each other's $CHANGE_TS.
+    change_ts = f"TO_TIMESTAMP_NTZ('{timestamp_sql}')"
 
     query = f"""
     SELECT
@@ -595,13 +598,13 @@ def get_changepoint_detail():
         t.TIMESTAMP,
         t.TRAVEL_TIME_SECONDS,
         CASE
-            WHEN t.TIMESTAMP < $CHANGE_TS THEN 'before'
+            WHEN t.TIMESTAMP < {change_ts} THEN 'before'
             ELSE 'after'
         END AS PERIOD
     FROM TRAVEL_TIME_ANALYTICS t
     WHERE t.XD = {xd_int}
-      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, $CHANGE_TS)
-                          AND DATEADD('day', 7, $CHANGE_TS)
+      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, {change_ts})
+                          AND DATEADD('day', 7, {change_ts})
     ORDER BY {sort_column}
     """
 
@@ -614,7 +617,6 @@ def get_changepoint_detail():
         if not session:
             raise Exception("Unable to establish database connection")
 
-        session.sql(set_variable_sql).collect()
         arrow_data = session.sql(query).to_arrow()
         arrow_bytes = snowflake_result_to_arrow(arrow_data)
         result = create_arrow_response(arrow_bytes)

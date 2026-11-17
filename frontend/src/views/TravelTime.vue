@@ -131,7 +131,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onActivated, onDeactivated, computed } from 'vue'
+import { ref, shallowRef, watch, onMounted, onActivated, onDeactivated, computed } from 'vue'
 import { useFiltersStore } from '@/stores/filters'
 import { useSelectionStore } from '@/stores/selection'
 import { useMapDataCacheStore } from '@/stores/mapDataCache'
@@ -155,9 +155,9 @@ const themeStore = useThemeStore()
 const legendGreenColor = computed(() => themeStore.colorblindMode ? '#0072B2' : '#4caf50')
 const legendYellowColor = computed(() => themeStore.colorblindMode ? '#F0E442' : '#ffc107')
 const legendRedColor = computed(() => themeStore.colorblindMode ? '#D55E00' : '#d32f2f')
-const mapData = ref([])
-const xdData = ref([])  // XD segment data for map tooltips/coloring
-const chartData = ref([])
+const mapData = shallowRef([])
+const xdData = shallowRef([])  // XD segment data for map tooltips/coloring
+const chartData = shallowRef([])
 const loadingMap = ref(true)
 const loadingChart = ref(true)
 const loading = ref(true) // Global loading state
@@ -274,24 +274,23 @@ watch(() => [
 })
 
 onMounted(async () => {
-  // Fetch config first
-  const config = await ApiService.getConfig()
-  maxLegendEntities.value = config.maxLegendEntities
-
-  // Load dimension data first (once per session)
-  // These are cached and won't be re-queried on filter changes
-  await Promise.all([
-    signalDimensionsStore.loadDimensions(),
-    xdDimensionsStore.loadDimensions()
-  ])
-
-  // Load map and chart data (metrics only - will be merged with dimensions)
   loading.value = true
   try {
+    // Config (memoized) and dimension data (once per session) load in parallel
+    const [config] = await Promise.all([
+      ApiService.getConfig(),
+      signalDimensionsStore.loadDimensions(),
+      xdDimensionsStore.loadDimensions()
+    ])
+    maxLegendEntities.value = config.maxLegendEntities
+
+    // Load map and chart data (metrics only - will be merged with dimensions)
     await Promise.all([
       loadMapData(),
       loadChartData()
     ])
+  } catch (error) {
+    console.error('TravelTime initial load failed:', error)
   } finally {
     loading.value = false
   }
@@ -323,7 +322,11 @@ onDeactivated(() => {
   lastSelectionState.value = captureSelectionState()
 })
 
+// Monotonic id: only the latest request may write results / clear loading
+let mapRequestSeq = 0
 async function loadMapData() {
+  const requestId = ++mapRequestSeq
+  const isStale = () => requestId !== mapRequestSeq
   try {
     loadingMap.value = true
 
@@ -331,6 +334,7 @@ async function loadMapData() {
       ApiService.getTravelTimeSummary(filtersStore.filterParams),
       ApiService.getTravelTimeSummaryXd(filtersStore.filterParams)
     ])
+    if (isStale()) return
 
     const signalMetrics = ApiService.arrowTableToObjects(signalTable)
     const xdMetrics = ApiService.arrowTableToObjects(xdTable)
@@ -364,15 +368,20 @@ async function loadMapData() {
     mapData.value = signalObjects
     xdData.value = xdObjects
   } catch (error) {
+    if (isStale()) return
     console.error('Failed to load map data:', error)
     mapData.value = []
     xdData.value = []
   } finally {
-    loadingMap.value = false
+    if (!isStale()) loadingMap.value = false
   }
 }
 
+// Monotonic id: only the latest request may write results / clear loading
+let chartRequestSeq = 0
 async function loadChartData() {
+  const requestId = ++chartRequestSeq
+  const isStale = () => requestId !== chartRequestSeq
   // If the aggregation mode changed (date/time -> time-of-day or vice versa),
   // clear the chart data immediately so the chart doesn't try to render with the wrong shape.
   const currentAggregateMode = aggregateByTimeOfDay.value
@@ -401,6 +410,7 @@ async function loadChartData() {
     } else {
       arrowTable = await ApiService.getTravelTimeAggregated(filters, legendBy.value)
     }
+    if (isStale()) return
 
     const data = ApiService.arrowTableToObjects(arrowTable)
 
@@ -435,10 +445,11 @@ async function loadChartData() {
 
     chartData.value = filteredData
   } catch (error) {
+    if (isStale()) return
     console.error('Failed to load chart data:', error)
     chartData.value = []
   } finally {
-    loadingChart.value = false
+    if (!isStale()) loadingChart.value = false
   }
 }
 

@@ -161,7 +161,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, computed } from 'vue'
+import { ref, shallowRef, watch, onMounted, computed } from 'vue'
 import { useFiltersStore } from '@/stores/filters'
 import { useBeforeAfterFiltersStore } from '@/stores/beforeAfterFilters'
 import { useSelectionStore } from '@/stores/selection'
@@ -187,10 +187,10 @@ const legendGreenColor = computed(() => themeStore.colorblindMode ? '#0072B2' : 
 const legendYellowColor = computed(() => themeStore.colorblindMode ? '#F0E442' : '#ffc107')
 const legendRedColor = computed(() => themeStore.colorblindMode ? '#D55E00' : '#d32f2f')
 
-const mapData = ref([])
-const xdData = ref([])
-const chartData = ref([])
-const smallMultiplesData = ref([])
+const mapData = shallowRef([])
+const xdData = shallowRef([])
+const chartData = shallowRef([])
+const smallMultiplesData = shallowRef([])
 const defaultSmallMultiplesXds = ref([])
 const loadingMap = ref(true)
 const loadingChart = ref(true)
@@ -299,16 +299,16 @@ watch(() => [
 })
 
 onMounted(async () => {
-  const config = await ApiService.getConfig()
-  maxLegendEntities.value = config.maxBeforeAfterLegendEntities
-
-  await Promise.all([
-    signalDimensionsStore.loadDimensions(),
-    xdDimensionsStore.loadDimensions()
-  ])
-
   loading.value = true
   try {
+    // Config (memoized) and dimension data (once per session) load in parallel
+    const [config] = await Promise.all([
+      ApiService.getConfig(),
+      signalDimensionsStore.loadDimensions(),
+      xdDimensionsStore.loadDimensions()
+    ])
+    maxLegendEntities.value = config.maxBeforeAfterLegendEntities
+
     const initialLoads = [loadMapData(), loadChartData()]
     if (smallMultiplesEntity.value !== 'none') {
       initialLoads.push(loadSmallMultiplesData())
@@ -316,12 +316,18 @@ onMounted(async () => {
       loadingSmallMultiples.value = false
     }
     await Promise.all(initialLoads)
+  } catch (error) {
+    console.error('BeforeAfter initial load failed:', error)
   } finally {
     loading.value = false
   }
 })
 
+// Monotonic id: only the latest request may write results / clear loading
+let mapRequestSeq = 0
 async function loadMapData() {
+  const requestId = ++mapRequestSeq
+  const isStale = () => requestId !== mapRequestSeq
   try {
     loadingMap.value = true
     const beforeFilters = beforeAfterFiltersStore.beforeFilterParams
@@ -332,6 +338,7 @@ async function loadMapData() {
       ApiService.getBeforeAfterSummary(beforeFilters, afterFilters, commonFilters),
       ApiService.getBeforeAfterSummaryXd(beforeFilters, afterFilters, commonFilters)
     ])
+    if (isStale()) return
 
     const signalMetrics = ApiService.arrowTableToObjects(signalTable)
     const xdMetrics = ApiService.arrowTableToObjects(xdTable)
@@ -393,15 +400,20 @@ async function loadMapData() {
       defaultSmallMultiplesXds.value = prioritizedXds
     }
   } catch (error) {
+    if (isStale()) return
     console.error('Failed to load map data:', error)
     mapData.value = []
     xdData.value = []
   } finally {
-    loadingMap.value = false
+    if (!isStale()) loadingMap.value = false
   }
 }
 
+// Monotonic id: only the latest request may write results / clear loading
+let chartRequestSeq = 0
 async function loadChartData() {
+  const requestId = ++chartRequestSeq
+  const isStale = () => requestId !== chartRequestSeq
   try {
     loadingChart.value = true
     const beforeFilters = beforeAfterFiltersStore.beforeFilterParams
@@ -424,6 +436,7 @@ async function loadChartData() {
     } else {
       arrowTable = await ApiService.getBeforeAfterAggregated(beforeFilters, afterFilters, filters, legendBy.value)
     }
+    if (isStale()) return
 
     const data = ApiService.arrowTableToObjects(arrowTable)
 
@@ -436,14 +449,19 @@ async function loadChartData() {
 
     chartData.value = data
   } catch (error) {
+    if (isStale()) return
     console.error('Failed to load chart data:', error)
     chartData.value = []
   } finally {
-    loadingChart.value = false
+    if (!isStale()) loadingChart.value = false
   }
 }
 
+// Monotonic id: only the latest request may write results / clear loading
+let smallMultiplesRequestSeq = 0
 async function loadSmallMultiplesData() {
+  const requestId = ++smallMultiplesRequestSeq
+  const isStale = () => requestId !== smallMultiplesRequestSeq
   if (smallMultiplesEntity.value === 'none') {
     smallMultiplesData.value = []
     return
@@ -478,6 +496,7 @@ async function loadSmallMultiplesData() {
     } else {
       arrowTable = await ApiService.getBeforeAfterAggregated(beforeFilters, afterFilters, filters, smallMultiplesEntity.value, true)
     }
+    if (isStale()) return
 
     const data = ApiService.arrowTableToObjects(arrowTable)
 
@@ -490,10 +509,11 @@ async function loadSmallMultiplesData() {
 
     smallMultiplesData.value = data
   } catch (error) {
+    if (isStale()) return
     console.error('Failed to load small multiples data:', error)
     smallMultiplesData.value = []
   } finally {
-    loadingSmallMultiples.value = false
+    if (!isStale()) loadingSmallMultiples.value = false
   }
 }
 

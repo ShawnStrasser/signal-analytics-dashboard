@@ -4,6 +4,7 @@ Optimized for low-latency small queries
 """
 
 import json
+import threading
 import time
 import pyarrow as pa
 from flask import Blueprint, request, jsonify
@@ -32,12 +33,56 @@ from utils.query_utils import (
     build_legend_join,
     build_legend_filter
 )
-from utils.request_helpers import get_request_param, get_request_param_list
+from utils.request_helpers import get_request_param, get_request_param_list, parse_xd_list
 
 travel_time_bp = Blueprint('travel_time', __name__)
 
-# Cache XD geometry since it is static
-_xd_geometry_cache = None
+# Server-side TTL cache for static dimension/geometry payloads (serialized Arrow bytes).
+# These tables change at most daily, but were re-queried from Snowflake on every page load.
+DIMENSION_CACHE_TTL_SECONDS = 60 * 60
+GEOMETRY_CACHE_TTL_SECONDS = 12 * 60 * 60
+_static_cache = {}  # name -> (expires_at, bytes)
+_static_cache_lock = threading.Lock()
+
+
+def _get_static_cache(name):
+    if DEBUG_DISABLE_SERVER_CACHE:
+        return None
+    with _static_cache_lock:
+        entry = _static_cache.get(name)
+    if entry and entry[0] > time.time():
+        return entry[1]
+    return None
+
+
+def _set_static_cache(name, payload, ttl_seconds):
+    with _static_cache_lock:
+        _static_cache[name] = (time.time() + ttl_seconds, payload)
+
+
+def _static_arrow_response(payload):
+    data, status, headers = create_arrow_response(payload)
+    headers = dict(headers)
+    # Let the browser reuse dimension payloads across reloads for a short while
+    headers['Cache-Control'] = 'private, max-age=600'
+    return data, status, headers
+
+
+def _cached_static_query(name, query, ttl_seconds):
+    """Run a static dimension query once per TTL and serve cached Arrow bytes."""
+    cached = _get_static_cache(name)
+    if cached is not None:
+        return _static_arrow_response(cached)
+
+    def execute_query():
+        session = get_snowflake_session(retry=True, max_retries=2)
+        if not session:
+            raise Exception("Unable to establish database connection")
+        arrow_bytes = snowflake_result_to_arrow(session.sql(query).to_arrow())
+        _set_static_cache(name, arrow_bytes, ttl_seconds)
+        return _static_arrow_response(arrow_bytes)
+
+    return handle_auth_error_retry(execute_query)
 
 
 @travel_time_bp.route('/signals')
@@ -59,16 +104,8 @@ def get_signals():
     FROM DIM_SIGNALS_XD
     """
 
-    def execute_query():
-        session = get_snowflake_session(retry=True, max_retries=2)
-        if not session:
-            raise Exception("Unable to establish database connection")
-        arrow_data = session.sql(query).to_arrow()
-        arrow_bytes = snowflake_result_to_arrow(arrow_data)
-        return create_arrow_response(arrow_bytes)
-
     try:
-        return handle_auth_error_retry(execute_query)
+        return _cached_static_query('signals', query, DIMENSION_CACHE_TTL_SECONDS)
     except InvalidQueryParameter:
         raise
     except Exception as e:
@@ -93,16 +130,8 @@ def get_dim_signals():
     ORDER BY DISTRICT, ID
     """
 
-    def execute_query():
-        session = get_snowflake_session(retry=True, max_retries=2)
-        if not session:
-            raise Exception("Unable to establish database connection")
-        arrow_data = session.sql(query).to_arrow()
-        arrow_bytes = snowflake_result_to_arrow(arrow_data)
-        return create_arrow_response(arrow_bytes)
-
     try:
-        return handle_auth_error_retry(execute_query)
+        return _cached_static_query('dim_signals', query, DIMENSION_CACHE_TTL_SECONDS)
     except InvalidQueryParameter:
         raise
     except Exception as e:
@@ -129,16 +158,8 @@ def get_dim_signals_xd():
     ORDER BY XD
     """
 
-    def execute_query():
-        session = get_snowflake_session(retry=True, max_retries=2)
-        if not session:
-            raise Exception("Unable to establish database connection")
-        arrow_data = session.sql(query).to_arrow()
-        arrow_bytes = snowflake_result_to_arrow(arrow_data)
-        return create_arrow_response(arrow_bytes)
-
     try:
-        return handle_auth_error_retry(execute_query)
+        return _cached_static_query('dim_signals_xd', query, DIMENSION_CACHE_TTL_SECONDS)
     except InvalidQueryParameter:
         raise
     except Exception as e:
@@ -151,14 +172,14 @@ def get_dim_signals_xd():
 @travel_time_bp.route('/xd-geometry')
 def get_xd_geometry():
     """Return XD road segment geometries as Arrow (efficient binary format)"""
-    global _xd_geometry_cache
     request_start = time.time()
 
     # Check cache unless disabled
-    if not DEBUG_DISABLE_SERVER_CACHE and _xd_geometry_cache is not None:
+    cached = _get_static_cache('xd_geometry')
+    if cached is not None:
         if DEBUG_BACKEND_TIMING:
             print("[TIMING] /xd-geometry: Returned from cache")
-        return create_arrow_response(_xd_geometry_cache)
+        return _static_arrow_response(cached)
 
     if DEBUG_BACKEND_TIMING:
         print(f"\n[TIMING] /xd-geometry START")
@@ -195,10 +216,9 @@ def get_xd_geometry():
             print(f"  [TOTAL] /xd-geometry: {total_time:.2f}ms\n")
 
         # Cache the serialized Arrow bytes
-        global _xd_geometry_cache
-        _xd_geometry_cache = arrow_bytes
+        _set_static_cache('xd_geometry', arrow_bytes, GEOMETRY_CACHE_TTL_SECONDS)
 
-        return create_arrow_response(arrow_bytes)
+        return _static_arrow_response(arrow_bytes)
 
     try:
         return handle_auth_error_retry(execute_query)
@@ -480,7 +500,7 @@ def get_travel_time_aggregated():
         # Determine filtering strategy
         if xd_segments:
             # Map interaction - use direct XD list (small, efficient)
-            xd_values = [int(xd) for xd in xd_segments]
+            xd_values = parse_xd_list(xd_segments)
             xd_filter = build_xd_filter(xd_values)
             filter_join = ""
             filter_where = ""
@@ -491,7 +511,8 @@ def get_travel_time_aggregated():
             if DEBUG_BACKEND_TIMING:
                 print(f"  [INFO] Using join-based filtering (efficient)")
             filter_join, filter_where = build_filter_joins_and_where(
-                signal_ids, maintained_by, approach, valid_geometry
+                signal_ids, maintained_by, approach, valid_geometry,
+                semi_join=True  # avoid duplicating fact rows for shared XDs
             )
             xd_filter = ""  # No XD list needed - filtering via joins
         else:
@@ -575,7 +596,8 @@ def get_travel_time_aggregated():
                 start_date=start_date_str,
                 end_date=end_date_str,
                 time_filter=time_filter,
-                dow_join=dow_filter
+                dow_join=dow_filter,
+                filter_where=filter_where
             )
             where_clause += legend_entity_filter
 
@@ -656,7 +678,7 @@ def get_travel_time_by_time_of_day():
         # Determine filtering strategy
         if xd_segments:
             # Map interaction - use direct XD list (small, efficient)
-            xd_values = [int(xd) for xd in xd_segments]
+            xd_values = parse_xd_list(xd_segments)
             xd_filter = build_xd_filter(xd_values)
             filter_join = ""
             filter_where = ""
@@ -667,7 +689,8 @@ def get_travel_time_by_time_of_day():
             if DEBUG_BACKEND_TIMING:
                 print(f"  [INFO] Using join-based filtering (efficient)")
             filter_join, filter_where = build_filter_joins_and_where(
-                signal_ids, maintained_by, approach, valid_geometry
+                signal_ids, maintained_by, approach, valid_geometry,
+                semi_join=True  # avoid duplicating fact rows for shared XDs
             )
             xd_filter = ""  # No XD list needed - filtering via joins
         else:
@@ -741,7 +764,8 @@ def get_travel_time_by_time_of_day():
                 start_date=start_date_str,
                 end_date=end_date_str,
                 time_filter=time_filter,
-                dow_join=dow_filter
+                dow_join=dow_filter,
+                filter_where=filter_where
             )
             where_clause += legend_entity_filter
 

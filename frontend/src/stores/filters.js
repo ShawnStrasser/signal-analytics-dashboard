@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import ApiService from '@/services/api'
 
 export const useFiltersStore = defineStore('filters', () => {
   // Config values from backend (will be populated on init)
@@ -213,10 +214,17 @@ export const useFiltersStore = defineStore('filters', () => {
   }
 
   // Initialize config values from backend
+  // Defaults are applied once per session; FilterPanel remounts (e.g. returning from
+  // the admin page) must not reset hours/thresholds the user already changed.
+  let configInitialized = false
+
   async function initializeConfig() {
+    if (configInitialized) {
+      return
+    }
     try {
-      const response = await fetch('/api/config')
-      const config = await response.json()
+      const config = await ApiService.getConfig()
+      configInitialized = true
 
       if (config.defaultStartHour !== undefined) {
         defaultStartHour.value = config.defaultStartHour

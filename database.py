@@ -4,6 +4,7 @@ Database connection utilities for Snowflake
 
 import os
 import json
+import threading
 import time
 from snowflake.snowpark.session import Session
 
@@ -12,6 +13,11 @@ snowflake_session = None
 connection_status = {'connected': False, 'connecting': False, 'error': None}
 _cache_disabled = False  # Track if we've already disabled cache this session
 _force_new_session = False  # Flag to force creating new session instead of using get_active_session()
+
+# Serializes session creation/invalidation. Request handlers and the APScheduler report
+# thread share this module's session; without a lock two threads can both build a
+# session (leaking one) or one can null it out while the other is mid-creation.
+_session_lock = threading.RLock()
 
 def get_connection_status():
     """Get current connection status"""
@@ -36,6 +42,11 @@ def is_auth_error(error):
 
 def invalidate_session():
     """Invalidate the current session to force reconnection"""
+    with _session_lock:
+        _invalidate_session_locked()
+
+
+def _invalidate_session_locked():
     global snowflake_session, connection_status, _cache_disabled, _force_new_session
 
     # Try to close the existing session if it exists
@@ -57,6 +68,17 @@ def invalidate_session():
 
 def get_snowflake_session(retry=False, max_retries=3, retry_delay=2):
     """Get or create Snowflake session with retry logic"""
+    # Fast path: no lock needed to hand out an existing session
+    existing = snowflake_session
+    if existing is not None:
+        connection_status['connected'] = True
+        connection_status['error'] = None
+        return existing
+    with _session_lock:
+        return _get_snowflake_session_locked(retry, max_retries, retry_delay)
+
+
+def _get_snowflake_session_locked(retry=False, max_retries=3, retry_delay=2):
     global snowflake_session, connection_status, _cache_disabled, _force_new_session
 
     from config import DEBUG_DISABLE_SNOWFLAKE_CACHE

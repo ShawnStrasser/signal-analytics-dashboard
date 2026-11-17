@@ -1,5 +1,14 @@
 import * as arrow from 'apache-arrow'
 
+// Fallbacks mirroring backend config.py, used if /api/config is unreachable
+const DEFAULT_CONFIG = {
+  maxLegendEntities: 10,
+  maxAnomalyLegendEntities: 6,
+  maxBeforeAfterLegendEntities: 6,
+  defaultStartHour: 6,
+  defaultEndHour: 19
+}
+
 function buildCaptchaError() {
   const error = new Error('captcha_required')
   error.code = 'captcha_required'
@@ -124,37 +133,33 @@ class ApiService {
 
   // Convert Arrow table to JavaScript objects for easier manipulation
   arrowTableToObjects(table) {
-    const objects = []
-    const fields = table.schema.fields
-    const columns = fields.map(field => table.getChild(field.name))
+    const numRows = table.numRows
+    const objects = new Array(numRows)
+    for (let i = 0; i < numRows; i++) {
+      objects[i] = {}
+    }
 
-    for (let rowIndex = 0; rowIndex < table.numRows; rowIndex++) {
-      const obj = {}
+    // Column-wise sequential iteration: yields the same values as column.get(i)
+    // but walks each column's chunks once instead of a random-access lookup per cell.
+    for (const field of table.schema.fields) {
+      const fieldName = field.name
+      const column = table.getChild(fieldName)
+      if (!column) continue
 
-      columns.forEach((column, colIndex) => {
-        const fieldName = fields[colIndex].name
-        let value = column.get(rowIndex)
-
-        if (value === null || value === undefined) {
-          obj[fieldName] = value
-          return
+      let rowIndex = 0
+      for (const value of column) {
+        let converted = value
+        if (value !== null && value !== undefined) {
+          if (typeof value === 'bigint') {
+            const numericValue = Number(value)
+            converted = Number.isSafeInteger(numericValue) ? numericValue : value.toString()
+          } else if (value instanceof Date) {
+            converted = value.toISOString()
+          }
         }
-
-        if (typeof value === 'bigint') {
-          const numericValue = Number(value)
-          obj[fieldName] = Number.isSafeInteger(numericValue) ? numericValue : value.toString()
-          return
-        }
-
-        if (value instanceof Date) {
-          obj[fieldName] = value.toISOString()
-          return
-        }
-
-        obj[fieldName] = value
-      })
-
-      objects.push(obj)
+        objects[rowIndex][fieldName] = converted
+        rowIndex++
+      }
     }
 
     return objects
@@ -165,8 +170,16 @@ class ApiService {
     return this.fetchArrowData('/signals')
   }
 
-  async getDimSignals() {
-    return this.fetchArrowData('/dim-signals')
+  getDimSignals() {
+    // Shared by the signals store (filter panel) and signalDimensions store (maps);
+    // memoize so both don't download the same static table.
+    if (!this._dimSignalsPromise) {
+      this._dimSignalsPromise = this.fetchArrowData('/dim-signals').catch((error) => {
+        this._dimSignalsPromise = null
+        throw error
+      })
+    }
+    return this._dimSignalsPromise
   }
 
   async getDimSignalsXd() {
@@ -398,19 +411,23 @@ class ApiService {
     return this.fetchJson('/monitoring-anomalies', filters, { method: 'POST' })
   }
 
-  async getConfig() {
-    try {
-      const response = await fetch(`${this.baseURL}/config`)
-      await ensureCaptchaAllowed(response)
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-      return await response.json()
-    } catch (error) {
-      console.error('Error fetching config:', error)
-      // Return default values if config fetch fails
-      return { maxLegendEntities: 10 }
+  getConfig() {
+    // Memoized: several pages and the filters store all need the same static config
+    if (!this._configPromise) {
+      this._configPromise = (async () => {
+        const response = await fetch(`${this.baseURL}/config`)
+        await ensureCaptchaAllowed(response)
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`)
+        }
+        return await response.json()
+      })().catch((error) => {
+        console.error('Error fetching config:', error)
+        this._configPromise = null // allow a retry on the next call
+        return { ...DEFAULT_CONFIG }
+      })
     }
+    return this._configPromise
   }
 
   async fetchJson(endpoint, params = {}, retriesOrOptions = 3, retryDelay = 1000) {

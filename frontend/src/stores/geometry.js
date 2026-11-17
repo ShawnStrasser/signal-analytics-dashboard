@@ -1,9 +1,11 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, shallowRef, markRaw, computed } from 'vue'
 import ApiService from '@/services/api'
 
 export const useGeometryStore = defineStore('geometry', () => {
-  const featureCollection = ref(null)
+  // shallowRef + markRaw: ~16k GeoJSON features must not be deeply proxied
+  const featureCollection = shallowRef(null)
+  let inflight = null
   const loading = ref(false)
   const error = ref(null)
 
@@ -13,24 +15,30 @@ export const useGeometryStore = defineStore('geometry', () => {
   })
 
   async function loadGeometry(force = false) {
-    if (loading.value) return
-
     if (!force && featureCollection.value) {
       return
+    }
+    // Concurrent callers share the in-flight request instead of returning early
+    if (inflight) {
+      return inflight
     }
 
     loading.value = true
     error.value = null
 
-    try {
-      const data = await ApiService.getXdGeometry()
-      featureCollection.value = data
-    } catch (err) {
-      error.value = err
-      throw err
-    } finally {
-      loading.value = false
-    }
+    inflight = (async () => {
+      try {
+        const data = await ApiService.getXdGeometry()
+        featureCollection.value = data ? markRaw(data) : data
+      } catch (err) {
+        error.value = err
+        throw err
+      } finally {
+        loading.value = false
+        inflight = null
+      }
+    })()
+    return inflight
   }
 
   return {

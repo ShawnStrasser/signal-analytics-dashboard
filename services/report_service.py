@@ -615,7 +615,7 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> Tuple[List[Dic
         FROM TRAVEL_TIME_ANALYTICS t
         INNER JOIN distinct_dim d ON t.XD = d.XD
         LEFT JOIN signal_ids s ON t.XD = s.XD
-        WHERE t.DATE_ONLY >= DATEADD(day, -1, DATE_TRUNC('day', CURRENT_TIMESTAMP())){selected_clause_sql}
+        WHERE t.DATE_ONLY = CAST(DATEADD(day, -1, DATE_TRUNC('day', CURRENT_TIMESTAMP())) AS DATE){selected_clause_sql}
         GROUP BY ALL
     ),
     scored AS (
@@ -782,20 +782,22 @@ def fetch_changepoint_detail_rows(xd: int, change_timestamp: Any) -> List[Dict[s
     xd_value = int(xd)
     timestamp_sql = _format_timestamp_for_sql(change_timestamp)
 
-    set_variable_sql = f"SET CHANGE_TS = TO_TIMESTAMP_NTZ('{timestamp_sql}')"
+    # Inline literal (not a SET session variable): saves a round trip and avoids
+    # concurrent requests/report jobs overwriting each other's $CHANGE_TS.
+    change_ts = f"TO_TIMESTAMP_NTZ('{timestamp_sql}')"
 
     query = f"""
     SELECT
         t.TIMESTAMP,
         t.TRAVEL_TIME_SECONDS,
         CASE
-            WHEN t.TIMESTAMP < $CHANGE_TS THEN 'before'
+            WHEN t.TIMESTAMP < {change_ts} THEN 'before'
             ELSE 'after'
         END AS PERIOD
     FROM TRAVEL_TIME_ANALYTICS t
     WHERE t.XD = {xd_value}
-      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, $CHANGE_TS)
-                          AND DATEADD('day', 7, $CHANGE_TS)
+      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, {change_ts})
+                          AND DATEADD('day', 7, {change_ts})
     ORDER BY t.TIMESTAMP
     """
 
@@ -804,7 +806,6 @@ def fetch_changepoint_detail_rows(xd: int, change_timestamp: Any) -> List[Dict[s
         if not session:
             raise RuntimeError("Unable to establish database connection for changepoint detail")
 
-        session.sql(set_variable_sql).collect()
         table = session.sql(query).to_arrow()
         if table.num_rows == 0:
             return []
@@ -835,20 +836,22 @@ def fetch_changepoint_hourly_series(xd: int, change_timestamp: Any) -> List[Dict
     xd_value = int(xd)
     timestamp_sql = _format_timestamp_for_sql(change_timestamp)
 
-    set_variable_sql = f"SET CHANGE_TS = TO_TIMESTAMP_NTZ('{timestamp_sql}')"
+    # Inline literal (not a SET session variable): saves a round trip and avoids
+    # concurrent requests/report jobs overwriting each other's $CHANGE_TS.
+    change_ts = f"TO_TIMESTAMP_NTZ('{timestamp_sql}')"
 
     query = f"""
     SELECT
         DATE_TRUNC('HOUR', t.TIMESTAMP) AS HOUR_TS,
         AVG(t.TRAVEL_TIME_SECONDS) AS AVG_TRAVEL_TIME,
         CASE
-            WHEN t.TIMESTAMP < $CHANGE_TS THEN 'before'
+            WHEN t.TIMESTAMP < {change_ts} THEN 'before'
             ELSE 'after'
         END AS PERIOD
     FROM TRAVEL_TIME_ANALYTICS t
     WHERE t.XD = {xd_value}
-      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, $CHANGE_TS)
-                          AND DATEADD('day', 7, $CHANGE_TS)
+      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, {change_ts})
+                          AND DATEADD('day', 7, {change_ts})
     GROUP BY 1, 3
     ORDER BY HOUR_TS
     """
@@ -858,7 +861,6 @@ def fetch_changepoint_hourly_series(xd: int, change_timestamp: Any) -> List[Dict
         if not session:
             raise RuntimeError("Unable to establish database connection for changepoint hourly series")
 
-        session.sql(set_variable_sql).collect()
         table = session.sql(query).to_arrow()
         if table.num_rows == 0:
             return []
@@ -1339,7 +1341,13 @@ def _build_signal_filter_display(filters: Dict[str, Any]) -> Dict[str, Any]:
             {where_clause}
             GROUP BY COALESCE(DISTRICT, 'Unknown')
             """
-            counts_rows = session.sql(counts_query).collect()
+            def execute_counts_query():
+                counts_session = get_snowflake_session(retry=True, max_retries=1)
+                if not counts_session:
+                    raise RuntimeError("Unable to establish database connection for district totals")
+                return counts_session.sql(counts_query).collect()
+
+            counts_rows = handle_auth_error_retry(execute_counts_query)
             for row in counts_rows:
                 district_value = row["DISTRICT"]
                 district = str(district_value).strip() if district_value not in (None, "") else "Unknown"

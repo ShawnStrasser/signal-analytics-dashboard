@@ -1,12 +1,14 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import TravelTime from './views/TravelTime.vue'
-import Anomalies from './views/Anomalies.vue'
-import BeforeAfter from './views/BeforeAfter.vue'
-import Changepoints from './views/Changepoints.vue'
-import Monitoring from './views/Monitoring.vue'
-import Admin from './views/Admin.vue'
-import Captcha from './views/Captcha.vue'
-import NotFound from './views/NotFound.vue'
+// Route-level code splitting: each page (and its heavy deps such as ECharts,
+// Leaflet, canvas-confetti) loads only when first visited.
+const TravelTime = () => import('./views/TravelTime.vue')
+const Anomalies = () => import('./views/Anomalies.vue')
+const BeforeAfter = () => import('./views/BeforeAfter.vue')
+const Changepoints = () => import('./views/Changepoints.vue')
+const Monitoring = () => import('./views/Monitoring.vue')
+const Admin = () => import('./views/Admin.vue')
+const Captcha = () => import('./views/Captcha.vue')
+const NotFound = () => import('./views/NotFound.vue')
 import { fetchCaptchaStatus, isCaptchaVerifiedCached, resetCaptchaCache } from './utils/captchaSession'
 
 const routes = [
@@ -107,6 +109,24 @@ router.beforeEach(async to => {
     name: 'Captcha',
     query: { redirect: redirectTarget }
   }
+})
+
+// A tab left open across a deploy may request a lazy chunk whose hashed filename
+// no longer exists. Reload once to pick up the new index.html instead of hanging.
+const CHUNK_ERROR_PATTERN = /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|ChunkLoadError/i
+router.onError((error, to) => {
+  if (typeof window === 'undefined' || !CHUNK_ERROR_PATTERN.test(String(error?.message || error))) {
+    return
+  }
+  try {
+    const key = 'chunk-reload-at'
+    const last = Number(sessionStorage.getItem(key) || 0)
+    if (Date.now() - last < 10000) return // avoid reload loops
+    sessionStorage.setItem(key, String(Date.now()))
+  } catch (e) {
+    // sessionStorage unavailable; fall through to a single reload
+  }
+  window.location.assign(to?.fullPath || window.location.href)
 })
 
 if (typeof window !== 'undefined') {

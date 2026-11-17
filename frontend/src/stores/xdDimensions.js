@@ -9,12 +9,15 @@
  * when filters change, since only TTI metrics need to be re-queried.
  */
 import { defineStore } from 'pinia'
+import { markRaw } from 'vue'
 import ApiService from '@/services/api'
+
+let inflightLoad = null
 
 export const useXdDimensionsStore = defineStore('xdDimensions', {
   state: () => ({
     // Map of XD -> dimension data
-    dimensions: new Map(),
+    dimensions: markRaw(new Map()),
     // Loading state
     loading: false,
     loaded: false,
@@ -48,10 +51,21 @@ export const useXdDimensionsStore = defineStore('xdDimensions', {
      * This should be called once on app initialization
      */
     async loadDimensions() {
-      if (this.loaded || this.loading) {
+      if (this.loaded) {
         return
       }
+      // A second page mounting mid-load must wait for the same request instead of
+      // returning early and rendering with empty dimensions.
+      if (inflightLoad) {
+        return inflightLoad
+      }
+      inflightLoad = this._loadDimensions().finally(() => {
+        inflightLoad = null
+      })
+      return inflightLoad
+    },
 
+    async _loadDimensions() {
       this.loading = true
       this.error = null
 
@@ -59,16 +73,18 @@ export const useXdDimensionsStore = defineStore('xdDimensions', {
         const arrowTable = await ApiService.getDimSignalsXd()
         const data = ApiService.arrowTableToObjects(arrowTable)
 
-        // Build Map for O(1) lookups
-        this.dimensions.clear()
+        // Build Map for O(1) lookups. markRaw: static lookup data doesn't need
+        // per-entry reactive proxies; reassigning the property still notifies getters.
+        const next = new Map()
         data.forEach(xd => {
           const xdId = xd.XD
-          if (!this.dimensions.has(xdId)) {
-            this.dimensions.set(xdId, this.createDimensionEntry(xd))
+          if (!next.has(xdId)) {
+            next.set(xdId, this.createDimensionEntry(xd))
           } else {
-            this.mergeDimensionEntry(this.dimensions.get(xdId), xd)
+            this.mergeDimensionEntry(next.get(xdId), xd)
           }
         })
+        this.dimensions = markRaw(next)
 
         this.loaded = true
       } catch (error) {
@@ -84,7 +100,7 @@ export const useXdDimensionsStore = defineStore('xdDimensions', {
      * Clear cached dimensions (for testing/debugging)
      */
     clear() {
-      this.dimensions.clear()
+      this.dimensions = markRaw(new Map())
       this.loaded = false
       this.error = null
     },

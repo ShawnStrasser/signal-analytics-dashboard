@@ -20,7 +20,7 @@ from utils.query_utils import (
     build_legend_filter,
     build_xd_filter
 )
-from utils.request_helpers import get_request_param, get_request_param_list
+from utils.request_helpers import get_request_param, get_request_param_list, parse_xd_list
 
 before_after_bp = Blueprint('before_after', __name__)
 
@@ -44,7 +44,7 @@ def get_before_after_summary():
     end_hour = get_request_param('end_hour')
     end_minute = get_request_param('end_minute')
     day_of_week = get_request_param_list('day_of_week')
-    remove_anomalies = get_request_param('remove_anomalies', 'false').lower() == 'true'
+    remove_anomalies = str(get_request_param('remove_anomalies', 'false')).lower() == 'true'
 
     # Normalize dates
     before_start_str = normalize_date(before_start)
@@ -172,7 +172,7 @@ def get_before_after_summary_xd():
     end_hour = get_request_param('end_hour')
     end_minute = get_request_param('end_minute')
     day_of_week = get_request_param_list('day_of_week')
-    remove_anomalies = get_request_param('remove_anomalies', 'false').lower() == 'true'
+    remove_anomalies = str(get_request_param('remove_anomalies', 'false')).lower() == 'true'
 
     # Normalize dates
     before_start_str = normalize_date(before_start)
@@ -298,8 +298,8 @@ def get_before_after_aggregated():
     end_minute = get_request_param('end_minute')
     day_of_week = get_request_param_list('day_of_week')
     legend_by = get_request_param('legend_by')
-    remove_anomalies = get_request_param('remove_anomalies', 'false').lower() == 'true'
-    is_small_multiples = get_request_param('is_small_multiples', 'false').lower() == 'true'
+    remove_anomalies = str(get_request_param('remove_anomalies', 'false')).lower() == 'true'
+    is_small_multiples = str(get_request_param('is_small_multiples', 'false')).lower() == 'true'
 
     # Determine which legend limit to use
     legend_limit = MAX_BEFORE_AFTER_SMALL_MULTIPLES_ENTITIES if is_small_multiples else MAX_BEFORE_AFTER_LEGEND_ENTITIES
@@ -328,14 +328,15 @@ def get_before_after_aggregated():
         # Determine filtering strategy
         if xd_segments:
             # Map interaction - use direct XD list
-            xd_values = [int(xd) for xd in xd_segments]
+            xd_values = parse_xd_list(xd_segments)
             xd_filter = build_xd_filter(xd_values)
             filter_join = ""
             filter_where = ""
         elif signal_ids or maintained_by != 'all' or approach or (valid_geometry and valid_geometry != 'all'):
             # Filter panel - use join-based filtering
             filter_join, filter_where = build_filter_joins_and_where(
-                signal_ids, maintained_by, approach, valid_geometry
+                signal_ids, maintained_by, approach, valid_geometry,
+                semi_join=True  # avoid duplicating fact rows for shared XDs
             )
             xd_filter = ""
         else:
@@ -382,7 +383,8 @@ def get_before_after_aggregated():
                 start_date=before_start_str,  # Use before period for entity selection
                 end_date=before_end_str,
                 time_filter=time_filter,
-                dow_join=dow_filter
+                dow_join=dow_filter,
+                filter_where=filter_where
             )
             before_where += legend_entity_filter
             after_where += legend_entity_filter
@@ -472,8 +474,8 @@ def get_before_after_by_time_of_day():
     end_hour = get_request_param('end_hour')
     end_minute = get_request_param('end_minute')
     legend_by = get_request_param('legend_by')
-    remove_anomalies = get_request_param('remove_anomalies', 'false').lower() == 'true'
-    is_small_multiples = get_request_param('is_small_multiples', 'false').lower() == 'true'
+    remove_anomalies = str(get_request_param('remove_anomalies', 'false')).lower() == 'true'
+    is_small_multiples = str(get_request_param('is_small_multiples', 'false')).lower() == 'true'
 
     # Determine which legend limit to use
     legend_limit = MAX_BEFORE_AFTER_SMALL_MULTIPLES_ENTITIES if is_small_multiples else MAX_BEFORE_AFTER_LEGEND_ENTITIES
@@ -500,13 +502,14 @@ def get_before_after_by_time_of_day():
 
         # Determine filtering strategy
         if xd_segments:
-            xd_values = [int(xd) for xd in xd_segments]
+            xd_values = parse_xd_list(xd_segments)
             xd_filter = build_xd_filter(xd_values)
             filter_join = ""
             filter_where = ""
         elif signal_ids or maintained_by != 'all' or approach or (valid_geometry and valid_geometry != 'all'):
             filter_join, filter_where = build_filter_joins_and_where(
-                signal_ids, maintained_by, approach, valid_geometry
+                signal_ids, maintained_by, approach, valid_geometry,
+                semi_join=True  # avoid duplicating fact rows for shared XDs
             )
             xd_filter = ""
         else:
@@ -552,7 +555,8 @@ def get_before_after_by_time_of_day():
                 start_date=before_start_str,  # Use before period for entity selection
                 end_date=before_end_str,
                 time_filter=time_filter,
-                dow_join=dow_filter
+                dow_join=dow_filter,
+                filter_where=filter_where
             )
             before_where += legend_entity_filter
             after_where += legend_entity_filter

@@ -24,3 +24,6 @@ APScheduler
 matplotlib
 requests
 pillow
+
+# HTTP compression for bundles and Arrow responses
+flask-compress

@@ -239,4 +239,68 @@ describe('Shared map filter reload behaviour', () => {
       expect(shouldAutoZoomMap.value).toBe(false)
     })
   })
+
+  describe('Changes during an in-flight reload', () => {
+    it('re-runs once with the latest filters instead of dropping the change', async () => {
+      const loading = ref(false)
+      let resolveFirst
+      const seen = []
+      const geometryReload = vi.fn().mockImplementation(() => {
+        seen.push(filtersStore.maintainedBy)
+        if (seen.length === 1) {
+          return new Promise(resolve => { resolveFirst = resolve })
+        }
+        return Promise.resolve()
+      })
+
+      useMapFilterReloads({
+        geometrySources: () => [filtersStore.maintainedBy, filtersStore.approach],
+        shouldAutoZoomRef: ref(false),
+        loadingRef: loading,
+        selectionStore,
+        reloadOnGeometryChange: geometryReload
+      })
+
+      filtersStore.setMaintainedBy('odot')
+      await flush()
+      expect(geometryReload).toHaveBeenCalledTimes(1)
+
+      // Two more changes while the first reload is still pending
+      filtersStore.setMaintainedBy('others')
+      await flush()
+      filtersStore.setMaintainedBy('all')
+      await flush()
+      expect(geometryReload).toHaveBeenCalledTimes(1)
+
+      resolveFirst()
+      await flush()
+      await flush()
+
+      expect(geometryReload).toHaveBeenCalledTimes(2)
+      expect(seen[seen.length - 1]).toBe('all')
+      expect(loading.value).toBe(false)
+    })
+
+    it('waits for an external loading flag and then applies the change', async () => {
+      const loading = ref(true) // e.g. page onMounted load in progress
+      const geometryReload = vi.fn().mockResolvedValue()
+
+      useMapFilterReloads({
+        geometrySources: () => [filtersStore.maintainedBy],
+        shouldAutoZoomRef: ref(false),
+        loadingRef: loading,
+        selectionStore,
+        reloadOnGeometryChange: geometryReload
+      })
+
+      filtersStore.setMaintainedBy('odot')
+      await flush()
+      expect(geometryReload).not.toHaveBeenCalled()
+
+      loading.value = false
+      await flush()
+      await flush()
+      expect(geometryReload).toHaveBeenCalledTimes(1)
+    })
+  })
 })

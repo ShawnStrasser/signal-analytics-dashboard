@@ -52,3 +52,13 @@ def get_request_param_list(name):
         values.extend(v.strip() for v in str(raw_value).split(',') if v.strip())
 
     return values
+
+
+def parse_xd_list(values):
+    """Convert XD segment ids to ints, raising a 400-style error on bad input."""
+    from utils.exceptions import InvalidQueryParameter
+
+    try:
+        return [int(xd) for xd in values]
+    except (TypeError, ValueError) as exc:
+        raise InvalidQueryParameter("Invalid xd_segments value.") from exc

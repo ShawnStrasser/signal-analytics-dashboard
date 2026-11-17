@@ -8,15 +8,11 @@ import './config'
 // Vuetify
 import 'vuetify/styles'
 import '@mdi/font/css/materialdesignicons.css'
-import * as components from 'vuetify/components'
-import * as directives from 'vuetify/directives'
 
 // Leaflet CSS
 import 'leaflet/dist/leaflet.css'
 
 const vuetify = createVuetify({
-  components,
-  directives,
   theme: {
     defaultTheme: 'light',
     themes: {
