@@ -331,9 +331,8 @@ const chartSubtitle = computed(() => {
   }
   const row = selectedRow.value
   const timestampLabel = formatTimestamp(row.timestamp)
-  const pctChange = row.pct_change !== undefined && row.pct_change !== null
-    ? `${row.pct_change.toFixed(2)}%`
-    : '--'
+  // pct_change is a decimal (0.786 = 78.6%); use the same formatter as the table
+  const pctChange = formatPercent(row.pct_change)
   return `${timestampLabel} • Change: ${pctChange}`
 })
 
