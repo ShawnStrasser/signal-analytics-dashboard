@@ -16,7 +16,8 @@ pytest-flask
 pytest-xdist
 
 # For sending emails
-brevo-python
+# Pinned: 4.x+ renamed the import to 'brevo' with a different API
+brevo-python==1.2.0
 
 # Reporting utilities
 fpdf2

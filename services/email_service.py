@@ -10,11 +10,14 @@ from typing import Iterable, Optional
 try:
     import brevo_python
     from brevo_python.rest import ApiException
-except ImportError:  # pragma: no cover - optional dependency in tests
+except ImportError as _brevo_import_error:  # pragma: no cover - optional dependency in tests
     brevo_python = None  # type: ignore
+    _BREVO_IMPORT_ERROR = repr(_brevo_import_error)
 
     class ApiException(Exception):  # type: ignore
         """Fallback ApiException when Brevo SDK is unavailable."""
+else:
+    _BREVO_IMPORT_ERROR = None
 
 from config import (
     BREVO_API_KEY,
@@ -30,7 +33,10 @@ def _get_api() -> brevo_python.TransactionalEmailsApi:
     """Initialise or return the cached Brevo transactional email API client."""
     global _EMAIL_API
     if brevo_python is None:
-        raise RuntimeError("brevo_python package is required to send email")
+        raise RuntimeError(
+            "brevo_python package is required to send email (brevo-python must be 1.x; "
+            f"4.x+ renamed the module). Import error: {_BREVO_IMPORT_ERROR}"
+        )
 
     if _EMAIL_API is not None:
         return _EMAIL_API
