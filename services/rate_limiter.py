@@ -69,6 +69,13 @@ class RateLimiter:
             events.append(now)
             return True, None
 
+    def refund(self, key: str) -> None:
+        """Give back the most recent allowed event for a key (e.g. the action failed)."""
+        with self._lock:
+            events = self._events.get(key)
+            if events:
+                events.pop()
+
     def clear(self, key: str) -> None:
         """Remove all tracking data for a key."""
         with self._lock:

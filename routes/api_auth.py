@@ -4,6 +4,7 @@ Authentication endpoints providing email-based magic-link login for monitoring.
 
 from __future__ import annotations
 
+import logging
 import secrets
 from email.utils import parseaddr
 from typing import Optional
@@ -19,6 +20,7 @@ from services import email_service, subscription_store
 from services.rate_limiter import rate_limiter
 
 auth_bp = Blueprint("auth", __name__)
+logger = logging.getLogger(__name__)
 
 PUBLIC_AGENCY_SUFFIXES = (".gov", ".us")
 PUBLIC_AGENCY_EXCEPTIONS = {"cityofsalem.net", "cityofmedford.org"}
@@ -122,22 +124,30 @@ def request_magic_link():
         response.headers["Retry-After"] = str(wait_seconds)
         return response, 429
 
-    token = secrets.token_urlsafe(32)
-    subscription_store.store_login_token(email, token)
+    try:
+        token = secrets.token_urlsafe(32)
+        subscription_store.store_login_token(email, token)
 
-    login_url = _build_login_link(token)
-    html_content = f"""
-        <p>Hello,</p>
-        <p>Use the link below to sign in to the Signal Monitoring dashboard:</p>
-        <p><a href="{login_url}">Sign in to Signal Monitoring</a></p>
-        <p>This link expires soon and can only be used once.</p>
-    """
+        login_url = _build_login_link(token)
+        html_content = f"""
+            <p>Hello,</p>
+            <p>Use the link below to sign in to the Signal Monitoring dashboard:</p>
+            <p><a href="{login_url}">Sign in to Signal Monitoring</a></p>
+            <p>This link expires soon and can only be used once.</p>
+        """
 
-    email_service.send_email(
-        email,
-        "Your monitoring sign-in link",
-        html_content,
-    )
+        email_service.send_email(
+            email,
+            "Your monitoring sign-in link",
+            html_content,
+        )
+    except Exception:
+        # Nothing was delivered, so don't charge the user's rate-limit budget;
+        # otherwise a failed send is followed by a misleading 429 on retry.
+        logger.exception("Failed to send login link to %s", email)
+        for key in (daily_key, email_key, client_key):
+            rate_limiter.refund(key)
+        return jsonify({"error": "Unable to send login email right now. Please try again shortly."}), 502
 
     return jsonify({"message": "Login link sent"})
 
