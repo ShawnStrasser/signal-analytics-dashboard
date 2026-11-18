@@ -113,7 +113,8 @@ PUBLIC_BASE_URL = os.environ.get('PUBLIC_BASE_URL')
 # EMAIL SETTINGS
 # =============================================================================
 
-BREVO_API_KEY = os.environ.get('BREVO_API_KEY')
+# Strip whitespace/quotes that sneak in when pasting into hosting dashboards
+BREVO_API_KEY = (os.environ.get('BREVO_API_KEY') or '').strip().strip('"\'') or None
 BREVO_DISABLE_SSL_VERIFY = os.environ.get('BREVO_DISABLE_SSL_VERIFY', 'false').lower() == 'true'
 
 EMAIL_SENDER_ADDRESS = os.environ.get('EMAIL_SENDER_EMAIL', os.environ.get('BREVO_SENDER_EMAIL', 'no-reply@example.com'))
