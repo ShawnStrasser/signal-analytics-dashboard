@@ -124,6 +124,17 @@
             <template #item.timestamp="{ item }">
               {{ formatTimestamp(item.timestamp) }}
             </template>
+            <template #item.type="{ item }">
+              <v-chip
+                v-if="item.is_enduring"
+                size="x-small"
+                color="primary"
+                variant="tonal"
+              >
+                Enduring
+              </v-chip>
+              <span v-else>Changepoint</span>
+            </template>
             <template #item.pct_change="{ item }">
               {{ formatPercent(item.pct_change) }}
             </template>
@@ -280,6 +291,7 @@ const chartSelectionReady = computed(() => !!selectedRow.value)
 
 const tableHeaders = [
   { title: 'Timestamp', value: 'timestamp', key: 'timestamp', sortable: true },
+  { title: 'Type', value: 'type', key: 'type', sortable: false },
   { title: 'Pct Change', value: 'pct_change', key: 'pct_change', sortable: true },
   { title: 'Avg Diff', value: 'avg_diff', key: 'avg_diff', sortable: true },
   { title: 'Severity Score', value: 'score', key: 'score', sortable: true },
@@ -343,7 +355,8 @@ useMapFilterReloads({
     filtersStore.maintainedBy,
     filtersStore.approach,
     filtersStore.validGeometry,
-    filtersStore.changepointSeverityThreshold
+    filtersStore.changepointSeverityThreshold,
+    filtersStore.changepointType
   ],
   dataSources: () => [
     filtersStore.changepointStartDate,
@@ -694,7 +707,9 @@ async function loadTableData() {
       xd: row.XD,
       associated_signals: row.ASSOCIATED_SIGNALS,
       avg_before: Number(row.AVG_BEFORE ?? 0),
-      avg_after: Number(row.AVG_AFTER ?? 0)
+      avg_after: Number(row.AVG_AFTER ?? 0),
+      // IS_ENDURING: TRUE = enduring, NULL = not checked yet (temporary ones are filtered server-side)
+      is_enduring: row.IS_ENDURING === true
     }))
 
     tableRows.value = processed

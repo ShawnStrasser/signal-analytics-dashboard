@@ -46,6 +46,7 @@ export const useFiltersStore = defineStore('filters', () => {
   const timeFilterEnabled = ref(true)  // Time-of-day filter always enabled
   const dayOfWeek = ref([])  // Selected days of week (1=Mon, 2=Tue, ..., 7=Sun)
   const removeAnomalies = ref(false)  // Filter to remove anomalous data points
+  const changepointType = ref('all') // 'all' or 'enduring' (Changepoints page)
 
   // Computed
   const hasSignalFilters = computed(() => selectedSignalIds.value.length > 0)
@@ -94,7 +95,8 @@ export const useFiltersStore = defineStore('filters', () => {
     approach: approach.value,
     valid_geometry: validGeometry.value !== 'all' ? validGeometry.value : undefined,
     maintained_by: maintainedBy.value !== 'all' ? maintainedBy.value : undefined,
-    changepoint_severity_threshold: changepointSeverityThreshold.value
+    changepoint_severity_threshold: changepointSeverityThreshold.value,
+    changepoint_type: changepointType.value !== 'all' ? changepointType.value : undefined
   }))
 
   // Computed property that groups signals by district and filters by maintainedBy
@@ -165,6 +167,10 @@ export const useFiltersStore = defineStore('filters', () => {
       return
     }
     anomalyMonitoringThreshold.value = Math.max(0, numeric)
+  }
+
+  function setChangepointType(value) {
+    changepointType.value = value === 'enduring' ? 'enduring' : 'all'
   }
 
   function setChangepointSeverityThreshold(value) {
@@ -275,6 +281,7 @@ export const useFiltersStore = defineStore('filters', () => {
     defaultEndHour,
     anomalyMonitoringThreshold,
     changepointSeverityThreshold,
+    changepointType,
 
     // Computed
     hasSignalFilters,
@@ -298,6 +305,7 @@ export const useFiltersStore = defineStore('filters', () => {
     setRemoveAnomalies,
     setAnomalyMonitoringThreshold,
     setChangepointSeverityThreshold,
+    setChangepointType,
     selectDistrict,
     deselectDistrict,
     deselectIndividualSignal,

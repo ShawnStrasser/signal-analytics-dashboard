@@ -139,7 +139,7 @@
           </span>
         </v-card-title>
         <v-card-subtitle class="py-0">
-          Changepoints detected on {{ monitoringDateLabel }}. These filters mirror what will be emailed the next time you update your subscription.
+          New changepoints detected on {{ monitoringDateLabel }} and enduring changepoints confirmed for {{ enduringDateLabel }}. These filters mirror what will be emailed the next time you update your subscription.
         </v-card-subtitle>
         <v-card-text class="pt-3 pb-4">
           <div class="summary-row">
@@ -213,19 +213,23 @@
           </div>
         </section>
 
-        <section class="report-section">
+        <section
+          v-for="group in changepointGroups"
+          :key="group.key"
+          class="report-section"
+        >
           <div class="section-header">
-            <div class="section-title">Changepoints</div>
+            <div class="section-title">{{ group.title }}</div>
             <div class="section-subtitle">
-              Detected on {{ monitoringDateLabel }} with changepoint severity >= {{ changepointSeverityLabel }}. Severity multiplies the percent change by the travel-time delta (seconds) and scales by 100, so higher scores surface bigger, longer-lasting shifts. Filters apply to signals, maintained by, approach, and geometry selections.
+              {{ group.subtitle }}
             </div>
           </div>
-          <div v-if="charts.length === 0" class="empty-state text-medium-emphasis">
-            No changepoints matched the selected filters for {{ monitoringDateLabel }}.
+          <div v-if="group.items.length === 0" class="empty-state text-medium-emphasis">
+            {{ group.emptyText }}
           </div>
           <div v-else class="monitoring-grid">
             <v-card
-              v-for="item in charts"
+              v-for="item in group.items"
               :key="item.key"
               class="chart-card"
             >
@@ -240,6 +244,13 @@
                       variant="tonal"
                     >
                       {{ formatPercent(item.meta.pctChange) }}
+                    </v-chip>
+                    <v-chip
+                      size="small"
+                      :color="item.meta.isEnduring ? 'primary' : undefined"
+                      variant="outlined"
+                    >
+                      {{ item.meta.isEnduring ? 'Enduring' : 'Changepoint' }}
                     </v-chip>
                   </div>
                   <div class="meta-line text-body-2 text-medium-emphasis">
@@ -312,7 +323,12 @@ import {
   buildChangepointTimeOfDaySeries,
   normalizeChangepointDetailRow
 } from '@/utils/changepointSeries'
-import { getMonitoringDateStrings } from '@/utils/monitoringDate'
+import { getMonitoringDateStrings, getEnduringMonitoringDateStrings } from '@/utils/monitoringDate'
+
+// Chart windows (days before/after the change). Enduring changepoints use a longer
+// span so the persistence of the shift is visible (mirrors the emailed report).
+const NEW_DETAIL_WINDOW = { days_before: 7, days_after: 7 }
+const ENDURING_DETAIL_WINDOW = { days_before: 14, days_after: 21 }
 
 const filtersStore = useFiltersStore()
 const authStore = useAuthStore()
@@ -333,6 +349,7 @@ const showVerifyingSpinner = useDelayedBoolean(verifyingToken)
 const showReportSpinner = useDelayedBoolean(loading)
 const error = ref(null)
 const charts = ref([])
+const enduringCharts = ref([])
 const anomalyCards = ref([])
   const anomalyMetadata = ref({
     targetDate: null,
@@ -344,6 +361,8 @@ const anomalyCards = ref([])
 
 const monitoringDateStrings = computed(() => getMonitoringDateStrings())
   const monitoringDateLabel = computed(() => `${monitoringDateStrings.value.start} to ${monitoringDateStrings.value.end}`)
+  const enduringDateStrings = computed(() => getEnduringMonitoringDateStrings())
+  const enduringDateLabel = computed(() => `${enduringDateStrings.value.start} to ${enduringDateStrings.value.end}`)
   const lastUpdatedLabel = computed(() => lastUpdated.value ? lastUpdated.value.toLocaleString() : '')
   const anomalyThreshold = computed(() => {
     const metadataValue = Number(anomalyMetadata.value?.threshold)
@@ -370,6 +389,23 @@ const monitoringDateStrings = computed(() => getMonitoringDateStrings())
     }
     return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
   })
+
+const changepointGroups = computed(() => [
+  {
+    key: 'new',
+    title: 'New Changepoints',
+    subtitle: `Detected on ${monitoringDateLabel.value} with changepoint severity >= ${changepointSeverityLabel.value}. A changepoint is a structural shift in travel time lasting more than a couple days. These are new and may still turn out to be temporary; those that do are not reported again. Severity multiplies the percent change by the travel-time delta (seconds) and scales by 100, so higher scores surface bigger, longer-lasting shifts. Filters apply to signals, maintained by, approach, and geometry selections.`,
+    emptyText: `No new changepoints matched the selected filters for ${monitoringDateLabel.value}.`,
+    items: charts.value
+  },
+  {
+    key: 'enduring',
+    title: 'Enduring Changepoints',
+    subtitle: `Changepoints from ${enduringDateLabel.value} with severity >= ${changepointSeverityLabel.value} whose travel time shift was still present three weeks later, so they are likely lasting changes (timing change, lane configuration, development) rather than temporary construction or an incident. Charts span two weeks before to three weeks after the change.`,
+    emptyText: `No enduring changepoints matched the selected filters for ${enduringDateLabel.value}.`,
+    items: enduringCharts.value
+  }
+])
 
 const signalSummary = computed(() => {
   const count = filtersStore.selectedSignalIds?.length ?? 0
@@ -554,9 +590,17 @@ async function loadReport() {
 
   try {
     const params = buildRequestParams()
-    const [anomalyResult, changepointResult] = await Promise.allSettled([
+    const newParams = { ...params, changepoint_type: 'new' }
+    const enduringParams = {
+      ...params,
+      start_date: enduringDateStrings.value.start,
+      end_date: enduringDateStrings.value.end,
+      changepoint_type: 'enduring'
+    }
+    const [anomalyResult, changepointResult, enduringResult] = await Promise.allSettled([
       ApiService.getMonitoringAnomalies(params),
-      ApiService.getChangepointTable(params)
+      ApiService.getChangepointTable(newParams),
+      ApiService.getChangepointTable(enduringParams)
     ])
 
     if (currentRequest !== requestId) {
@@ -594,39 +638,24 @@ async function loadReport() {
       throw changepointResult.reason ?? new Error('Failed to load changepoint table')
     }
 
-    const table = changepointResult.value
-    const rows = ApiService.arrowTableToObjects(table)
-    const topRows = rows.slice(0, 10)
-
-    const nextCharts = []
-
-    for (const row of topRows) {
-      const meta = normalizeTableRow(row)
-
-      try {
-        const detailTable = await ApiService.getChangepointDetail({
-          xd: meta.xd,
-          timestamp: meta.timestamp
-        })
-        const detailRows = ApiService
-          .arrowTableToObjects(detailTable)
-          .map(normalizeChangepointDetailRow)
-
-        nextCharts.push({
-          key: `${meta.xd}-${meta.timestamp}`,
-          meta,
-          dateSeries: buildChangepointDateSeries(detailRows),
-          timeOfDaySeries: buildChangepointTimeOfDaySeries(detailRows),
-        })
-      } catch (detailErr) {
-        console.error('Failed to load changepoint detail for monitoring view:', detailErr)
-      }
+    let enduringRows = []
+    if (enduringResult.status === 'fulfilled') {
+      enduringRows = ApiService.arrowTableToObjects(enduringResult.value)
+    } else {
+      console.error('Failed to load enduring changepoints for monitoring view:', enduringResult.reason)
     }
+
+    const newRows = ApiService.arrowTableToObjects(changepointResult.value)
+    const [nextCharts, nextEnduringCharts] = await Promise.all([
+      buildChangepointCards(newRows.slice(0, 10), NEW_DETAIL_WINDOW),
+      buildChangepointCards(enduringRows.slice(0, 10), ENDURING_DETAIL_WINDOW)
+    ])
 
     if (currentRequest !== requestId) {
       return
     }
 
+    enduringCharts.value = nextEnduringCharts
     charts.value = nextCharts
     lastUpdated.value = new Date()
   } catch (err) {
@@ -636,11 +665,41 @@ async function loadReport() {
     console.error('Failed to load monitoring report:', err)
     error.value = err instanceof Error ? err.message : String(err)
     charts.value = []
+    enduringCharts.value = []
   } finally {
     if (currentRequest === requestId) {
       loading.value = false
     }
   }
+}
+
+// Load detail series for each changepoint row (sequentially, as before) and build chart cards.
+async function buildChangepointCards(rows, detailWindow) {
+  const cards = []
+  for (const row of rows) {
+    const meta = normalizeTableRow(row)
+
+    try {
+      const detailTable = await ApiService.getChangepointDetail({
+        xd: meta.xd,
+        timestamp: meta.timestamp,
+        ...detailWindow
+      })
+      const detailRows = ApiService
+        .arrowTableToObjects(detailTable)
+        .map(normalizeChangepointDetailRow)
+
+      cards.push({
+        key: `${meta.xd}-${meta.timestamp}`,
+        meta,
+        dateSeries: buildChangepointDateSeries(detailRows),
+        timeOfDaySeries: buildChangepointTimeOfDaySeries(detailRows),
+      })
+    } catch (detailErr) {
+      console.error('Failed to load changepoint detail for monitoring view:', detailErr)
+    }
+  }
+  return cards
 }
 
 // PDF export is handled server-side via the monitoring email/report service.
@@ -709,7 +768,8 @@ function normalizeTableRow(row) {
     avgAfter: Number(row.AVG_AFTER ?? row.avg_after ?? 0),
     roadName: row.ROADNAME ?? row.road_name ?? '',
     bearing: row.BEARING ?? row.bearing ?? '',
-    associatedSignals: row.ASSOCIATED_SIGNALS ?? row.associated_signals ?? ''
+    associatedSignals: row.ASSOCIATED_SIGNALS ?? row.associated_signals ?? '',
+    isEnduring: (row.IS_ENDURING ?? row.is_enduring) === true
   }
 }
 

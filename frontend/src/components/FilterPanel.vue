@@ -166,6 +166,22 @@
         </v-col>
       </v-row>
 
+      <!-- Changepoint Type (Changepoints only) -->
+      <v-row v-if="isChangepointsRoute">
+        <v-col cols="12">
+          <v-select
+            :model-value="filtersStore.changepointType"
+            @update:model-value="filtersStore.setChangepointType"
+            :items="changepointTypeOptions"
+            label="Changepoint type"
+            density="compact"
+            variant="outlined"
+            hint="Enduring changepoints were still shifted three weeks later"
+            persistent-hint
+          />
+        </v-col>
+      </v-row>
+
       <!-- Changepoint Severity (Changepoints + Monitoring) -->
       <v-row v-if="isChangepointsRoute || isMonitoringRoute">
         <v-col cols="12">
@@ -321,6 +337,7 @@
               <div><strong>Signals:</strong> {{ filtersStore.selectedSignalIds.length || 'All' }}</div>
               <div v-if="isMonitoringRoute"><strong>Anomaly Score:</strong> >= {{ monitoringScoreLabel }}</div>
               <div v-if="isChangepointsRoute || isMonitoringRoute"><strong>Changepoint Severity:</strong> >= {{ changepointSeverityLabel }}</div>
+              <div v-if="isChangepointsRoute"><strong>Changepoint Type:</strong> {{ changepointTypeLabel }}</div>
               <div v-if="filtersStore.approach !== null"><strong>Approach:</strong> {{ filtersStore.approach ? 'True' : 'False' }}</div>
               <div v-if="filtersStore.validGeometry !== null"><strong>Valid Geometry:</strong> {{ validGeometryDisplayText }}</div>
               <div v-if="$route.name === 'Anomalies'"><strong>Anomaly Type:</strong> {{ filtersStore.anomalyType }}</div>
@@ -637,6 +654,15 @@ const validGeometryOptions = [
   { title: 'Valid Only', value: 'valid' },
   { title: 'Invalid Only', value: 'invalid' }
 ]
+
+const changepointTypeOptions = [
+  { title: 'All changepoints', value: 'all' },
+  { title: 'Enduring only', value: 'enduring' }
+]
+
+const changepointTypeLabel = computed(() =>
+  filtersStore.changepointType === 'enduring' ? 'Enduring only' : 'All changepoints'
+)
 
 const anomalyTypeOptions = [
   { title: 'All Anomalies', value: 'All' },

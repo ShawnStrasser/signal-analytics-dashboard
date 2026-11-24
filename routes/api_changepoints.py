@@ -59,6 +59,36 @@ def _sanitize_int_list(values):
 
 _CHANGEPOINT_SEVERITY_SQL = "COALESCE(ABS(t.PCT_CHANGE * t.AVG_DIFF) * 100, 0)"
 
+# Changepoints confirmed temporary (IS_ENDURING = FALSE) are always hidden.
+# Legacy rows have NULL lifecycle columns and are treated as unchecked changepoints.
+_NOT_TEMPORARY_SQL = "COALESCE(t.IS_ENDURING, TRUE)"
+
+# Whitelisted changepoint_type values -> extra SQL predicate.
+_CHANGEPOINT_TYPE_SQL = {
+    'all': None,
+    'enduring': "t.IS_ENDURING = TRUE",
+    # Rows that issued a stage-1 changepoint alert (used by the Monitoring preview).
+    'new': "COALESCE(t.IS_CHANGEPOINT, TRUE)",
+}
+
+_DETAIL_DEFAULT_DAYS = 7
+_DETAIL_MAX_DAYS = 60
+
+
+def _parse_changepoint_type(value) -> str:
+    """Normalize the changepoint_type parameter; unknown values fall back to 'all'."""
+    text = str(value or 'all').strip().lower()
+    return text if text in _CHANGEPOINT_TYPE_SQL else 'all'
+
+
+def _parse_detail_days(value, default=_DETAIL_DEFAULT_DAYS) -> int:
+    """Parse a day-window parameter for the detail endpoint, clamped to 1..60."""
+    try:
+        days = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(_DETAIL_MAX_DAYS, days))
+
 
 def _local_zone() -> Optional[ZoneInfo]:
     try:
@@ -147,13 +177,19 @@ def _assemble_where_clause(
     selected_signals=None,
     selected_xds=None,
     *,
-    severity_threshold=None
+    severity_threshold=None,
+    changepoint_type='all'
 ):
     """Compose WHERE clause for changepoint queries."""
     where_parts = [
         # Range predicate on the raw column keeps Snowflake partition pruning effective
-        f"t.TIMESTAMP >= '{start_date}' AND t.TIMESTAMP < DATEADD(day, 1, '{end_date}'::DATE)"
+        f"t.TIMESTAMP >= '{start_date}' AND t.TIMESTAMP < DATEADD(day, 1, '{end_date}'::DATE)",
+        _NOT_TEMPORARY_SQL,
     ]
+
+    type_clause = _CHANGEPOINT_TYPE_SQL.get(_parse_changepoint_type(changepoint_type))
+    if type_clause:
+        where_parts.append(type_clause)
 
     if filter_where:
         where_parts.append(filter_where)
@@ -265,7 +301,8 @@ def get_changepoints_map_signals():
         start_date,
         end_date,
         filter_where,
-        severity_threshold=severity_threshold
+        severity_threshold=severity_threshold,
+        changepoint_type=get_request_param('changepoint_type', 'all')
     )
 
     query = f"""
@@ -381,7 +418,8 @@ def get_changepoints_map_xd():
         start_date,
         end_date,
         filter_where,
-        severity_threshold=severity_threshold
+        severity_threshold=severity_threshold,
+        changepoint_type=get_request_param('changepoint_type', 'all')
     )
 
     query = f"""
@@ -500,7 +538,8 @@ def get_changepoints_table():
         "",
         selected_signals=selected_signals,
         selected_xds=selected_xds,
-        severity_threshold=severity_threshold
+        severity_threshold=severity_threshold,
+        changepoint_type=get_request_param('changepoint_type', 'all')
     )
 
     sort_by = str(get_request_param('sort_by', 'score') or 'score').lower()
@@ -524,6 +563,7 @@ def get_changepoints_table():
         t.AVG_BEFORE,
         t.AVG_AFTER,
         {_CHANGEPOINT_SEVERITY_SQL} AS SCORE,
+        t.IS_ENDURING,
         xd.ROADNAME,
         xd.BEARING,
         LISTAGG(DISTINCT xd.ID, ', ') WITHIN GROUP (ORDER BY xd.ID) AS ASSOCIATED_SIGNALS
@@ -588,6 +628,10 @@ def get_changepoint_detail():
 
     sort_column = "t.TIMESTAMP"
 
+    # Optional window (enduring changepoints use a longer span so persistence is visible)
+    days_before = _parse_detail_days(request.args.get('days_before'))
+    days_after = _parse_detail_days(request.args.get('days_after'))
+
     # Inline literal (not a SET session variable): saves a round trip and avoids
     # concurrent requests/report jobs overwriting each other's $CHANGE_TS.
     change_ts = f"TO_TIMESTAMP_NTZ('{timestamp_sql}')"
@@ -603,8 +647,8 @@ def get_changepoint_detail():
         END AS PERIOD
     FROM TRAVEL_TIME_ANALYTICS t
     WHERE t.XD = {xd_int}
-      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, {change_ts})
-                          AND DATEADD('day', 7, {change_ts})
+      AND t.TIMESTAMP BETWEEN DATEADD('day', -{days_before}, {change_ts})
+                          AND DATEADD('day', {days_after}, {change_ts})
     ORDER BY {sort_column}
     """
 

@@ -69,6 +69,15 @@ COMPOSITE_FIG_WIDTH_IN = 6.8
 COMPOSITE_FIG_HEIGHT_IN = 3.3
 COMPOSITE_FIG_RATIO = COMPOSITE_FIG_HEIGHT_IN / COMPOSITE_FIG_WIDTH_IN
 ANOMALY_FIG_HEIGHT_IN = 2.8
+# Chart windows (days before / after the changepoint). Enduring changepoints use a
+# longer span so the persistence of the shift three weeks later is visible.
+NEW_CHANGEPOINT_DAYS_BEFORE = 7
+NEW_CHANGEPOINT_DAYS_AFTER = 7
+ENDURING_CHANGEPOINT_DAYS_BEFORE = 14
+ENDURING_CHANGEPOINT_DAYS_AFTER = 21
+# Approximate PDF heights (pt) used to avoid orphaned changepoint headings.
+CHANGEPOINT_HEADING_SPACE = 70
+CHANGEPOINT_BLOCK_SPACE = 380
 
 # SQL expression that mirrors the severity score used to rank changepoints
 _CHANGEPOINT_SEVERITY_SQL = (
@@ -447,8 +456,41 @@ def _build_filtered_dim_components(
     return join_clause, where_clause
 
 
-def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[Dict[str, Any]]:
-    """Query Snowflake for monitoring changepoints using the provided filters."""
+def _monitoring_kind_clauses(kind: str) -> List[str]:
+    """
+    Return the WHERE fragments that select new or enduring changepoints.
+
+    The pipeline runs early each morning for yesterday's data date D: it writes
+    changepoints for D-8 (picked up by the -9 day window) and confirms enduring
+    changepoints for D-21 (picked up by the -22 day window). Changepoints that
+    turned out to be temporary (IS_ENDURING = FALSE) are always excluded.
+    """
+    if kind == "enduring":
+        return [
+            "t.IS_ENDURING = TRUE",
+            "t.TIMESTAMP >= DATEADD(day, -22, DATE_TRUNC('day', CURRENT_TIMESTAMP()))",
+        ]
+    if kind != "new":
+        raise ValueError(f"Unknown changepoint kind: {kind!r}")
+    return [
+        "t.TIMESTAMP >= DATEADD(day, -9, DATE_TRUNC('day', CURRENT_TIMESTAMP()))",
+        "COALESCE(t.IS_CHANGEPOINT, TRUE)",
+        "COALESCE(t.IS_ENDURING, TRUE)",
+    ]
+
+
+def fetch_monitoring_rows(
+    raw_filters: Dict[str, Any],
+    limit: int = 10,
+    *,
+    kind: str = "new",
+) -> List[Dict[str, Any]]:
+    """
+    Query Snowflake for monitoring changepoints using the provided filters.
+
+    kind="new" returns changepoints alerted in the latest run (~8 days old);
+    kind="enduring" returns changepoints confirmed enduring in the latest run (~21 days old).
+    """
     filters = _parse_filters(raw_filters)
 
     dimension_join, dimension_where_clause = _build_filtered_dim_components(
@@ -458,9 +500,7 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
         filters["valid_geometry"],
     )
 
-    where_parts = [
-        "t.TIMESTAMP >= DATEADD(day, -9, DATE_TRUNC('day', CURRENT_TIMESTAMP()))",
-    ]
+    where_parts = _monitoring_kind_clauses(kind)
 
     severity_threshold = _safe_float(filters.get("changepoint_severity_threshold"))
     if not math.isfinite(severity_threshold):
@@ -492,6 +532,13 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
         t.AVG_BEFORE,
         t.AVG_AFTER,
         {_CHANGEPOINT_SEVERITY_SQL} AS SCORE,
+        t.IS_CHANGEPOINT,
+        t.IS_ENDURING,
+        t.ENDURING_DATE,
+        t.BASELINE_TT,
+        t.BEFORE_TT,
+        t.AFTER_TT,
+        t.ENDURING_TT,
         xd.ROADNAME,
         xd.BEARING,
         LISTAGG(DISTINCT xd.ID, ', ') WITHIN GROUP (ORDER BY xd.ID) AS ASSOCIATED_SIGNALS
@@ -539,6 +586,14 @@ def fetch_monitoring_rows(raw_filters: Dict[str, Any], limit: int = 10) -> List[
                 "roadname": row["ROADNAME"],
                 "bearing": row["BEARING"],
                 "associated_signals": row["ASSOCIATED_SIGNALS"],
+                "kind": kind,
+                "is_changepoint": row["IS_CHANGEPOINT"],
+                "is_enduring": row["IS_ENDURING"],
+                "enduring_date": row["ENDURING_DATE"],
+                "baseline_tt": row["BASELINE_TT"],
+                "before_tt": row["BEFORE_TT"],
+                "after_tt": row["AFTER_TT"],
+                "enduring_tt": row["ENDURING_TT"],
             }
             rows.append(record)
 
@@ -777,9 +832,17 @@ def _format_timestamp_for_sql(value: Any) -> str:
     return formatted.replace("'", "''")
 
 
-def fetch_changepoint_detail_rows(xd: int, change_timestamp: Any) -> List[Dict[str, Any]]:
+def fetch_changepoint_detail_rows(
+    xd: int,
+    change_timestamp: Any,
+    *,
+    days_before: int = 7,
+    days_after: int = 7,
+) -> List[Dict[str, Any]]:
     """Pull raw travel time samples surrounding a changepoint."""
     xd_value = int(xd)
+    days_before = int(days_before)
+    days_after = int(days_after)
     timestamp_sql = _format_timestamp_for_sql(change_timestamp)
 
     # Inline literal (not a SET session variable): saves a round trip and avoids
@@ -796,8 +859,8 @@ def fetch_changepoint_detail_rows(xd: int, change_timestamp: Any) -> List[Dict[s
         END AS PERIOD
     FROM TRAVEL_TIME_ANALYTICS t
     WHERE t.XD = {xd_value}
-      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, {change_ts})
-                          AND DATEADD('day', 7, {change_ts})
+      AND t.TIMESTAMP BETWEEN DATEADD('day', -{days_before}, {change_ts})
+                          AND DATEADD('day', {days_after}, {change_ts})
     ORDER BY t.TIMESTAMP
     """
 
@@ -831,9 +894,17 @@ def fetch_changepoint_detail_rows(xd: int, change_timestamp: Any) -> List[Dict[s
     return handle_auth_error_retry(execute_query)
 
 
-def fetch_changepoint_hourly_series(xd: int, change_timestamp: Any) -> List[Dict[str, Any]]:
+def fetch_changepoint_hourly_series(
+    xd: int,
+    change_timestamp: Any,
+    *,
+    days_before: int = 7,
+    days_after: int = 7,
+) -> List[Dict[str, Any]]:
     """Fetch hourly averaged travel times around a changepoint directly from Snowflake."""
     xd_value = int(xd)
+    days_before = int(days_before)
+    days_after = int(days_after)
     timestamp_sql = _format_timestamp_for_sql(change_timestamp)
 
     # Inline literal (not a SET session variable): saves a round trip and avoids
@@ -850,8 +921,8 @@ def fetch_changepoint_hourly_series(xd: int, change_timestamp: Any) -> List[Dict
         END AS PERIOD
     FROM TRAVEL_TIME_ANALYTICS t
     WHERE t.XD = {xd_value}
-      AND t.TIMESTAMP BETWEEN DATEADD('day', -7, {change_ts})
-                          AND DATEADD('day', 7, {change_ts})
+      AND t.TIMESTAMP BETWEEN DATEADD('day', -{days_before}, {change_ts})
+                          AND DATEADD('day', {days_after}, {change_ts})
     GROUP BY 1, 3
     ORDER BY HOUR_TS
     """
@@ -1176,7 +1247,12 @@ def _collect_chart_images(meta: Dict[str, Any], date_series: Dict[str, Any], tim
     return images
 
 
-def enrich_monitoring_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def enrich_monitoring_rows(
+    rows: Sequence[Dict[str, Any]],
+    *,
+    days_before: int = 7,
+    days_after: int = 7,
+) -> List[Dict[str, Any]]:
     """Attach detail samples, aggregated series, and charts to each row."""
     enriched: List[Dict[str, Any]] = []
 
@@ -1185,11 +1261,15 @@ def enrich_monitoring_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any
         detail_rows: List[Dict[str, Any]] = []
         hourly_rows: List[Dict[str, Any]] = []
         try:
-            detail_rows = fetch_changepoint_detail_rows(item["xd"], item["timestamp"])
+            detail_rows = fetch_changepoint_detail_rows(
+                item["xd"], item["timestamp"], days_before=days_before, days_after=days_after
+            )
         except Exception as exc:  # pragma: no cover - defensive logging
             print(f"[WARN] Unable to fetch changepoint detail for XD {item.get('xd')}: {exc}")
         try:
-            hourly_rows = fetch_changepoint_hourly_series(item["xd"], item["timestamp"])
+            hourly_rows = fetch_changepoint_hourly_series(
+                item["xd"], item["timestamp"], days_before=days_before, days_after=days_after
+            )
         except Exception as exc:  # pragma: no cover - defensive logging
             print(f"[WARN] Unable to fetch hourly changepoint trend for XD {item.get('xd')}: {exc}")
 
@@ -1656,6 +1736,17 @@ def _render_combined_chart_block(pdf, meta: Dict[str, Any], image_bytes: Optiona
     stats_line = (
         f"Observed AT: {observed_label} | Before {before_value} | After {after_value} | Delta {delta_value}"
     )
+    enduring_tt = _safe_float(meta.get("enduring_tt"))
+    before_tt = _safe_float(meta.get("before_tt"))
+    after_tt = _safe_float(meta.get("after_tt"))
+    if meta.get("kind") == "enduring" and all(
+        math.isfinite(value) for value in (enduring_tt, before_tt, after_tt)
+    ):
+        # Raw mean travel time: week before, week after, and weeks 2-3 after the change.
+        stats_line = (
+            f"Observed AT: {observed_label} | Before {_seconds(before_tt)} | "
+            f"After {_seconds(after_tt)} | Weeks 2-3 {_seconds(enduring_tt)}"
+        )
     pdf.cell(inner_width, 8.5, stats_line, ln=1)
 
     pdf.set_y(start_y + info_height)
@@ -1675,11 +1766,77 @@ def _render_combined_chart_block(pdf, meta: Dict[str, Any], image_bytes: Optiona
 
 
 
+def _sort_changepoint_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Sort changepoint rows by severity (descending)."""
+
+    def _changepoint_severity(row: Dict[str, Any]) -> float:
+        severity_value = _safe_float(row.get("severity_score") or row.get("score"))
+        if math.isfinite(severity_value):
+            return severity_value
+        pct_change = _safe_float(row.get("pct_change"))
+        if math.isfinite(pct_change):
+            return abs(pct_change)
+        return float("-inf")
+
+    return sorted(
+        rows,
+        key=lambda item: (_changepoint_severity(item), item.get("xd") or 0),
+        reverse=True,
+    )
+
+
+def _render_changepoint_subsection(
+    pdf,
+    title: str,
+    blurb: str,
+    rows: List[Dict[str, Any]],
+    empty_text: str,
+) -> None:
+    """Render a changepoint subsection heading, blurb, and chart blocks."""
+    # Keep the heading and blurb on the same page as the first chart block.
+    _ensure_space(pdf, CHANGEPOINT_HEADING_SPACE + (CHANGEPOINT_BLOCK_SPACE if rows else 20))
+    pdf.set_text_color(41, 72, 132)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 18, title, ln=1)
+    pdf.set_text_color(70, 70, 76)
+    pdf.set_font("Helvetica", "", 11)
+    _write_full_width(pdf, blurb, 14)
+    pdf.ln(6)
+
+    if not rows:
+        pdf.set_text_color(85, 90, 96)
+        pdf.set_font("Helvetica", "I", 11)
+        _write_full_width(pdf, empty_text, 16)
+        return
+
+    rows_list = _sort_changepoint_rows(rows)
+    for index, item in enumerate(rows_list, start=1):
+        _ensure_space(pdf, CHANGEPOINT_BLOCK_SPACE)
+
+        charts = item.get("chart_images") or {}
+        composite_chart = charts.get("combined_profile")
+        if composite_chart:
+            _render_combined_chart_block(pdf, item, composite_chart)
+        else:
+            before_count = len(item.get("date_series", {}).get("before", []))
+            after_count = len(item.get("date_series", {}).get("after", []))
+            raise RuntimeError(
+                "Failed to render changepoint charts for "
+                f"XD {_clean_text(item.get('xd'), '--')} "
+                f"(before={before_count}, after={after_count})"
+            )
+
+        pdf.ln(2)
+        if index < len(rows_list):
+            pdf.ln(16)
+
+
 def build_monitoring_pdf(
     filters: Dict[str, Any],
     changepoint_rows: Iterable[Dict[str, Any]],
     *,
     anomalies: Sequence[Dict[str, Any]] = (),
+    enduring_rows: Iterable[Dict[str, Any]] = (),
     joke: Optional[Dict[str, Any]] = None,
     report_date: Optional[date] = None,
 ) -> bytes:
@@ -1897,6 +2054,14 @@ def build_monitoring_pdf(
                 pdf.ln(8)
         pdf.ln(6)
 
+    new_rows_list = list(changepoint_rows)
+    enduring_rows_list = list(enduring_rows or [])
+
+    # Keep the section heading with the first subsection heading (and its first chart).
+    _ensure_space(
+        pdf,
+        70 + CHANGEPOINT_HEADING_SPACE + (CHANGEPOINT_BLOCK_SPACE if new_rows_list else 20),
+    )
     pdf.set_text_color(28, 54, 103)
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 22, "Changepoints", ln=1)
@@ -1907,47 +2072,31 @@ def build_monitoring_pdf(
         "Changepoints may result from timing changes, construction, school starting, catastrophic detection failure, etc."
     )
     _write_full_width(pdf, changepoint_blurb, 14)
+    pdf.ln(8)
+
+    _render_changepoint_subsection(
+        pdf,
+        "New changepoints",
+        (
+            "These changepoints are new, starting about a week ago. Some may still turn out to be temporary; "
+            "those that do are not reported again."
+        ),
+        new_rows_list,
+        "No new changepoints matched the current filters.",
+    )
     pdf.ln(10)
 
-    rows_list = list(changepoint_rows)
-    if rows_list:
-        def _changepoint_severity(row: Dict[str, Any]) -> float:
-            severity_value = _safe_float(row.get("severity_score") or row.get("score"))
-            if math.isfinite(severity_value):
-                return severity_value
-            pct_change = _safe_float(row.get("pct_change"))
-            if math.isfinite(pct_change):
-                return abs(pct_change)
-            return float("-inf")
-
-        rows_list.sort(
-            key=lambda item: (_changepoint_severity(item), item.get("xd") or 0),
-            reverse=True,
-        )
-
-    if not rows_list:
-        pdf.set_font("Helvetica", "I", 12)
-        _write_full_width(pdf, "No changepoints matched the current filters.", 16)
-    else:
-        for index, item in enumerate(rows_list, start=1):
-            _ensure_space(pdf, 380)
-
-            charts = item.get("chart_images") or {}
-            composite_chart = charts.get("combined_profile")
-            if composite_chart:
-                _render_combined_chart_block(pdf, item, composite_chart)
-            else:
-                before_count = len(item.get("date_series", {}).get("before", []))
-                after_count = len(item.get("date_series", {}).get("after", []))
-                raise RuntimeError(
-                    "Failed to render changepoint charts for "
-                    f"XD {_clean_text(item.get('xd'), '--')} "
-                    f"(before={before_count}, after={after_count})"
-                )
-
-            pdf.ln(2)
-            if index < len(rows_list):
-                pdf.ln(16)
+    _render_changepoint_subsection(
+        pdf,
+        "Enduring changepoints",
+        (
+            "An enduring changepoint is a changepoint whose travel time shift was still present three weeks later, "
+            "so it is likely a lasting change (timing change, lane configuration, development) rather than temporary "
+            "construction or an incident. Charts span two weeks before to three weeks after the change."
+        ),
+        enduring_rows_list,
+        "No enduring changepoints matched the current filters.",
+    )
 
     output = pdf.output(dest="S")
     return output.encode("latin-1") if isinstance(output, str) else output
@@ -2043,28 +2192,33 @@ def build_email_html(
     changepoints: Iterable[Dict[str, Any]],
     *,
     anomalies: Sequence[Dict[str, Any]] = (),
+    enduring_changepoints: Iterable[Dict[str, Any]] = (),
     joke: Optional[Dict[str, Any]] = None,
     report_date: Optional[date] = None,
 ) -> str:
     changepoint_list = list(changepoints)
+    enduring_list = list(enduring_changepoints or [])
     anomaly_list = list(anomalies or [])
     changepoint_count = len(changepoint_list)
+    enduring_count = len(enduring_list)
     anomaly_count = len(anomaly_list)
     changepoint_plural = "s" if changepoint_count != 1 else ""
-    anomaly_plural = "ies" if anomaly_count != 1 else "y"
+    enduring_plural = "s" if enduring_count != 1 else ""
     resolved_report_date = report_date or _resolve_report_date(filters)
     readable_report_date = _format_report_date(resolved_report_date)
 
     anomaly_text = f"{anomaly_count} anomal{'y' if anomaly_count == 1 else 'ies'}"
-    changepoint_text = f"{changepoint_count} changepoint{changepoint_plural}"
+    changepoint_text = f"{changepoint_count} new changepoint{changepoint_plural}"
+    enduring_text = f"{enduring_count} enduring changepoint{enduring_plural}"
 
     html_output = f"""
     <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;">
         <p>Hello,</p>
-        <p>Your monitoring report for <strong>{readable_report_date}</strong> is ready. We observed <strong>{changepoint_text}</strong> and <strong>{anomaly_text}</strong> in the watchlist defined by your saved filters.</p>
+        <p>Your monitoring report for <strong>{readable_report_date}</strong> is ready. We observed <strong>{changepoint_text}</strong>, <strong>{enduring_text}</strong>, and <strong>{anomaly_text}</strong> in the watchlist defined by your saved filters.</p>
         <div style="margin-top:22px;padding:14px 18px;background-color:#f6f9fc;border:1px solid #dbe7fb;border-radius:8px;">
             <p style="margin:0 0 8px 0;font-weight:bold;color:#1b4079;">Latest Changelog</p>
             <ul style="margin:0;padding-left:20px;color:#1b1b1b;line-height:1.4;">
+                <li><strong>Nov 24, 2026:</strong> Changepoint alerts now use a stricter check, so you should see fewer false alarms. A new <strong>enduring changepoints</strong> section reports changepoints whose travel time shift is still present three weeks later, which points to a lasting change (timing change, lane configuration, development) rather than temporary construction or an incident.</li>
                 <li><strong>Nov 25, 2025:</strong> Monitoring emails now use the send date for subjects and filenames, matching the PDF header instead of the changepoint window.</li>
                 <li><strong>Dashboard polish:</strong> We fixed several interaction bugs&mdash;please let us know if you notice anything odd.</li>
                 <li><strong>Remove anomalies:</strong> The filter now correctly excludes flagged time periods.</li>
@@ -2089,14 +2243,24 @@ def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject
         filters["start_date"] = start_date
         filters["end_date"] = end_date
 
-    changepoint_rows = fetch_monitoring_rows(filters)
+    changepoint_rows = fetch_monitoring_rows(filters, kind="new")
+    enduring_rows = fetch_monitoring_rows(filters, kind="enduring")
     anomaly_rows, resolved_threshold = fetch_monitoring_anomaly_rows(filters)
     filters["anomaly_monitoring_threshold"] = resolved_threshold
 
-    if not changepoint_rows and not anomaly_rows:
+    if not changepoint_rows and not enduring_rows and not anomaly_rows:
         return {"sent": False, "reason": "no_data", "email": email}
 
-    enriched_rows = enrich_monitoring_rows(changepoint_rows)
+    enriched_rows = enrich_monitoring_rows(
+        changepoint_rows,
+        days_before=NEW_CHANGEPOINT_DAYS_BEFORE,
+        days_after=NEW_CHANGEPOINT_DAYS_AFTER,
+    )
+    enriched_enduring_rows = enrich_monitoring_rows(
+        enduring_rows,
+        days_before=ENDURING_CHANGEPOINT_DAYS_BEFORE,
+        days_after=ENDURING_CHANGEPOINT_DAYS_AFTER,
+    )
     report_date = _resolve_report_date(filters)
     report_date_iso = report_date.isoformat()
     joke = joke_service.prepare_joke(report_date)
@@ -2104,10 +2268,17 @@ def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject
         filters,
         enriched_rows,
         anomalies=anomaly_rows,
+        enduring_rows=enriched_enduring_rows,
         joke=joke,
         report_date=report_date,
     )
-    html_content = build_email_html(filters, enriched_rows, anomalies=anomaly_rows, report_date=report_date)
+    html_content = build_email_html(
+        filters,
+        enriched_rows,
+        anomalies=anomaly_rows,
+        enduring_changepoints=enriched_enduring_rows,
+        report_date=report_date,
+    )
     subject = f"{subject_prefix} - {report_date_iso}"
 
     if DEBUG_SAVE_REPORT_PDF:
@@ -2124,6 +2295,7 @@ def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject
             "email": email,
             "rows": len(enriched_rows),
             "changepoints": len(enriched_rows),
+            "enduring_changepoints": len(enriched_enduring_rows),
             "anomalies": len(anomaly_rows),
             "debug_saved_path": str(output_path),
         }
@@ -2140,6 +2312,7 @@ def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject
         "email": email,
         "rows": len(enriched_rows),
         "changepoints": len(enriched_rows),
+        "enduring_changepoints": len(enriched_enduring_rows),
         "anomalies": len(anomaly_rows),
     }
 

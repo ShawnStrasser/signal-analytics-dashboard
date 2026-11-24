@@ -194,7 +194,7 @@ def send_test_report():
     if not result.get("sent"):
         reason = result.get("reason")
         if reason == "no_data":
-            return jsonify({"message": "No changepoints matched the selected filters. Email not sent."}), 200
+            return jsonify({"message": "No changepoints or anomalies matched the selected filters. Email not sent."}), 200
         if reason == "debug_saved":
             return jsonify({
                 "message": f"Report saved locally at {result.get('debug_saved_path')}",

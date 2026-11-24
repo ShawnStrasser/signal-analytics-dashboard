@@ -316,6 +316,31 @@ describe('Filters Store', () => {
     })
   })
 
+  describe('Changepoint Type Filter', () => {
+    it('defaults to all changepoints and omits the param', () => {
+      expect(store.changepointType).toBe('all')
+      expect(store.changepointFilterParams.changepoint_type).toBeUndefined()
+    })
+
+    it('sends changepoint_type=enduring when Enduring only is selected', () => {
+      store.setChangepointType('enduring')
+      expect(store.changepointType).toBe('enduring')
+      expect(store.changepointFilterParams.changepoint_type).toBe('enduring')
+    })
+
+    it('falls back to all for unknown values', () => {
+      store.setChangepointType('enduring')
+      store.setChangepointType('bogus')
+      expect(store.changepointType).toBe('all')
+      expect(store.changepointFilterParams.changepoint_type).toBeUndefined()
+    })
+
+    it('does not leak into the shared filterParams', () => {
+      store.setChangepointType('enduring')
+      expect(store.filterParams.changepoint_type).toBeUndefined()
+    })
+  })
+
   describe('Edge Cases', () => {
     it('should handle empty signal selection', () => {
       store.setSelectedSignalIds([])
