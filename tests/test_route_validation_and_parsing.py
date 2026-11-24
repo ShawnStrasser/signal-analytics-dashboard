@@ -114,8 +114,9 @@ def test_monitoring_route_accepts_comma_separated_get_lists(client, monkeypatch)
 
     captured = {}
 
-    def fake_fetch_monitoring_anomaly_rows(filters):
+    def fake_fetch_monitoring_anomaly_rows(filters, report_date=None):
         captured['filters'] = filters
+        captured['report_date'] = report_date
         return [], 4.0
 
     monkeypatch.setattr(api_anomalies, 'fetch_monitoring_anomaly_rows', fake_fetch_monitoring_anomaly_rows)
@@ -137,3 +138,8 @@ def test_monitoring_route_accepts_comma_separated_get_lists(client, monkeypatch)
     assert captured['filters']['selected_signals'] == ['C-7205', 'C-7206']
     assert captured['filters']['selected_xds'] == ['101', '102']
     assert captured['filters']['selected_signal_groups'] == ['District1', 'District2']
+    assert captured['report_date'] is None
+
+    response = client.get('/api/monitoring-anomalies', query_string={'report_date': '2026-10-31'})
+    assert response.status_code == 200
+    assert captured['report_date'].isoformat() == '2026-10-31'

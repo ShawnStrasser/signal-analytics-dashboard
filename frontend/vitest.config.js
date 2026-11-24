@@ -37,6 +37,13 @@ export default defineConfig({
 
     // Increase timeout for tests that might need more time
     testTimeout: 10000,
+
+    // Let Vite process Vuetify (its components import .css files) when tests mount them
+    server: {
+      deps: {
+        inline: ['vuetify'],
+      },
+    },
   },
   resolve: {
     alias: {

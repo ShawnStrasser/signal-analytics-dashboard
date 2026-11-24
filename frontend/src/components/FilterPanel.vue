@@ -358,7 +358,7 @@ import { useFiltersStore } from '@/stores/filters'
 import { useSignalsStore } from '@/stores/signals'
 import { useBeforeAfterFiltersStore } from '@/stores/beforeAfterFilters'
 import BeforeAfterDateSelector from './BeforeAfterDateSelector.vue'
-import { getMonitoringDateStrings } from '@/utils/monitoringDate'
+import { getMonitoringDateStrings, formatDateRangeLabel } from '@/utils/monitoringDate'
 import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
 
 const filtersStore = useFiltersStore()
@@ -388,8 +388,7 @@ const monitoringDateLabel = computed(() => {
   if (!isMonitoringRoute.value) {
     return ''
   }
-  const { start, end } = getMonitoringDateStrings()
-  return `${start} to ${end}`
+  return formatDateRangeLabel(getMonitoringDateStrings())
 })
 const monitoringScoreLabel = computed(() => {
   const value = Number(filtersStore.anomalyMonitoringThreshold ?? 0)

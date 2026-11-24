@@ -6,6 +6,8 @@
 import { ref, onMounted, onUnmounted, watch, nextTick, computed, onActivated } from 'vue'
 import { useTheme } from 'vuetify'
 import { useThemeStore } from '@/stores/theme'
+import { useAlgorithmChangesStore } from '@/stores/algorithmChanges'
+import { buildAlgorithmChangeMarkLine } from '@/utils/algorithmChanges'
 import echarts from '@/utils/echarts'
 import {
   createDateTimeAxisLabelFormatter,
@@ -43,6 +45,10 @@ let needsRebuildAfterShow = false
 let needsResizeAfterShow = false
 const theme = useTheme()
 const themeStore = useThemeStore()
+// Detected INRIX algorithm changes are marked on date/time axes
+const algorithmChangesStore = useAlgorithmChangesStore()
+void algorithmChangesStore.load()
+watch(() => algorithmChangesStore.events, () => nextTick(updateChart))
 
 // Before/After colors (colorblind-safe when enabled)
 const BEFORE_COLOR = computed(() => {
@@ -484,6 +490,18 @@ function updateChart() {
         fontSize: isMobile ? 10 : 12
       }
     }
+  }
+
+  // Mark detected INRIX algorithm changes (date/time axis only, when inside the visible range)
+  const algorithmMarkLine = xAxisConfig?.type === 'time'
+    ? buildAlgorithmChangeMarkLine(algorithmChangesStore.events, {
+        min: xAxisConfig.min,
+        max: xAxisConfig.max,
+        color: isDark ? '#FFB74D' : '#E65100'
+      })
+    : undefined
+  if (algorithmMarkLine && seriesConfig.length > 0) {
+    seriesConfig[0] = { ...seriesConfig[0], markLine: algorithmMarkLine }
   }
 
   const option = {

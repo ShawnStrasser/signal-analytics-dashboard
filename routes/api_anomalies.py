@@ -825,8 +825,12 @@ def get_monitoring_anomalies():
         "anomaly_monitoring_threshold": get_request_param("anomaly_monitoring_threshold") or get_request_param("monitoring_score_threshold"),
     }
 
+    # Optional report date (YYYY-MM-DD): anomalies come from the day before it (default: yesterday)
+    report_date_param = get_request_param("report_date")
+    report_date = date.fromisoformat(normalize_date(report_date_param)) if report_date_param else None
+
     def execute_query():
-        rows, threshold = fetch_monitoring_anomaly_rows(filters)
+        rows, threshold = fetch_monitoring_anomaly_rows(filters, report_date=report_date)
         payload = []
         target_date_value = None
         for row in rows:

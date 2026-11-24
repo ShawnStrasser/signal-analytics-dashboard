@@ -4,6 +4,7 @@ Monitoring report data collection, PDF generation, and email delivery.
 
 from __future__ import annotations
 
+import html
 import io
 import math
 from collections import defaultdict
@@ -39,7 +40,7 @@ from config import (
     TIMEZONE,
 )
 from database import get_snowflake_session
-from services import email_service, joke_service, subscription_store
+from services import algorithm_changes, email_service, joke_service, subscription_store
 from utils.query_utils import normalize_date
 from utils.error_handler import handle_auth_error_retry
 
@@ -78,6 +79,8 @@ ENDURING_CHANGEPOINT_DAYS_AFTER = 21
 # Approximate PDF heights (pt) used to avoid orphaned changepoint headings.
 CHANGEPOINT_HEADING_SPACE = 70
 CHANGEPOINT_BLOCK_SPACE = 380
+ANOMALY_HEADING_SPACE = 64
+ANOMALY_BLOCK_SPACE = 245
 
 # SQL expression that mirrors the severity score used to rank changepoints
 _CHANGEPOINT_SEVERITY_SQL = (
@@ -243,15 +246,12 @@ def _local_today() -> date:
 
 def _default_monitoring_window(reference: Optional[date] = None) -> Tuple[str, str]:
     """
-    Mirror the frontend monitoring window selection.
-
-    The current UI looks nine days back for the start date and one day forward from
-    that for the end date (effectively the same weekday from the prior week).
+    Mirror the frontend monitoring window: new changepoints come from the single day
+    nine days before the report date.
     """
     anchor = reference or _local_today()
     start_date = anchor - timedelta(days=9)
-    end_date = start_date + timedelta(days=1)
-    return start_date.isoformat(), end_date.isoformat()
+    return start_date.isoformat(), start_date.isoformat()
 
 
 def _combine_date_minutes(target_date: date, minutes: int) -> datetime:
@@ -393,6 +393,10 @@ def _parse_filters(raw_filters: Dict[str, Any]) -> Dict[str, Any]:
             cp_threshold_numeric = CHANGEPOINT_SEVERITY_THRESHOLD
     filters["changepoint_severity_threshold"] = max(0.0, cp_threshold_numeric)
 
+    explicit_report_date = _coerce_date(raw_filters.get("report_date") or raw_filters.get("dispatch_date"))
+    if explicit_report_date:
+        filters["report_date"] = explicit_report_date
+
     return filters
 
 
@@ -456,24 +460,46 @@ def _build_filtered_dim_components(
     return join_clause, where_clause
 
 
-def _monitoring_kind_clauses(kind: str) -> List[str]:
-    """
-    Return the WHERE fragments that select new or enduring changepoints.
+def _section_day(section: str, report_date: Optional[date]) -> date:
+    """Day covered by a report section (anomalies R-1, new R-9, enduring R-22)."""
+    anchor = report_date or _local_today()
+    return anchor - timedelta(days=algorithm_changes.REPORT_SECTION_LAG_DAYS[section])
 
-    The pipeline runs early each morning for yesterday's data date D: it writes
-    changepoints for D-8 (picked up by the -9 day window) and confirms enduring
-    changepoints for D-21 (picked up by the -22 day window). Changepoints that
-    turned out to be temporary (IS_ENDURING = FALSE) are always excluded.
+
+def _day_window_clauses(day: date) -> List[str]:
+    """Bound TIMESTAMP to a single local day using literals (keeps partition pruning)."""
+    return [
+        f"t.TIMESTAMP >= '{day.isoformat()}'",
+        f"t.TIMESTAMP < '{(day + timedelta(days=1)).isoformat()}'",
+    ]
+
+
+def _monitoring_kind_clauses(kind: str, report_date: Optional[date] = None) -> List[str]:
+    """
+    Return the WHERE fragments that select new or enduring changepoints for report date R.
+
+    The pipeline runs early each morning for yesterday's data date D = R-1: it writes
+    changepoints for D-8 = R-9 (new section) and confirms enduring changepoints for
+    D-21 = R-22 (enduring section). Both windows are a single day so a report for a
+    past date shows what that day's report covered.
+
+    kind="enduring" charts changepoints NOT alerted earlier (IS_CHANGEPOINT = FALSE);
+    kind="enduring_reported" lists the ones that were alerted earlier (shown as a table).
+    Changepoints that turned out to be temporary (IS_ENDURING = FALSE) are always excluded.
     """
     if kind == "enduring":
-        return [
+        return _day_window_clauses(_section_day("enduring", report_date)) + [
             "t.IS_ENDURING = TRUE",
-            "t.TIMESTAMP >= DATEADD(day, -22, DATE_TRUNC('day', CURRENT_TIMESTAMP()))",
+            "t.IS_CHANGEPOINT = FALSE",
+        ]
+    if kind == "enduring_reported":
+        return _day_window_clauses(_section_day("enduring", report_date)) + [
+            "t.IS_ENDURING = TRUE",
+            "COALESCE(t.IS_CHANGEPOINT, TRUE)",
         ]
     if kind != "new":
         raise ValueError(f"Unknown changepoint kind: {kind!r}")
-    return [
-        "t.TIMESTAMP >= DATEADD(day, -9, DATE_TRUNC('day', CURRENT_TIMESTAMP()))",
+    return _day_window_clauses(_section_day("new", report_date)) + [
         "COALESCE(t.IS_CHANGEPOINT, TRUE)",
         "COALESCE(t.IS_ENDURING, TRUE)",
     ]
@@ -484,12 +510,15 @@ def fetch_monitoring_rows(
     limit: int = 10,
     *,
     kind: str = "new",
+    report_date: Optional[date] = None,
 ) -> List[Dict[str, Any]]:
     """
     Query Snowflake for monitoring changepoints using the provided filters.
 
-    kind="new" returns changepoints alerted in the latest run (~8 days old);
-    kind="enduring" returns changepoints confirmed enduring in the latest run (~21 days old).
+    kind="new" returns changepoints alerted on report date R (from day R-9);
+    kind="enduring" returns changepoints confirmed enduring on R (from day R-22) that
+    were not alerted earlier; kind="enduring_reported" the ones that were.
+    report_date defaults to today.
     """
     filters = _parse_filters(raw_filters)
 
@@ -500,7 +529,7 @@ def fetch_monitoring_rows(
         filters["valid_geometry"],
     )
 
-    where_parts = _monitoring_kind_clauses(kind)
+    where_parts = _monitoring_kind_clauses(kind, report_date)
 
     severity_threshold = _safe_float(filters.get("changepoint_severity_threshold"))
     if not math.isfinite(severity_threshold):
@@ -602,9 +631,15 @@ def fetch_monitoring_rows(
     return handle_auth_error_retry(execute_query)
 
 
-def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], float]:
-    """Query Snowflake for yesterday's anomalies using monitoring filters."""
+def fetch_monitoring_anomaly_rows(
+    raw_filters: Dict[str, Any],
+    *,
+    report_date: Optional[date] = None,
+) -> Tuple[List[Dict[str, Any]], float]:
+    """Query Snowflake for anomalies on the day before report_date (default: yesterday)."""
     filters = _parse_filters(raw_filters)
+    target_day = _section_day("anomalies", report_date)
+    target_day_sql = f"'{target_day.isoformat()}'::DATE"
     threshold_value = filters.get("anomaly_monitoring_threshold", ANOMALY_MONITORING_THRESHOLD)
     try:
         threshold = float(threshold_value)
@@ -670,7 +705,7 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> Tuple[List[Dic
         FROM TRAVEL_TIME_ANALYTICS t
         INNER JOIN distinct_dim d ON t.XD = d.XD
         LEFT JOIN signal_ids s ON t.XD = s.XD
-        WHERE t.DATE_ONLY = CAST(DATEADD(day, -1, DATE_TRUNC('day', CURRENT_TIMESTAMP())) AS DATE){selected_clause_sql}
+        WHERE t.DATE_ONLY = {target_day_sql}{selected_clause_sql}
         GROUP BY ALL
     ),
     scored AS (
@@ -705,7 +740,7 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> Tuple[List[Dic
         if not records:
             return [], threshold
 
-        yesterday = _yesterday_date()
+        yesterday = target_day
         rows: List[Dict[str, Any]] = []
         xds: List[int] = []
         for record in records:
@@ -756,18 +791,14 @@ def fetch_monitoring_anomaly_rows(raw_filters: Dict[str, Any]) -> Tuple[List[Dic
 
         xd_literals = ", ".join(str(xd) for xd in sorted(set(xds)))
         time_query = f"""
-        WITH params AS (
-            SELECT
-                DATEADD(day, -1, DATE_TRUNC('day', CURRENT_TIMESTAMP())) AS TARGET_DATE
-        )
         SELECT
             t.XD,
             t.TIME_15MIN,
             AVG(t.TRAVEL_TIME_SECONDS) AS AVG_ACTUAL,
             AVG(t.PREDICTION) AS AVG_PREDICTION
         FROM TRAVEL_TIME_ANALYTICS t
-        JOIN params p ON t.DATE_ONLY = CAST(p.TARGET_DATE AS DATE)
-        WHERE t.XD IN ({xd_literals})
+        WHERE t.DATE_ONLY = {target_day_sql}
+          AND t.XD IN ({xd_literals})
         GROUP BY t.XD, t.TIME_15MIN
         ORDER BY t.XD, t.TIME_15MIN
         """
@@ -1766,6 +1797,62 @@ def _render_combined_chart_block(pdf, meta: Dict[str, Any], image_bytes: Optiona
 
 
 
+def _render_algorithm_change_notice(pdf, notes: Sequence[str]) -> None:
+    """Prominent call-out at the top of the PDF for INRIX algorithm changes."""
+    cleaned = [_clean_text(note) for note in notes if note]
+    cleaned = [note for note in cleaned if note]
+    if not cleaned:
+        return
+
+    content_width = pdf.w - pdf.l_margin - pdf.r_margin
+    accent_width = 5
+    pad_x, pad_top, pad_bottom = 14, 9, 10
+    title_height, line_height, note_gap = 17, 13.5, 4
+    text_width = content_width - accent_width - pad_x * 2
+
+    pdf.set_font("Helvetica", "", 10.5)
+    line_counts = []
+    for note in cleaned:
+        try:
+            lines = pdf.multi_cell(text_width, line_height, note, split_only=True)  # type: ignore[arg-type]
+        except TypeError:  # pragma: no cover - older fpdf
+            lines = [note]
+        line_counts.append(max(1, len(lines)))
+    height = (
+        pad_top
+        + title_height
+        + sum(count * line_height for count in line_counts)
+        + note_gap * (len(cleaned) - 1)
+        + pad_bottom
+    )
+
+    _ensure_space(pdf, height + 12)
+    top = pdf.get_y()
+    pdf.set_fill_color(255, 244, 229)
+    pdf.set_draw_color(245, 185, 113)
+    pdf.set_line_width(0.8)
+    pdf.rect(pdf.l_margin, top, content_width, height, "FD")
+    pdf.set_fill_color(230, 81, 0)
+    pdf.rect(pdf.l_margin, top, accent_width, height, "F")
+
+    text_x = pdf.l_margin + accent_width + pad_x
+    pdf.set_xy(text_x, top + pad_top)
+    pdf.set_text_color(179, 60, 0)
+    pdf.set_font("Helvetica", "B", 11.5)
+    pdf.cell(text_width, title_height, "INRIX algorithm change", ln=1)
+
+    pdf.set_text_color(93, 46, 0)
+    pdf.set_font("Helvetica", "", 10.5)
+    for index, note in enumerate(cleaned):
+        pdf.set_x(text_x)
+        pdf.multi_cell(text_width, line_height, note)
+        if index < len(cleaned) - 1:
+            pdf.ln(note_gap)
+
+    pdf.set_y(top + height + 12)
+    pdf.set_text_color(0, 0, 0)
+
+
 def _sort_changepoint_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Sort changepoint rows by severity (descending)."""
 
@@ -1785,16 +1872,99 @@ def _sort_changepoint_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     )
 
 
+def _short_date(value: Any) -> str:
+    stamp = value.date() if isinstance(value, datetime) else _coerce_date(value)
+    return f"{stamp.strftime('%b')} {stamp.day}, {stamp.year}" if stamp else "--"
+
+
+def _fit_text(pdf, text: str, width: float) -> str:
+    """Truncate text with '...' so it fits in a table cell."""
+    text = _clean_text(text, "--")
+    if pdf.get_string_width(text) <= width:
+        return text
+    while text and pdf.get_string_width(text + "...") > width:
+        text = text[:-1]
+    return text.rstrip(" ,") + "..."
+
+
+def _reported_table_row(item: Dict[str, Any]) -> List[str]:
+    road = _clean_text(item.get("roadname"), "Unknown road")
+    bearing = _clean_text(item.get("bearing"))
+    travel_times = [_safe_float(item.get(key)) for key in ("before_tt", "after_tt", "enduring_tt")]
+    tt_text = " -> ".join(f"{value:.0f}" if math.isfinite(value) else "--" for value in travel_times)
+    pct = _safe_float(item.get("pct_change"))
+    return [
+        f"{road} ({bearing})" if bearing else road,
+        _clean_text(item.get("xd"), "--"),
+        _clean_text(item.get("associated_signals"), "--"),
+        _short_date(item.get("timestamp")),
+        tt_text,
+        f"{pct * 100:+.1f}%" if math.isfinite(pct) else "--",
+    ]
+
+
+REPORTED_TABLE_HEADERS = ("Road", "XD", "Signals", "Changed", "Before -> After -> Wk 2-3 (s)", "Change")
+REPORTED_TABLE_WIDTHS = (0.25, 0.12, 0.13, 0.12, 0.27, 0.11)
+
+
+def _render_reported_enduring_table(pdf, rows: Sequence[Dict[str, Any]]) -> None:
+    """Compact table (no charts) of enduring changepoints already reported as new."""
+    if not rows:
+        return
+    content_width = pdf.w - pdf.l_margin - pdf.r_margin
+    widths = [content_width * share for share in REPORTED_TABLE_WIDTHS]
+    row_height = 15
+    pad = 3
+
+    _ensure_space(pdf, 22 + row_height * (min(len(rows), 3) + 1))
+    pdf.set_text_color(41, 72, 132)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(0, 16, "Already reported, still present", ln=1)
+
+    def header() -> None:
+        pdf.set_fill_color(232, 239, 252)
+        pdf.set_draw_color(214, 222, 242)
+        pdf.set_line_width(0.6)
+        pdf.set_text_color(33, 60, 96)
+        pdf.set_font("Helvetica", "B", 8.5)
+        pdf.set_x(pdf.l_margin)
+        for label, width in zip(REPORTED_TABLE_HEADERS, widths):
+            pdf.cell(width, row_height, f" {label}", border=1, fill=True)
+        pdf.ln(row_height)
+
+    header()
+    pdf.set_font("Helvetica", "", 8.5)
+    for index, item in enumerate(_sort_changepoint_rows(list(rows))):
+        if pdf.get_y() + row_height > pdf.page_break_trigger:
+            pdf.add_page()
+            header()
+            pdf.set_font("Helvetica", "", 8.5)
+        pdf.set_x(pdf.l_margin)
+        pdf.set_text_color(60, 66, 76)
+        pdf.set_fill_color(247, 249, 254)
+        cells = _reported_table_row(item)
+        for col, (text, width) in enumerate(zip(cells, widths)):
+            if col == len(cells) - 1:
+                pct = _safe_float(item.get("pct_change"))
+                pdf.set_text_color(*((191, 87, 0) if pct > 0 else (46, 125, 50)))
+            pdf.cell(width, row_height, f" {_fit_text(pdf, text, width - pad * 2)}", border=1, fill=index % 2 == 1)
+        pdf.ln(row_height)
+    pdf.set_text_color(0, 0, 0)
+
+
 def _render_changepoint_subsection(
     pdf,
     title: str,
     blurb: str,
     rows: List[Dict[str, Any]],
     empty_text: str,
+    *,
+    reported_rows: Sequence[Dict[str, Any]] = (),
 ) -> None:
-    """Render a changepoint subsection heading, blurb, and chart blocks."""
-    # Keep the heading and blurb on the same page as the first chart block.
-    _ensure_space(pdf, CHANGEPOINT_HEADING_SPACE + (CHANGEPOINT_BLOCK_SPACE if rows else 20))
+    """Render a changepoint subsection heading, blurb, chart blocks and (optionally) a reported table."""
+    # Keep the heading and blurb on the same page as the first chart block (or the table).
+    first_block = CHANGEPOINT_BLOCK_SPACE if rows else (80 if reported_rows else 20)
+    _ensure_space(pdf, CHANGEPOINT_HEADING_SPACE + first_block)
     pdf.set_text_color(41, 72, 132)
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 18, title, ln=1)
@@ -1804,9 +1974,11 @@ def _render_changepoint_subsection(
     pdf.ln(6)
 
     if not rows:
-        pdf.set_text_color(85, 90, 96)
-        pdf.set_font("Helvetica", "I", 11)
-        _write_full_width(pdf, empty_text, 16)
+        if not reported_rows:
+            pdf.set_text_color(85, 90, 96)
+            pdf.set_font("Helvetica", "I", 11)
+            _write_full_width(pdf, empty_text, 16)
+        _render_reported_enduring_table(pdf, reported_rows)
         return
 
     rows_list = _sort_changepoint_rows(rows)
@@ -1830,6 +2002,10 @@ def _render_changepoint_subsection(
         if index < len(rows_list):
             pdf.ln(16)
 
+    if reported_rows:
+        pdf.ln(10)
+        _render_reported_enduring_table(pdf, reported_rows)
+
 
 def build_monitoring_pdf(
     filters: Dict[str, Any],
@@ -1837,8 +2013,11 @@ def build_monitoring_pdf(
     *,
     anomalies: Sequence[Dict[str, Any]] = (),
     enduring_rows: Iterable[Dict[str, Any]] = (),
+    enduring_reported_rows: Iterable[Dict[str, Any]] = (),
     joke: Optional[Dict[str, Any]] = None,
     report_date: Optional[date] = None,
+    algorithm_notes: Sequence[str] = (),
+    excluded_text: Optional[Dict[str, str]] = None,
 ) -> bytes:
     if plt is None:
         raise RuntimeError(
@@ -1896,23 +2075,23 @@ def build_monitoring_pdf(
     pdf.cell(content_width - 36, 16, header_date, ln=1)
 
     pdf.set_y(banner_top + banner_height + 14)
+    _render_algorithm_change_notice(pdf, algorithm_notes)
+    excluded_text = excluded_text or {}
     pdf.set_text_color(64, 74, 94)
     pdf.set_font("Helvetica", "", 11)
 
     summary_paragraph = [
-        ("This daily report monitors travel time anomalies and changepoints at traffic signals. It uses ", None),
-        ("INRIX XD segment data", "https://github.com/ShawnStrasser/RITIS_INRIX_API"),
-        (" delivered through the ", None),
-        ("RITIS API", "https://github.com/ShawnStrasser/RITIS_INRIX_API"),
-        (", is stored in ", None),
+        ("Travel time anomalies and changepoints at traffic signals, from ", None),
+        ("INRIX XD data", "https://github.com/ShawnStrasser/RITIS_INRIX_API"),
+        (" via ", None),
         ("Snowflake", "https://github.com/TPAU-ODOT/signal-analytics-snowflake"),
-        (", and is analyzed with the ", None),
-        ("traffic-anomaly toolkit", "https://github.com/ShawnStrasser/traffic-anomaly"),
-        (". Explore the ", None),
-        ("interactive dashboard", "https://signals.up.railway.app/"),
-        (" or review the ", None),
-        ("open-source codebase", "https://github.com/ShawnStrasser/signal-analytics-dashboard"),
-        (" for implementation details.", None),
+        (" and ", None),
+        ("traffic-anomaly", "https://github.com/ShawnStrasser/traffic-anomaly"),
+        (". See the ", None),
+        ("dashboard", "https://signals.up.railway.app/"),
+        (" or ", None),
+        ("source code", "https://github.com/ShawnStrasser/signal-analytics-dashboard"),
+        (".", None),
     ]
     _write_paragraph_with_links(pdf, summary_paragraph, line_height=15, base_color=(64, 74, 94))
     pdf.ln(10)
@@ -1991,7 +2170,7 @@ def build_monitoring_pdf(
 
     pdf.set_text_color(41, 72, 132)
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 18, "Your report has the following filters applied:", ln=1)
+    pdf.cell(0, 18, "Filters", ln=1)
     detail_lines = _filters_detail_lines(filters)
     pdf.set_text_color(70, 70, 76)
     pdf.set_font("Helvetica", "", 10)
@@ -2009,7 +2188,7 @@ def build_monitoring_pdf(
     _write_paragraph_with_links(
         pdf,
         [
-            ("To adjust these filters, visit the ", None),
+            ("Change them on the ", None),
             ("monitoring page", "https://signals.up.railway.app/monitoring"),
             (".", None),
         ],
@@ -2018,22 +2197,25 @@ def build_monitoring_pdf(
     )
     pdf.ln(12)
 
+    # Keep the section heading and intro on the same page as the first anomaly chart.
+    _ensure_space(pdf, ANOMALY_HEADING_SPACE + (ANOMALY_BLOCK_SPACE if anomaly_rows else 20))
     pdf.set_text_color(28, 54, 103)
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 22, "Anomalies", ln=1)
     pdf.set_text_color(70, 70, 76)
     pdf.set_font("Helvetica", "", 11)
-    anomaly_copy = (
-        "An anomaly is when travel times are statistically higher than the forecast based on historical data. "
-        "Anomalies may be caused by incidents, inclement weather, or temporary detection failure."
-    )
+    anomaly_copy = "Travel times well above forecast yesterday (incidents, weather, detector issues)."
     _write_full_width(pdf, anomaly_copy, 14)
     pdf.ln(6)
 
     if not anomaly_rows:
         pdf.set_text_color(85, 90, 96)
         pdf.set_font("Helvetica", "I", 11)
-        _write_full_width(pdf, "No anomalies matched the current filters for yesterday.", 16)
+        _write_full_width(
+            pdf,
+            excluded_text.get("anomalies") or "None matched your filters.",
+            16,
+        )
         pdf.ln(6)
     else:
         pdf.set_text_color(70, 70, 76)
@@ -2067,35 +2249,26 @@ def build_monitoring_pdf(
     pdf.cell(0, 22, "Changepoints", ln=1)
     pdf.set_text_color(70, 70, 76)
     pdf.set_font("Helvetica", "", 11)
-    changepoint_blurb = (
-        "A changepoint is when a structural shift occurs in travel time mean or variance, lasting more than a couple days. "
-        "Changepoints may result from timing changes, construction, school starting, catastrophic detection failure, etc."
-    )
+    changepoint_blurb = "Lasting shifts in travel time (timing changes, construction, detection failures)."
     _write_full_width(pdf, changepoint_blurb, 14)
     pdf.ln(8)
 
     _render_changepoint_subsection(
         pdf,
         "New changepoints",
-        (
-            "These changepoints are new, starting about a week ago. Some may still turn out to be temporary; "
-            "those that do are not reported again."
-        ),
+        "Started about a week ago; some may turn out to be temporary.",
         new_rows_list,
-        "No new changepoints matched the current filters.",
+        excluded_text.get("new") or "None matched your filters.",
     )
     pdf.ln(10)
 
     _render_changepoint_subsection(
         pdf,
         "Enduring changepoints",
-        (
-            "An enduring changepoint is a changepoint whose travel time shift was still present three weeks later, "
-            "so it is likely a lasting change (timing change, lane configuration, development) rather than temporary "
-            "construction or an incident. Charts span two weeks before to three weeks after the change."
-        ),
+        "Still present about 3 weeks later; charts show ones not reported before.",
         enduring_rows_list,
-        "No enduring changepoints matched the current filters.",
+        excluded_text.get("enduring") or "None matched your filters.",
+        reported_rows=[] if excluded_text.get("enduring") else list(enduring_reported_rows or []),
     )
 
     output = pdf.output(dest="S")
@@ -2187,69 +2360,149 @@ def _render_anomaly_block(pdf, anomaly: Dict[str, Any], chart_bytes: Optional[by
     pdf.set_y(chart_top + chart_height + 4)
 
 
+def _algorithm_notice_html(notes: Sequence[str]) -> str:
+    """Email call-out for INRIX algorithm changes (shown above everything else)."""
+    if not notes:
+        return ""
+    paragraphs = "".join(
+        f'<p style="margin:0 0 4px 0;">{html.escape(note).replace(chr(0x2013), "&ndash;")}</p>'
+        for note in notes
+    )
+    return (
+        '<div style="margin:0 0 16px 0;padding:10px 14px;background-color:#fff4e5;'
+        'border:1px solid #f5b971;border-left:5px solid #e65100;border-radius:6px;color:#5d2e00;">'
+        '<p style="margin:0 0 4px 0;font-weight:bold;color:#b33c00;">&#9888; INRIX algorithm change</p>'
+        f"{paragraphs}</div>"
+    )
+
+
+def _plural(count: int, singular: str, plural: str) -> str:
+    return f"{count} {singular if count == 1 else plural}"
+
+
+def report_counts_text(
+    *,
+    new_count: int,
+    enduring_count: int,
+    enduring_reported_count: int,
+    anomaly_count: int,
+    excluded_sections: Iterable[str] = (),
+) -> str:
+    """'1 new changepoint, 2 enduring (1 already reported), 3 anomalies; new changepoints omitted'."""
+    excluded = set(excluded_sections or ())
+    parts: List[str] = []
+    if "new" not in excluded:
+        parts.append(_plural(new_count, "new changepoint", "new changepoints"))
+    if "enduring" not in excluded:
+        total = enduring_count + enduring_reported_count
+        enduring_text = f"{total} enduring"
+        if enduring_reported_count:
+            enduring_text += f" ({enduring_reported_count} already reported)"
+        parts.append(enduring_text)
+    if "anomalies" not in excluded:
+        parts.append(_plural(anomaly_count, "anomaly", "anomalies"))
+    text = ", ".join(parts)
+    if excluded:
+        omitted = [
+            algorithm_changes.REPORT_SECTION_LABELS[key]
+            for key in algorithm_changes.REPORT_SECTION_ORDER
+            if key in excluded
+        ]
+        omitted_text = algorithm_changes._join_labels(omitted) + " omitted (INRIX algorithm change)"
+        text = f"{text}; {omitted_text}" if text else omitted_text[:1].upper() + omitted_text[1:]
+    return text
+
+
 def build_email_html(
     filters: Dict[str, Any],
     changepoints: Iterable[Dict[str, Any]],
     *,
     anomalies: Sequence[Dict[str, Any]] = (),
     enduring_changepoints: Iterable[Dict[str, Any]] = (),
+    enduring_reported: Iterable[Dict[str, Any]] = (),
     joke: Optional[Dict[str, Any]] = None,
     report_date: Optional[date] = None,
+    algorithm_notes: Sequence[str] = (),
+    excluded_sections: Iterable[str] = (),
 ) -> str:
-    changepoint_list = list(changepoints)
-    enduring_list = list(enduring_changepoints or [])
-    anomaly_list = list(anomalies or [])
-    changepoint_count = len(changepoint_list)
-    enduring_count = len(enduring_list)
-    anomaly_count = len(anomaly_list)
-    changepoint_plural = "s" if changepoint_count != 1 else ""
-    enduring_plural = "s" if enduring_count != 1 else ""
     resolved_report_date = report_date or _resolve_report_date(filters)
     readable_report_date = _format_report_date(resolved_report_date)
-
-    anomaly_text = f"{anomaly_count} anomal{'y' if anomaly_count == 1 else 'ies'}"
-    changepoint_text = f"{changepoint_count} new changepoint{changepoint_plural}"
-    enduring_text = f"{enduring_count} enduring changepoint{enduring_plural}"
+    counts = report_counts_text(
+        new_count=len(list(changepoints)),
+        enduring_count=len(list(enduring_changepoints or [])),
+        enduring_reported_count=len(list(enduring_reported or [])),
+        anomaly_count=len(list(anomalies or [])),
+        excluded_sections=excluded_sections,
+    )
 
     html_output = f"""
     <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;">
-        <p>Hello,</p>
-        <p>Your monitoring report for <strong>{readable_report_date}</strong> is ready. We observed <strong>{changepoint_text}</strong>, <strong>{enduring_text}</strong>, and <strong>{anomaly_text}</strong> in the watchlist defined by your saved filters.</p>
-        <div style="margin-top:22px;padding:14px 18px;background-color:#f6f9fc;border:1px solid #dbe7fb;border-radius:8px;">
-            <p style="margin:0 0 8px 0;font-weight:bold;color:#1b4079;">Latest Changelog</p>
-            <ul style="margin:0;padding-left:20px;color:#1b1b1b;line-height:1.4;">
-                <li><strong>Nov 24, 2026:</strong> Changepoint alerts now use a stricter check, so you should see fewer false alarms. A new <strong>enduring changepoints</strong> section reports changepoints whose travel time shift is still present three weeks later, which points to a lasting change (timing change, lane configuration, development) rather than temporary construction or an incident.</li>
-                <li><strong>Nov 25, 2025:</strong> Monitoring emails now use the send date for subjects and filenames, matching the PDF header instead of the changepoint window.</li>
-                <li><strong>Dashboard polish:</strong> We fixed several interaction bugs&mdash;please let us know if you notice anything odd.</li>
-                <li><strong>Remove anomalies:</strong> The filter now correctly excludes flagged time periods.</li>
-            </ul>
-        </div>
-        <p style="margin-top:18px;">&mdash; {EMAIL_SENDER_NAME}</p>
+        {_algorithm_notice_html(algorithm_notes)}
+        <p>Your report for <strong>{readable_report_date}</strong> is attached: <strong>{html.escape(counts)}</strong>.</p>
+        <p style="margin-top:16px;">&mdash; {EMAIL_SENDER_NAME}</p>
     </div>
     """
     return html_output
 
 
-def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject_prefix: str = "Monitoring Report") -> Dict[str, Any]:
-    """Fetch monitoring data, generate a PDF, and send it via email."""
-    filters = _parse_filters(raw_filters)
-    start_date_value = str(filters.get("start_date") or "").strip()
-    end_date_value = str(filters.get("end_date") or "").strip()
-    if (
-        start_date_value.lower() in {"", "none", "nat"}
-        or end_date_value.lower() in {"", "none", "nat"}
-    ):
-        start_date, end_date = _default_monitoring_window()
-        filters["start_date"] = start_date
-        filters["end_date"] = end_date
+def build_report(
+    raw_filters: Dict[str, Any],
+    *,
+    report_date: Optional[date] = None,
+) -> Dict[str, Any]:
+    """
+    Fetch monitoring data for report date R and build the PDF and email HTML (no sending).
 
-    changepoint_rows = fetch_monitoring_rows(filters, kind="new")
-    enduring_rows = fetch_monitoring_rows(filters, kind="enduring")
-    anomaly_rows, resolved_threshold = fetch_monitoring_anomaly_rows(filters)
+    Sections: anomalies from R-1, new changepoints from R-9, enduring changepoints from
+    R-22. A section whose day falls inside a detected INRIX algorithm change is left out
+    and a note is added at the top. Returns no_data=True only when every section is
+    empty and none was left out because of an algorithm change.
+    """
+    raw = dict(raw_filters or {})
+    report_date = report_date or _resolve_report_date(raw)
+    # Saved subscriptions carry the window from when they were saved; the report always
+    # covers the days implied by the report date, so reset it (also avoids missing dates).
+    raw["start_date"], raw["end_date"] = _default_monitoring_window(report_date)
+    filters = _parse_filters(raw)
+    filters["report_date"] = report_date
+
+    impact = algorithm_changes.report_impact(report_date)
+    excluded = impact["excluded"]
+    if excluded:
+        print(
+            f"[INFO] Report {report_date.isoformat()}: leaving out {sorted(excluded)} "
+            "because of an INRIX algorithm change"
+        )
+
+    changepoint_rows = [] if "new" in excluded else fetch_monitoring_rows(
+        filters, kind="new", report_date=report_date
+    )
+    enduring_rows = [] if "enduring" in excluded else fetch_monitoring_rows(
+        filters, kind="enduring", report_date=report_date
+    )
+    enduring_reported_rows = [] if "enduring" in excluded else fetch_monitoring_rows(
+        filters, kind="enduring_reported", report_date=report_date
+    )
+    if "anomalies" in excluded:
+        anomaly_rows, resolved_threshold = [], filters["anomaly_monitoring_threshold"]
+    else:
+        anomaly_rows, resolved_threshold = fetch_monitoring_anomaly_rows(filters, report_date=report_date)
     filters["anomaly_monitoring_threshold"] = resolved_threshold
 
-    if not changepoint_rows and not enduring_rows and not anomaly_rows:
-        return {"sent": False, "reason": "no_data", "email": email}
+    result: Dict[str, Any] = {
+        "report_date": report_date,
+        "no_data": False,
+        "changepoints": len(changepoint_rows),
+        "enduring_changepoints": len(enduring_rows),
+        "enduring_reported": len(enduring_reported_rows),
+        "anomalies": len(anomaly_rows),
+        "excluded_sections": [key for key in algorithm_changes.REPORT_SECTION_ORDER if key in excluded],
+        "algorithm_notes": list(impact["notes"]),
+    }
+    has_rows = changepoint_rows or enduring_rows or enduring_reported_rows or anomaly_rows
+    if not has_rows and not excluded:
+        result["no_data"] = True
+        return result
 
     enriched_rows = enrich_monitoring_rows(
         changepoint_rows,
@@ -2261,25 +2514,59 @@ def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject
         days_before=ENDURING_CHANGEPOINT_DAYS_BEFORE,
         days_after=ENDURING_CHANGEPOINT_DAYS_AFTER,
     )
-    report_date = _resolve_report_date(filters)
-    report_date_iso = report_date.isoformat()
+    # The PDF uses a core (latin-1) font, so its notes use plain hyphens; the email gets en dashes.
+    pdf_impact = algorithm_changes.report_impact(report_date, impact["events"], dash="-")
     joke = joke_service.prepare_joke(report_date)
-    pdf_bytes = build_monitoring_pdf(
+    result["pdf_bytes"] = build_monitoring_pdf(
         filters,
         enriched_rows,
         anomalies=anomaly_rows,
         enduring_rows=enriched_enduring_rows,
+        enduring_reported_rows=enduring_reported_rows,
         joke=joke,
         report_date=report_date,
+        algorithm_notes=pdf_impact["notes"],
+        excluded_text=pdf_impact["excluded_text"],
     )
-    html_content = build_email_html(
+    result["html"] = build_email_html(
         filters,
         enriched_rows,
         anomalies=anomaly_rows,
         enduring_changepoints=enriched_enduring_rows,
+        enduring_reported=enduring_reported_rows,
         report_date=report_date,
+        algorithm_notes=impact["notes"],
+        excluded_sections=result["excluded_sections"],
     )
+    result["changepoints"] = len(enriched_rows)
+    result["enduring_changepoints"] = len(enriched_enduring_rows)
+    return result
+
+
+def generate_and_send_report(
+    email: str,
+    raw_filters: Dict[str, Any],
+    *,
+    subject_prefix: str = "Monitoring Report",
+    report_date: Optional[date] = None,
+) -> Dict[str, Any]:
+    """Fetch monitoring data, generate a PDF, and send it via email."""
+    report = build_report(raw_filters, report_date=report_date)
+    if report["no_data"]:
+        return {"sent": False, "reason": "no_data", "email": email}
+
+    report_date_iso = report["report_date"].isoformat()
+    pdf_bytes = report["pdf_bytes"]
+    html_content = report["html"]
     subject = f"{subject_prefix} - {report_date_iso}"
+    counts = {
+        "rows": report["changepoints"],
+        "changepoints": report["changepoints"],
+        "enduring_changepoints": report["enduring_changepoints"],
+        "enduring_reported": report["enduring_reported"],
+        "anomalies": report["anomalies"],
+        "excluded_sections": report["excluded_sections"],
+    }
 
     if DEBUG_SAVE_REPORT_PDF:
         debug_dir = Path(BASE_DIR) / "debug_reports"
@@ -2293,10 +2580,7 @@ def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject
             "sent": False,
             "reason": "debug_saved",
             "email": email,
-            "rows": len(enriched_rows),
-            "changepoints": len(enriched_rows),
-            "enduring_changepoints": len(enriched_enduring_rows),
-            "anomalies": len(anomaly_rows),
+            **counts,
             "debug_saved_path": str(output_path),
         }
 
@@ -2307,14 +2591,8 @@ def generate_and_send_report(email: str, raw_filters: Dict[str, Any], *, subject
         attachments=[(f"monitoring-report-{report_date_iso}.pdf", pdf_bytes)],
     )
 
-    return {
-        "sent": True,
-        "email": email,
-        "rows": len(enriched_rows),
-        "changepoints": len(enriched_rows),
-        "enduring_changepoints": len(enriched_enduring_rows),
-        "anomalies": len(anomaly_rows),
-    }
+    return {"sent": True, "email": email, **counts}
+
 
 def run_daily_dispatch() -> List[Dict[str, Any]]:
     """
@@ -2328,18 +2606,20 @@ def run_daily_dispatch() -> List[Dict[str, Any]]:
         email = subscription["email"]
         base_filters = subscription["settings"]
         filters = dict(base_filters) if isinstance(base_filters, dict) else {}
-        start_date, end_date = _default_monitoring_window()
+        report_date = _resolve_report_date(filters)
+        start_date, end_date = _default_monitoring_window(report_date)
         filters["start_date"] = start_date
         filters["end_date"] = end_date
         if "selected_signals" not in filters and filters.get("signal_ids"):
             filters["selected_signals"] = filters["signal_ids"]
-        report_date = _resolve_report_date(filters)
         dispatch_id = subscription_store.claim_daily_dispatch(email, report_date)
         if dispatch_id is None:
             results.append({"sent": False, "email": email, "reason": "duplicate_dispatch"})
             continue
         try:
-            result = generate_and_send_report(email, filters, subject_prefix="Daily Monitoring Report")
+            result = generate_and_send_report(
+                email, filters, subject_prefix="Daily Monitoring Report", report_date=report_date
+            )
         except Exception as exc:  # pragma: no cover - defensive logging
             subscription_store.finalize_daily_dispatch(dispatch_id, "failed", error=str(exc))
             results.append({"sent": False, "email": email, "error": str(exc)})

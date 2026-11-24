@@ -1,6 +1,6 @@
 """Changepoint lifecycle: temporary changepoints hidden, enduring filter, report sections."""
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -142,9 +142,11 @@ def _patch_report_session(monkeypatch, rows=None):
 
 def test_fetch_new_changepoints_query(monkeypatch):
     session = _patch_report_session(monkeypatch, [_report_row()])
-    rows = report_service.fetch_monitoring_rows(DATES, kind='new')
+    rows = report_service.fetch_monitoring_rows(DATES, kind='new', report_date=date(2026, 11, 24))
     query = session.queries[-1]
-    assert "DATEADD(day, -9, DATE_TRUNC('day', CURRENT_TIMESTAMP()))" in query
+    assert "t.TIMESTAMP >= '2026-11-15'" in query
+    assert "t.TIMESTAMP < '2026-11-16'" in query
+    assert 'CURRENT_TIMESTAMP' not in query
     assert 'COALESCE(t.IS_CHANGEPOINT, TRUE)' in query
     assert 'COALESCE(t.IS_ENDURING, TRUE)' in query
     assert 'LIMIT 10' in query
@@ -155,11 +157,13 @@ def test_fetch_new_changepoints_query(monkeypatch):
 
 def test_fetch_enduring_changepoints_query(monkeypatch):
     session = _patch_report_session(monkeypatch, [_report_row(IS_CHANGEPOINT=False, IS_ENDURING=True, ENDURING_TT=61.0)])
-    rows = report_service.fetch_monitoring_rows(DATES, kind='enduring')
+    rows = report_service.fetch_monitoring_rows(DATES, kind='enduring', report_date=date(2026, 11, 24))
     query = session.queries[-1]
     assert 't.IS_ENDURING = TRUE' in query
-    assert "DATEADD(day, -22, DATE_TRUNC('day', CURRENT_TIMESTAMP()))" in query
-    # Enduring rows without a stage-1 alert must still be reported
+    assert "t.TIMESTAMP >= '2026-11-02'" in query
+    assert "t.TIMESTAMP < '2026-11-03'" in query
+    # Only enduring changepoints that were not alerted earlier (each change reported once)
+    assert 't.IS_CHANGEPOINT = FALSE' in query
     assert 'IS_CHANGEPOINT, TRUE' not in query
     assert rows[0]['kind'] == 'enduring'
     assert rows[0]['enduring_tt'] == 61.0
@@ -171,17 +175,22 @@ def test_fetch_monitoring_rows_rejects_unknown_kind(monkeypatch):
         report_service.fetch_monitoring_rows(DATES, kind='temporary')
 
 
-def _patch_report_pipeline(monkeypatch, *, new_rows, enduring_rows, anomaly_rows):
+def _patch_report_pipeline(monkeypatch, *, new_rows, enduring_rows, anomaly_rows, reported_rows=()):
     sent = {}
 
-    def fake_fetch(filters, limit=10, *, kind='new'):
-        return list(new_rows if kind == 'new' else enduring_rows)
+    def fake_fetch(filters, limit=10, *, kind='new', report_date=None):
+        sent.setdefault('fetched', []).append((kind, report_date))
+        return list({'new': new_rows, 'enduring': enduring_rows, 'enduring_reported': reported_rows}[kind])
 
     def fake_send(email, subject, html, attachments=None):
         sent.update(email=email, subject=subject, html=html, attachments=attachments)
 
     monkeypatch.setattr(report_service, 'fetch_monitoring_rows', fake_fetch)
-    monkeypatch.setattr(report_service, 'fetch_monitoring_anomaly_rows', lambda filters: (list(anomaly_rows), 4.0))
+    monkeypatch.setattr(
+        report_service, 'fetch_monitoring_anomaly_rows', lambda filters, report_date=None: (list(anomaly_rows), 4.0)
+    )
+    # No algorithm changes unless a test sets some (never touch Snowflake)
+    monkeypatch.setattr(report_service.algorithm_changes, 'fetch_algorithm_changes', lambda *a, **kw: [])
     monkeypatch.setattr(report_service, 'enrich_monitoring_rows', lambda rows, **kw: [dict(r, window=kw) for r in rows])
     monkeypatch.setattr(report_service, 'build_monitoring_pdf', lambda *a, **kw: b'%PDF-fake')
     monkeypatch.setattr(report_service.joke_service, 'prepare_joke', lambda report_date: None)
@@ -198,21 +207,21 @@ def test_report_with_only_enduring_changepoints_is_sent(monkeypatch):
         anomaly_rows=[],
     )
     result = report_service.generate_and_send_report('someone@example.gov', DATES)
+    sent.pop('fetched')
     assert result['sent'] is True
     assert result['changepoints'] == 0
     assert result['rows'] == 0
     assert result['enduring_changepoints'] == 1
     assert result['anomalies'] == 0
-    assert '0 new changepoints' in sent['html']
-    assert '1 enduring changepoint<' in sent['html']
-    assert 'Nov 24, 2026' in sent['html']
+    assert '0 new changepoints, 1 enduring, 0 anomalies' in sent['html']
+    assert 'Changelog' not in sent['html']
 
 
 def test_report_without_any_rows_is_not_sent(monkeypatch):
     sent = _patch_report_pipeline(monkeypatch, new_rows=[], enduring_rows=[], anomaly_rows=[])
     result = report_service.generate_and_send_report('someone@example.gov', DATES)
     assert result == {'sent': False, 'reason': 'no_data', 'email': 'someone@example.gov'}
-    assert sent == {}
+    assert 'html' not in sent
 
 
 def test_enduring_rows_use_longer_chart_window(monkeypatch):

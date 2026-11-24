@@ -127,6 +127,18 @@
       </v-card-text>
     </v-card>
     <div class="report-surface">
+      <v-alert
+        v-if="algorithmNotes.length > 0"
+        type="warning"
+        variant="tonal"
+        prominent
+        icon="mdi-alert-outline"
+        class="algorithm-change-alert"
+        data-testid="monitoring-algorithm-change"
+      >
+        <div class="font-weight-bold mb-1">INRIX algorithm change</div>
+        <p v-for="(note, index) in algorithmNotes" :key="index" class="mb-1">{{ note }}</p>
+      </v-alert>
       <v-card class="mb-3 summary-card">
         <v-card-title class="py-2 d-flex align-center flex-wrap">
           <div class="d-flex align-center">
@@ -139,7 +151,7 @@
           </span>
         </v-card-title>
         <v-card-subtitle class="py-0">
-          New changepoints detected on {{ monitoringDateLabel }} and enduring changepoints confirmed for {{ enduringDateLabel }}. These filters mirror what will be emailed the next time you update your subscription.
+          Preview of today's emailed report with these filters.
         </v-card-subtitle>
         <v-card-text class="pt-3 pb-4">
           <div class="summary-row">
@@ -175,11 +187,11 @@
           <div class="section-header">
             <div class="section-title">Yesterday&apos;s Anomalies</div>
             <div class="section-subtitle">
-              Monitoring score >= {{ anomalyThresholdLabel }}. The score multiplies how often an anomaly fired yesterday by how large the travel-time gap was, so higher values point to the biggest sustained problems. Adjust the score in the filters to widen or narrow this list. Data captured on {{ anomalyTargetLabel }}.
+              Travel times well above forecast on {{ anomalyTargetLabel }} (score >= {{ anomalyThresholdLabel }}).
             </div>
           </div>
           <div v-if="anomalyCards.length === 0" class="empty-state text-medium-emphasis">
-            No anomalies matched the selected filters for yesterday.
+            {{ excludedText.anomalies || 'None matched your filters.' }}
           </div>
           <div v-else class="monitoring-grid anomaly-grid">
             <v-card
@@ -224,10 +236,10 @@
               {{ group.subtitle }}
             </div>
           </div>
-          <div v-if="group.items.length === 0" class="empty-state text-medium-emphasis">
+          <div v-if="group.items.length === 0 && group.reported.length === 0" class="empty-state text-medium-emphasis">
             {{ group.emptyText }}
           </div>
-          <div v-else class="monitoring-grid">
+          <div v-else-if="group.items.length > 0" class="monitoring-grid">
             <v-card
               v-for="item in group.items"
               :key="item.key"
@@ -303,6 +315,31 @@
               </v-card-text>
             </v-card>
           </div>
+          <div v-if="group.reported.length > 0" class="reported-table" data-testid="enduring-reported-table">
+            <div class="chart-heading mb-2">Already reported, still present</div>
+            <v-table density="compact">
+              <thead>
+                <tr>
+                  <th>Road</th>
+                  <th>XD</th>
+                  <th>Signals</th>
+                  <th>Changed</th>
+                  <th>Before &rarr; After &rarr; Wk 2-3</th>
+                  <th class="text-right">Change</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in group.reported" :key="row.key">
+                  <td>{{ row.road }}</td>
+                  <td><code>{{ row.xd }}</code></td>
+                  <td>{{ row.signals }}</td>
+                  <td>{{ row.date }}</td>
+                  <td>{{ row.travelTimes }}</td>
+                  <td class="text-right" :class="row.pctChange > 0 ? 'text-error' : 'text-success'">{{ formatPercent(row.pctChange) }}</td>
+                </tr>
+              </tbody>
+            </v-table>
+          </div>
         </section>
       </div>
     </div>
@@ -323,7 +360,12 @@ import {
   buildChangepointTimeOfDaySeries,
   normalizeChangepointDetailRow
 } from '@/utils/changepointSeries'
-import { getMonitoringDateStrings, getEnduringMonitoringDateStrings } from '@/utils/monitoringDate'
+import {
+  formatDateRangeLabel,
+  getEnduringMonitoringDateStrings,
+  getMonitoringDateStrings,
+  getMonitoringReportDateString
+} from '@/utils/monitoringDate'
 
 // Chart windows (days before/after the change). Enduring changepoints use a longer
 // span so the persistence of the shift is visible (mirrors the emailed report).
@@ -350,6 +392,7 @@ const showReportSpinner = useDelayedBoolean(loading)
 const error = ref(null)
 const charts = ref([])
 const enduringCharts = ref([])
+const enduringReported = ref([]) // enduring changepoints already reported as new (table, no charts)
 const anomalyCards = ref([])
   const anomalyMetadata = ref({
     targetDate: null,
@@ -359,10 +402,18 @@ const anomalyCards = ref([])
   const lastUpdated = ref(null)
   let requestId = 0
 
+// Same windows as the emailed report for report date R (today): anomalies R-1,
+// new changepoints R-9, enduring changepoints R-22 (single days).
+const reportDateString = computed(() => getMonitoringReportDateString())
 const monitoringDateStrings = computed(() => getMonitoringDateStrings())
-  const monitoringDateLabel = computed(() => `${monitoringDateStrings.value.start} to ${monitoringDateStrings.value.end}`)
+  const monitoringDateLabel = computed(() => formatDateRangeLabel(monitoringDateStrings.value))
   const enduringDateStrings = computed(() => getEnduringMonitoringDateStrings())
-  const enduringDateLabel = computed(() => `${enduringDateStrings.value.start} to ${enduringDateStrings.value.end}`)
+  const enduringDateLabel = computed(() => formatDateRangeLabel(enduringDateStrings.value))
+// Sections left out because their day falls inside an INRIX algorithm change (from the API,
+// so the wording and rules match the PDF/email exactly)
+const algorithmImpact = ref({ notes: [], excluded_sections: [], excluded_text: {} })
+const algorithmNotes = computed(() => algorithmImpact.value?.notes ?? [])
+const excludedText = computed(() => algorithmImpact.value?.excluded_text ?? {})
   const lastUpdatedLabel = computed(() => lastUpdated.value ? lastUpdated.value.toLocaleString() : '')
   const anomalyThreshold = computed(() => {
     const metadataValue = Number(anomalyMetadata.value?.threshold)
@@ -394,15 +445,17 @@ const changepointGroups = computed(() => [
   {
     key: 'new',
     title: 'New Changepoints',
-    subtitle: `Detected on ${monitoringDateLabel.value} with changepoint severity >= ${changepointSeverityLabel.value}. A changepoint is a structural shift in travel time lasting more than a couple days. These are new and may still turn out to be temporary; those that do are not reported again. Severity multiplies the percent change by the travel-time delta (seconds) and scales by 100, so higher scores surface bigger, longer-lasting shifts. Filters apply to signals, maintained by, approach, and geometry selections.`,
-    emptyText: `No new changepoints matched the selected filters for ${monitoringDateLabel.value}.`,
+    subtitle: `Started ${monitoringDateLabel.value} (severity >= ${changepointSeverityLabel.value}); some may turn out to be temporary.`,
+    emptyText: excludedText.value.new || 'None matched your filters.',
+    reported: [],
     items: charts.value
   },
   {
     key: 'enduring',
     title: 'Enduring Changepoints',
-    subtitle: `Changepoints from ${enduringDateLabel.value} with severity >= ${changepointSeverityLabel.value} whose travel time shift was still present three weeks later, so they are likely lasting changes (timing change, lane configuration, development) rather than temporary construction or an incident. Charts span two weeks before to three weeks after the change.`,
-    emptyText: `No enduring changepoints matched the selected filters for ${enduringDateLabel.value}.`,
+    subtitle: `Started ${enduringDateLabel.value}, still present ~3 weeks later; charts show ones not reported before.`,
+    emptyText: excludedText.value.enduring || 'None matched your filters.',
+    reported: enduringReported.value,
     items: enduringCharts.value
   }
 ])
@@ -589,18 +642,36 @@ async function loadReport() {
   anomalyCards.value = []
 
   try {
+    let impact = { notes: [], excluded_sections: [], excluded_text: {} }
+    try {
+      impact = await ApiService.getAlgorithmChangeReportImpact(reportDateString.value) ?? impact
+    } catch (impactErr) {
+      console.warn('Algorithm change check unavailable for monitoring view:', impactErr)
+    }
+    if (currentRequest !== requestId) {
+      return
+    }
+    algorithmImpact.value = impact
+    const excluded = new Set(impact?.excluded_sections ?? [])
+    const emptyTable = { numRows: 0, schema: { fields: [] }, getChild: () => null }
+
     const params = buildRequestParams()
     const newParams = { ...params, changepoint_type: 'new' }
     const enduringParams = {
       ...params,
       start_date: enduringDateStrings.value.start,
       end_date: enduringDateStrings.value.end,
-      changepoint_type: 'enduring'
+      // Only enduring changepoints that were not alerted earlier (matches the emailed report)
+      changepoint_type: 'enduring_unreported'
     }
-    const [anomalyResult, changepointResult, enduringResult] = await Promise.allSettled([
-      ApiService.getMonitoringAnomalies(params),
-      ApiService.getChangepointTable(newParams),
-      ApiService.getChangepointTable(enduringParams)
+    const reportedParams = { ...enduringParams, changepoint_type: 'enduring_reported' }
+    const [anomalyResult, changepointResult, enduringResult, reportedResult] = await Promise.allSettled([
+      excluded.has('anomalies')
+        ? Promise.resolve({ anomalies: [], target_date: null, threshold: params.anomaly_monitoring_threshold })
+        : ApiService.getMonitoringAnomalies({ ...params, report_date: reportDateString.value }),
+      excluded.has('new') ? Promise.resolve(emptyTable) : ApiService.getChangepointTable(newParams),
+      excluded.has('enduring') ? Promise.resolve(emptyTable) : ApiService.getChangepointTable(enduringParams),
+      excluded.has('enduring') ? Promise.resolve(emptyTable) : ApiService.getChangepointTable(reportedParams)
     ])
 
     if (currentRequest !== requestId) {
@@ -645,6 +716,13 @@ async function loadReport() {
       console.error('Failed to load enduring changepoints for monitoring view:', enduringResult.reason)
     }
 
+    let reportedRows = []
+    if (reportedResult.status === 'fulfilled') {
+      reportedRows = ApiService.arrowTableToObjects(reportedResult.value)
+    } else {
+      console.error('Failed to load reported enduring changepoints for monitoring view:', reportedResult.reason)
+    }
+
     const newRows = ApiService.arrowTableToObjects(changepointResult.value)
     const [nextCharts, nextEnduringCharts] = await Promise.all([
       buildChangepointCards(newRows.slice(0, 10), NEW_DETAIL_WINDOW),
@@ -656,6 +734,7 @@ async function loadReport() {
     }
 
     enduringCharts.value = nextEnduringCharts
+    enduringReported.value = reportedRows.slice(0, 10).map(normalizeReportedRow)
     charts.value = nextCharts
     lastUpdated.value = new Date()
   } catch (err) {
@@ -666,6 +745,7 @@ async function loadReport() {
     error.value = err instanceof Error ? err.message : String(err)
     charts.value = []
     enduringCharts.value = []
+    enduringReported.value = []
   } finally {
     if (currentRequest === requestId) {
       loading.value = false
@@ -773,6 +853,22 @@ function normalizeTableRow(row) {
   }
 }
 
+function normalizeReportedRow(row) {
+  const meta = normalizeTableRow(row)
+  const travelTimes = [row.BEFORE_TT, row.AFTER_TT, row.ENDURING_TT]
+    .map(value => (value === null || value === undefined || !Number.isFinite(Number(value)) ? '--' : Number(value).toFixed(0)))
+    .join(' → ')
+  return {
+    key: `${meta.xd}-${meta.timestamp}`,
+    road: meta.bearing ? `${meta.roadName || 'Unknown road'} (${meta.bearing})` : (meta.roadName || 'Unknown road'),
+    xd: meta.xd,
+    signals: meta.associatedSignals || '--',
+    date: meta.timestamp ? new Date(meta.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '--',
+    travelTimes: `${travelTimes} s`,
+    pctChange: meta.pctChange
+  }
+}
+
 function formatTimestamp(value) {
   if (!value) {
     return '--'
@@ -832,6 +928,17 @@ function formatSeconds(value) {
 .toolbar {
   display: flex;
   justify-content: flex-end;
+}
+
+.reported-table {
+  border-radius: 12px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+
+.algorithm-change-alert p:last-child {
+  margin-bottom: 0 !important;
 }
 
 .report-surface {

@@ -41,8 +41,10 @@ Periodically update CLAUDE.md as needed to keep it accurate and up to date with 
   - `api_travel_time.py` - Travel time data endpoints (summary, aggregated, time-of-day) with remove_anomalies filter support
   - `api_anomalies.py` - Anomaly analysis endpoints
   - `api_before_after.py` - Before/after comparison endpoints using CTE-based queries
-  - `api_changepoints.py` - Changepoints page endpoints (map signals/XD, table, detail); `changepoint_type` param = `all` | `enduring` | `new`; detail accepts `days_before`/`days_after` (default 7)
-- **Monitoring report**: `services/report_service.py` builds the daily PDF/email (anomalies, new changepoints, enduring changepoints)
+  - `api_changepoints.py` - Changepoints page endpoints (map signals/XD, table, detail); `changepoint_type` param = `all` | `enduring` | `new` | `enduring_unreported` / `enduring_reported` (Monitoring preview); detail accepts `days_before`/`days_after` (default 7)
+  - `api_algorithm_changes.py` - `GET /api/algorithm-changes?start_date=&end_date=` (INRIX algorithm change events, JSON) and `GET /api/algorithm-changes/report-impact?report_date=` (report sections left out + note text)
+- **Monitoring report**: `services/report_service.py` `build_report(filters, report_date=)` builds the PDF/email (no sending); `generate_and_send_report` wraps it. Sections for report date R: anomalies R-1, new changepoints R-9, enduring R-22 (single days, literal dates)
+- **Algorithm changes**: `services/algorithm_changes.py` detects INRIX algorithm changes from `CHANGEPOINTS` (no separate table; cached 1 h): a day with changepoints on 80+ segments within one hour is an event, adjacent days with 25+ join its span (known INRIX changes peak 113-284; other days <= 53). A report section whose day is inside an event span is left out with a note at the top of the PDF/email/Monitoring page. Frontend: `AlgorithmChangeNotice.vue` (shown on date-range pages), `stores/algorithmChanges.js`, `utils/algorithmChanges.js` (overlap logic, chart markLine), "Algorithm change" chip on the Changepoints table
 - **Data format**: All API responses return Apache Arrow IPC streams (`application/octet-stream`) for efficient data transfer
 
 ### Frontend (Vue.js 3 + Vuetify)
@@ -76,7 +78,7 @@ Periodically update CLAUDE.md as needed to keep it accurate and up to date with 
 5. **Responsive layout**: CSS Grid with flexbox for dynamic height management; Travel Time and Anomalies use no scrolling, Before/After allows scrolling
 6. **Before/After comparison**: CTE-based SQL queries calculate TTI for before and after periods separately, then join/union results with PERIOD column
 7. **Remove anomalies filter**: Available on Travel Time and Before/After pages, adds `WHERE ANOMALY = FALSE` to backend queries
-8. **Changepoint lifecycle**: `CHANGEPOINTS.IS_CHANGEPOINT` = stage-1 alert (~8 days after), `IS_ENDURING` NULL/TRUE/FALSE = unchecked/still shifted 21 days later/temporary. Every CHANGEPOINTS query must include `COALESCE(t.IS_ENDURING, TRUE)` so temporary ones stay hidden (legacy rows have NULLs). Report: new = `TIMESTAMP >= today-9` + `COALESCE(IS_CHANGEPOINT, TRUE)`; enduring = `IS_ENDURING` + `TIMESTAMP >= today-22`, charted 14 days before to 21 days after
+8. **Changepoint lifecycle**: `CHANGEPOINTS.IS_CHANGEPOINT` = stage-1 alert (~8 days after), `IS_ENDURING` NULL/TRUE/FALSE = unchecked/still shifted 21 days later/temporary. Every CHANGEPOINTS query must include `COALESCE(t.IS_ENDURING, TRUE)` so temporary ones stay hidden (legacy rows have NULLs). Report: new = day R-9 + `COALESCE(IS_CHANGEPOINT, TRUE)`; enduring = day R-22 + `IS_ENDURING = TRUE`: charts (14 days before to 21 after) for `IS_CHANGEPOINT = FALSE` (not alerted earlier), plus a compact table (top 10, no charts) of ones already alerted. The Changepoints page Type filter (`enduring`) still shows enduring status on all rows
 9. **Color scales**: Shared color scheme (green→yellow→orange→red) with different mappings: TTI (1.0-3.0), Anomaly % (0-10%), Before/After difference (-0.25 to +0.25)
 
 ### Chart Styling Standards

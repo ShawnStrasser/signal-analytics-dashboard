@@ -411,6 +411,16 @@ class ApiService {
     return this.fetchJson('/monitoring-anomalies', filters, { method: 'POST' })
   }
 
+  // INRIX algorithm changes (all events when no range is given)
+  async getAlgorithmChanges(params = {}) {
+    return this.fetchJson('/algorithm-changes', params, { retries: 1 })
+  }
+
+  // Monitoring report sections left out for a report date because of an algorithm change
+  async getAlgorithmChangeReportImpact(reportDate) {
+    return this.fetchJson('/algorithm-changes/report-impact', reportDate ? { report_date: reportDate } : {}, { retries: 1 })
+  }
+
   getConfig() {
     // Memoized: several pages and the filters store all need the same static config
     if (!this._configPromise) {

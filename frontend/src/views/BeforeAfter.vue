@@ -26,6 +26,8 @@
       </v-card-title>
     </v-card>
 
+    <AlgorithmChangeNotice class="mb-3" :ranges="algorithmChangeRanges" />
+
     <!-- Main Content Area (Scrollable) -->
     <div class="content-scrollable">
       <!-- Map Section -->
@@ -161,6 +163,7 @@
 </template>
 
 <script setup>
+import AlgorithmChangeNotice from '@/components/AlgorithmChangeNotice.vue'
 import { ref, shallowRef, watch, onMounted, computed } from 'vue'
 import { useFiltersStore } from '@/stores/filters'
 import { useBeforeAfterFiltersStore } from '@/stores/beforeAfterFilters'
@@ -177,6 +180,17 @@ import { useMapFilterReloads } from '@/utils/useMapFilterReloads'
 
 const filtersStore = useFiltersStore()
 const beforeAfterFiltersStore = useBeforeAfterFiltersStore()
+// Warn when the before/after comparison includes or spans a detected INRIX algorithm change
+// (an event in the gap between the two periods also makes them not directly comparable).
+const algorithmChangeRanges = computed(() => {
+  const dates = [
+    beforeAfterFiltersStore.beforeStartDate,
+    beforeAfterFiltersStore.beforeEndDate,
+    beforeAfterFiltersStore.afterStartDate,
+    beforeAfterFiltersStore.afterEndDate
+  ].filter(Boolean).sort()
+  return dates.length ? [{ start: dates[0], end: dates[dates.length - 1] }] : []
+})
 const selectionStore = useSelectionStore()
 const signalDimensionsStore = useSignalDimensionsStore()
 const xdDimensionsStore = useXdDimensionsStore()

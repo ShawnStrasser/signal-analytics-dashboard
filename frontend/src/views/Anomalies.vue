@@ -26,6 +26,8 @@
       </v-card-title>
     </v-card>
 
+    <AlgorithmChangeNotice class="mb-3" :ranges="algorithmChangeRanges" />
+
     <!-- Main Content Area with Dynamic Height -->
     <div class="content-grid">
       <!-- Map Section -->
@@ -145,6 +147,7 @@
 </template>
 
 <script setup>
+import AlgorithmChangeNotice from '@/components/AlgorithmChangeNotice.vue'
 import { ref, shallowRef, computed, watch, onMounted, onActivated, onDeactivated } from 'vue'
 import { useFiltersStore } from '@/stores/filters'
 import { useSelectionStore } from '@/stores/selection'
@@ -158,6 +161,8 @@ import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
 import { useMapFilterReloads } from '@/utils/useMapFilterReloads'
 
 const filtersStore = useFiltersStore()
+// Warn when the selected dates include a detected INRIX algorithm change
+const algorithmChangeRanges = computed(() => [{ start: filtersStore.startDate, end: filtersStore.endDate }])
 const selectionStore = useSelectionStore()
 const signalDimensionsStore = useSignalDimensionsStore()
 const xdDimensionsStore = useXdDimensionsStore()

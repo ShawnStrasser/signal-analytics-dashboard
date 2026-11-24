@@ -67,8 +67,13 @@ _NOT_TEMPORARY_SQL = "COALESCE(t.IS_ENDURING, TRUE)"
 _CHANGEPOINT_TYPE_SQL = {
     'all': None,
     'enduring': "t.IS_ENDURING = TRUE",
-    # Rows that issued a stage-1 changepoint alert (used by the Monitoring preview).
+    # Rows that issued a stage-1 changepoint alert (Monitoring preview "new" section).
     'new': "COALESCE(t.IS_CHANGEPOINT, TRUE)",
+    # Enduring changepoints that were not alerted earlier (Monitoring preview "enduring"
+    # section; mirrors the emailed report so each change is reported once).
+    'enduring_unreported': "t.IS_ENDURING = TRUE AND t.IS_CHANGEPOINT = FALSE",
+    # Enduring changepoints that were already alerted (Monitoring preview table)
+    'enduring_reported': "t.IS_ENDURING = TRUE AND COALESCE(t.IS_CHANGEPOINT, TRUE)",
 }
 
 _DETAIL_DEFAULT_DAYS = 7
@@ -553,6 +558,10 @@ def get_changepoints_table():
     }
     sort_column = sort_column_map.get(sort_by, 't.TIMESTAMP')
     sort_direction = 'ASC' if sort_dir == 'asc' else 'DESC'
+    order_by = f"{sort_column} {sort_direction}"
+    if sort_column == 'SCORE':
+        # Same tie-breakers as the emailed report so the Monitoring preview picks the same top rows
+        order_by += ", ABS(t.PCT_CHANGE) DESC, t.TIMESTAMP DESC"
 
     query = f"""
     SELECT
@@ -564,6 +573,9 @@ def get_changepoints_table():
         t.AVG_AFTER,
         {_CHANGEPOINT_SEVERITY_SQL} AS SCORE,
         t.IS_ENDURING,
+        t.BEFORE_TT,
+        t.AFTER_TT,
+        t.ENDURING_TT,
         xd.ROADNAME,
         xd.BEARING,
         LISTAGG(DISTINCT xd.ID, ', ') WITHIN GROUP (ORDER BY xd.ID) AS ASSOCIATED_SIGNALS
@@ -578,7 +590,7 @@ def get_changepoints_table():
     ) xd ON t.XD = xd.XD
     WHERE {where_clause}
     GROUP BY ALL
-    ORDER BY {sort_column} {sort_direction}
+    ORDER BY {order_by}
     LIMIT 100
     """
 

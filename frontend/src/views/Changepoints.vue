@@ -25,6 +25,8 @@
       </v-card-title>
     </v-card>
 
+    <AlgorithmChangeNotice class="mb-3" :ranges="algorithmChangeRanges" />
+
     <div class="content-grid">
       <v-card class="map-card">
         <v-card-title class="py-2 d-flex align-center flex-wrap">
@@ -134,6 +136,25 @@
                 Enduring
               </v-chip>
               <span v-else>Changepoint</span>
+              <v-tooltip
+                v-if="algorithmChangeFor(item)"
+                location="top"
+                max-width="300"
+                :text="algorithmChangeTooltip(item)"
+              >
+                <template #activator="{ props: tooltipProps }">
+                  <v-chip
+                    v-bind="tooltipProps"
+                    size="x-small"
+                    color="warning"
+                    variant="tonal"
+                    prepend-icon="mdi-alert-outline"
+                    class="ml-1"
+                  >
+                    Algorithm change
+                  </v-chip>
+                </template>
+              </v-tooltip>
             </template>
             <template #item.pct_change="{ item }">
               {{ formatPercent(item.pct_change) }}
@@ -233,6 +254,7 @@
 </template>
 
 <script setup>
+import AlgorithmChangeNotice from '@/components/AlgorithmChangeNotice.vue'
 import { ref, computed, watch, onMounted, onActivated, onDeactivated, nextTick } from 'vue'
 import SharedMap from '@/components/SharedMap.vue'
 import ChangepointDetailChart from '@/components/ChangepointDetailChart.vue'
@@ -243,6 +265,8 @@ import { useSelectionStore } from '@/stores/selection'
 import { useSignalDimensionsStore } from '@/stores/signalDimensions'
 import { useXdDimensionsStore } from '@/stores/xdDimensions'
 import { useThemeStore } from '@/stores/theme'
+import { useAlgorithmChangesStore } from '@/stores/algorithmChanges'
+import { describeEvent, eventForDay, localDateKey } from '@/utils/algorithmChanges'
 import { changepointColorScale } from '@/utils/colorScale'
 import { useDelayedBoolean } from '@/utils/useDelayedBoolean'
 import {
@@ -253,6 +277,22 @@ import {
 import { useMapFilterReloads } from '@/utils/useMapFilterReloads'
 
 const filtersStore = useFiltersStore()
+const algorithmChangesStore = useAlgorithmChangesStore()
+
+// Changepoints on a day inside a detected INRIX algorithm change are likely caused by it
+function algorithmChangeFor(item) {
+  return eventForDay(algorithmChangesStore.events, localDateKey(item?.timestamp))
+}
+
+function algorithmChangeTooltip(item) {
+  const event = algorithmChangeFor(item)
+  return event
+    ? `${describeEvent(event)} This changepoint may be caused by it.`
+    : ''
+}
+
+// Warn when the selected dates include a detected INRIX algorithm change
+const algorithmChangeRanges = computed(() => [{ start: filtersStore.changepointStartDate, end: filtersStore.changepointEndDate }])
 const selectionStore = useSelectionStore()
 const signalDimensionsStore = useSignalDimensionsStore()
 const xdDimensionsStore = useXdDimensionsStore()
