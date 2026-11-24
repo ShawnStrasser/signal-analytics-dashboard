@@ -71,6 +71,15 @@ describe('chartTime utilities', () => {
     expect(formatDateTimeAxisLabel(new Date(2026, 3, 14, 10, 15, 0).getTime(), { displayStepMinutes: 60, anchorTimestamp: new Date(2026, 3, 14, 10, 0, 0).getTime() })).toBe('')
   })
 
+  it('keeps daily labels on local midnight across a daylight saving change', () => {
+    const anchor = new Date(2026, 9, 19, 0, 0, 0).getTime()
+    const options = { displayStepMinutes: 2880, anchorTimestamp: anchor }
+    // Nov 1, 2026 is the US fall-back day; Oct 19 + 14 days = Nov 2 and + 16 days = Nov 4
+    expect(formatDateTimeAxisLabel(new Date(2026, 10, 2, 0, 0, 0).getTime(), options)).toBe('Mon 11/02\n00:00')
+    expect(formatDateTimeAxisLabel(new Date(2026, 10, 4, 0, 0, 0).getTime(), options)).toBe('Wed 11/04\n00:00')
+    expect(formatDateTimeAxisLabel(new Date(2026, 10, 3, 23, 0, 0).getTime(), options)).toBe('')
+  })
+
   it('derives the visible range from dataZoom configuration', () => {
     const chart = {
       getOption: () => ({

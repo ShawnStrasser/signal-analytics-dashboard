@@ -55,6 +55,8 @@ const caveat = computed(() =>
 
 <style scoped>
 .algorithm-change-notice {
+  /* v-alert defaults to flex: 1 1, which stretches it in the full-height page layouts */
+  flex: 0 0 auto;
   font-size: 0.875rem;
   line-height: 1.35;
 }

@@ -300,7 +300,9 @@ export function formatDateTimeAxisLabel(value, { isMobile = false, displayStepMi
       ? startOfLocalDayTimestamp(anchorTimestamp ?? timestamp)
       : snapTimestampToTimeBucket(anchorTimestamp ?? 0, 'floor')
 
-    if (!isAlignedToStep(timestamp, displayStepMinutes * 60 * 1000, anchor)) {
+    // Align on local wall-clock time, so labels stay on midnight after a daylight saving change
+    const wallClock = (ms) => ms - new Date(ms).getTimezoneOffset() * 60 * 1000
+    if (!isAlignedToStep(wallClock(timestamp), displayStepMinutes * 60 * 1000, wallClock(anchor))) {
       return ''
     }
   }
